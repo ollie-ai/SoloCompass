@@ -72,6 +72,12 @@ export default function Safety() {
   const [fakeCallCountdown, setFakeCallCountdown] = useState(0);
   const [fakeCallDelay, setFakeCallDelay] = useState(3);
   const [sosSliderValue, setSosSliderValue] = useState(0);
+  const [sosHoldActive, setSosHoldActive] = useState(false);
+  const [sosCountdown, setSosCountdown] = useState(3);
+  const [sosEventActive, setSosEventActive] = useState(false);
+  const [sosEventId, setSosEventId] = useState(null);
+  const [sosEventLocation, setSosEventLocation] = useState(null);
+  const sosHoldTimer = { interval: null, timeout: null };
 
   const [showScheduledForm, setShowScheduledForm] = useState(false);
   const [scheduleType, setScheduleType] = useState('one-time');
@@ -235,6 +241,65 @@ export default function Safety() {
   const handleCheckIn = async (type) => {
     setCheckInType(type);
     setShowConfirmModal(true);
+  };
+
+  const sosHoldTimers = { interval: null, timeout: null };
+
+  const handleSosHoldStart = () => {
+    if (contacts.length === 0) return;
+    setSosHoldActive(true);
+    setSosCountdown(3);
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+    let count = 3;
+    sosHoldTimers.interval = setInterval(() => {
+      count -= 1;
+      setSosCountdown(count);
+    }, 1000);
+
+    sosHoldTimers.timeout = setTimeout(async () => {
+      clearInterval(sosHoldTimers.interval);
+      setSosHoldActive(false);
+      setSosCountdown(3);
+      try {
+        const payload = {
+          triggerType: 'manual',
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          address: location?.address || null
+        };
+        const res = await api.post('/sos/trigger', payload);
+        if (res.data?.success) {
+          setSosEventActive(true);
+          setSosEventId(res.data.data?.sosEventId);
+          setSosEventLocation(location);
+          if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+          toast.error('🚨 SOS ACTIVE — Emergency contacts notified', { duration: 8000 });
+        }
+      } catch (err) {
+        toast.error('Failed to trigger SOS. Try again.');
+      }
+    }, 3000);
+  };
+
+  const handleSosHoldEnd = () => {
+    if (!sosHoldActive) return;
+    clearInterval(sosHoldTimers.interval);
+    clearTimeout(sosHoldTimers.timeout);
+    setSosHoldActive(false);
+    setSosCountdown(3);
+  };
+
+  const handleSosCancel = async () => {
+    try {
+      await api.post('/sos/cancel', { sosEventId });
+      setSosEventActive(false);
+      setSosEventId(null);
+      setSosEventLocation(null);
+      toast.success('SOS cancelled');
+    } catch (err) {
+      toast.error('Failed to cancel SOS');
+    }
   };
 
   const confirmCheckIn = async () => {
@@ -717,44 +782,53 @@ export default function Safety() {
                 </div>
               )}
 
-              {/* Slide to SOS */}
-              <div className={`relative h-16 bg-error/10 border-2 border-error/30 rounded-xl overflow-hidden flex items-center px-2 ${contacts.length === 0 ? 'opacity-50 pointer-events-none' : ''}`} role="slider" aria-label="Slide to activate SOS emergency alert" aria-valuemin={0} aria-valuemax={100} aria-valuenow={parseInt(sosSliderValue)} aria-valuetext={`${sosSliderValue}% slide to SOS`}>
-                <div className="absolute inset-0 bg-red-100 origin-left transition-transform duration-75" style={{ transform: `scaleX(${sosSliderValue / 100})` }}></div>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <p className="font-black text-error uppercase tracking-[0.2em] text-xs flex items-center gap-2">
-                    <AlertTriangle size={14} /> Slide for SOS
-                  </p>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={sosSliderValue}
-                  role="slider"
-                  aria-label="Slide to activate SOS emergency alert"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={sosSliderValue}
-                  aria-valuetext={sosSliderValue < 100 ? `${sosSliderValue}% — slide fully right to activate SOS` : 'SOS activated'}
-                  onChange={(e) => {
-                    setSosSliderValue(e.target.value);
-                    if (e.target.value === '100') {
-                      handleCheckIn('emergency');
-                      setTimeout(() => setSosSliderValue(0), 1000);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setSosSliderValue(0);
-                  }}
-                  onMouseUp={() => setSosSliderValue(0)}
-                  onTouchEnd={() => setSosSliderValue(0)}
-                  className="relative z-10 w-full h-full opacity-0 cursor-pointer"
+              {/* Hold to SOS */}
+              <div className={`relative ${contacts.length === 0 ? 'opacity-50 pointer-events-none' : ''}`}>
+                {sosHoldActive && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-error/90 rounded-xl">
+                    <span className="text-white font-black text-4xl tabular-nums">{sosCountdown}</span>
+                  </div>
+                )}
+                <button
+                  onMouseDown={handleSosHoldStart}
+                  onMouseUp={handleSosHoldEnd}
+                  onMouseLeave={handleSosHoldEnd}
+                  onTouchStart={handleSosHoldStart}
+                  onTouchEnd={handleSosHoldEnd}
                   disabled={contacts.length === 0}
-                />
-                <div className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-error/100 rounded-xl flex items-center justify-center text-white p-2 shadow-lg pointer-events-none transition-transform duration-75" style={{ transform: `translateX(calc(${sosSliderValue}% * 4.5))` }}>
-                  <Shield size={20} />
-                </div>
+                  aria-label="Hold 3 seconds to activate SOS emergency alert"
+                  className="w-full h-16 bg-error/10 border-2 border-error/30 rounded-xl flex items-center justify-center gap-3 select-none cursor-pointer active:bg-error/20 transition-colors"
+                >
+                  <Shield size={20} className="text-error" />
+                  <p className="font-black text-error uppercase tracking-[0.2em] text-xs">
+                    <AlertTriangle size={14} className="inline mr-1" />Hold for SOS
+                  </p>
+                </button>
               </div>
+
+              {/* SOS Active Overlay */}
+              {sosEventActive && (
+                <div className="fixed inset-0 z-50 bg-error flex flex-col items-center justify-center p-6 text-white">
+                  <div className="animate-pulse mb-4">
+                    <Shield size={64} className="text-white" />
+                  </div>
+                  <h2 className="text-3xl font-black uppercase tracking-widest mb-2">SOS ACTIVE</h2>
+                  <p className="text-lg font-bold mb-1">Help is on the way</p>
+                  <p className="text-sm opacity-80 mb-6">Your emergency contacts have been notified.</p>
+                  {sosEventLocation && (
+                    <div className="flex items-center gap-2 text-sm opacity-90 mb-6">
+                      <MapPin size={16} />
+                      <span>{sosEventLocation.address || `${sosEventLocation.latitude?.toFixed(4)}, ${sosEventLocation.longitude?.toFixed(4)}`}</span>
+                    </div>
+                  )}
+                  <button
+                    onClick={handleSosCancel}
+                    className="bg-white text-error font-black px-8 py-3 rounded-xl uppercase tracking-wide text-sm hover:bg-red-50 transition-colors"
+                  >
+                    Cancel SOS
+                  </button>
+                </div>
+              )}
 
               {/* Fake Call */}
               <PlanGate
@@ -1055,7 +1129,13 @@ export default function Safety() {
                             <span className="text-[9px] font-bold text-warning bg-warning/10 px-1.5 py-0.5 rounded-full">Pending opt-in</span>
                           )}
                           {contact.isAccepted && (
-                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full">Verified</span>
+                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full">Guardian Active</span>
+                          )}
+                          {contact.verified && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓ Verified</span>
+                          )}
+                          {!contact.verified && (
+                            <span className="text-[9px] font-bold text-base-content/40 bg-base-200 px-1.5 py-0.5 rounded-full">Unverified</span>
                           )}
                         </div>
                       </div>

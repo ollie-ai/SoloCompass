@@ -996,4 +996,113 @@ router.post('/trigger-missed/:id', authenticate, async (req, res) => {
   }
 });
 
+// POST /checkin/scheduled/:id/confirm - Confirm a scheduled check-in (I'm safe)
+router.post('/scheduled/:id/confirm', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { latitude, longitude, address, message } = req.body;
+
+    const scheduledCheckIn = await db.prepare(`
+      SELECT id, user_id, is_active, is_recurring, interval_minutes, missed_at, missed_count, escalation_level
+      FROM scheduled_check_ins WHERE id = ? AND user_id = ?
+    `).get(id, userId);
+
+    if (!scheduledCheckIn) {
+      return res.status(404).json({ success: false, error: 'Scheduled check-in not found' });
+    }
+
+    // Create confirmation record
+    const result = await db.prepare(`
+      INSERT INTO check_in_confirmations (scheduled_check_in_id, user_id, latitude, longitude, address, message)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, userId, latitude || null, longitude || null, address || null, message || null);
+
+    // Reset missed/warning state
+    const updates = ['missed_at = NULL', 'final_warning_sent = false', 'sos_triggered = false',
+                     'missed_count = 0', 'escalation_level = 0'];
+
+    // Advance next check-in time if recurring
+    if (scheduledCheckIn.is_recurring && scheduledCheckIn.interval_minutes) {
+      const nextTime = new Date(Date.now() + scheduledCheckIn.interval_minutes * 60 * 1000);
+      updates.push(`next_checkin_time = '${nextTime.toISOString()}'`);
+    }
+
+    await db.prepare(`
+      UPDATE scheduled_check_ins SET ${updates.join(', ')} WHERE id = ?
+    `).run(id);
+
+    broadcastToUser(userId, {
+      type: 'checkin_confirmed',
+      scheduledCheckInId: id,
+      message: "Check-in confirmed. You're safe!"
+    });
+
+    res.json({
+      success: true,
+      message: "Check-in confirmed. Stay safe!",
+      confirmationId: result.lastInsertRowid
+    });
+  } catch (error) {
+    logger.error('Error confirming check-in:', error);
+    res.status(500).json({ success: false, error: 'Failed to confirm check-in' });
+  }
+});
+
+// POST /checkin/scheduled/:id/snooze - Snooze a scheduled check-in
+router.post('/scheduled/:id/snooze', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { minutes = 15 } = req.body;
+
+    const validSnooze = [15, 30, 60];
+    const snoozeMin = parseInt(minutes);
+    if (!validSnooze.includes(snoozeMin)) {
+      return res.status(400).json({ success: false, error: 'Snooze must be 15, 30, or 60 minutes' });
+    }
+
+    const scheduledCheckIn = await db.prepare(`
+      SELECT id, user_id, scheduled_time, next_checkin_time
+      FROM scheduled_check_ins WHERE id = ? AND user_id = ?
+    `).get(id, userId);
+
+    if (!scheduledCheckIn) {
+      return res.status(404).json({ success: false, error: 'Scheduled check-in not found' });
+    }
+
+    const snoozeUntil = new Date(Date.now() + snoozeMin * 60 * 1000);
+
+    // Create confirmation record marking the snooze
+    await db.prepare(`
+      INSERT INTO check_in_confirmations (scheduled_check_in_id, user_id, snooze_until, message)
+      VALUES (?, ?, ?, ?)
+    `).run(id, userId, snoozeUntil.toISOString(), `Snoozed for ${snoozeMin} minutes`);
+
+    // Advance the scheduled time
+    await db.prepare(`
+      UPDATE scheduled_check_ins
+      SET scheduled_time = ?, next_checkin_time = ?, missed_at = NULL,
+          final_warning_sent = false
+      WHERE id = ?
+    `).run(snoozeUntil.toISOString(), snoozeUntil.toISOString(), id);
+
+    broadcastToUser(userId, {
+      type: 'checkin_snoozed',
+      scheduledCheckInId: id,
+      snoozeUntil: snoozeUntil.toISOString(),
+      message: `Check-in snoozed for ${snoozeMin} minutes.`
+    });
+
+    res.json({
+      success: true,
+      message: `Check-in snoozed for ${snoozeMin} minutes`,
+      snoozeUntil: snoozeUntil.toISOString()
+    });
+  } catch (error) {
+    logger.error('Error snoozing check-in:', error);
+    res.status(500).json({ success: false, error: 'Failed to snooze check-in' });
+  }
+});
+
 export default router;

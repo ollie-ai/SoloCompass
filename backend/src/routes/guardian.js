@@ -5,7 +5,6 @@ import { authenticate } from '../middleware/auth.js';
 import { createNotification } from '../services/notificationService.js';
 import { sendEmail } from '../services/resendClient.js';
 import logger from '../services/logger.js';
-
 const router = express.Router();
 
 const GUARDIAN_EXPIRY_DAYS = 30;
@@ -289,8 +288,7 @@ router.post('/decline/:token', async (req, res) => {
   }
 });
 
-router.delete('/request/:id', authenticate, async (req, res) => {
-  try {
+router.delete('/request/:id', authenticate, async (req, res) => {  try {
     const { id } = req.params;
     const userId = req.userId;
 
@@ -387,6 +385,216 @@ router.get('/status', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Error fetching guardian status:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch guardian status' });
+  }
+});
+
+// POST /guardian/invite - Invite a guardian by email (creates guardian_relationships record)
+router.post('/invite', authenticate, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const {
+      guardianEmail,
+      guardianName,
+      tripId,
+      permissionViewLocation = true,
+      permissionReceiveAlerts = true,
+      permissionViewItinerary = false
+    } = req.body;
+
+    if (!guardianEmail) {
+      return res.status(400).json({ success: false, error: 'Guardian email is required' });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)) {
+      return res.status(400).json({ success: false, error: 'Invalid email format' });
+    }
+
+    const token = generateToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + GUARDIAN_EXPIRY_DAYS);
+
+    const result = await db.prepare(`
+      INSERT INTO guardian_relationships (
+        traveller_id, guardian_token, guardian_email, guardian_name,
+        trip_id, permission_view_location, permission_receive_alerts,
+        permission_view_itinerary, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      token,
+      guardianEmail,
+      guardianName || null,
+      tripId || null,
+      permissionViewLocation,
+      permissionReceiveAlerts,
+      permissionViewItinerary,
+      expiresAt.toISOString()
+    );
+
+    const user = await db.prepare('SELECT name FROM users WHERE id = ?').get(userId);
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5176';
+    const acceptUrl = `${baseUrl}/guardian/acknowledge/${token}`;
+    const declineUrl = `${baseUrl}/guardian/decline/${token}`;
+    const userName = escapeHtml(user?.name || 'A SoloCompass traveller');
+
+    try {
+      await sendEmail({
+        to: guardianEmail,
+        subject: `${user?.name || 'Someone'} wants you as their Travel Guardian`,
+        html: `
+          <h2>You've been invited to be a Travel Guardian</h2>
+          <p>${userName} would like you to be their travel guardian on SoloCompass.</p>
+          <p>As a guardian you'll be notified if they miss a scheduled check-in.</p>
+          <p style="margin-top:24px;">
+            <a href="${acceptUrl}" style="background:#10b981;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;margin-right:10px;">Accept</a>
+            <a href="${declineUrl}" style="background:#ef4444;color:white;padding:12px 24px;text-decoration:none;border-radius:6px;">Decline</a>
+          </p>
+          <p style="color:#666;font-size:12px;margin-top:20px;">This invitation expires in ${GUARDIAN_EXPIRY_DAYS} days.</p>
+        `
+      });
+    } catch (emailErr) {
+      logger.error('[Guardian] Failed to send invite email:', emailErr.message);
+    }
+
+    logger.info(`[Guardian] Invite sent to ${guardianEmail} for user ${userId}`);
+
+    res.status(201).json({
+      success: true,
+      data: { id: result.lastInsertRowid, token, expiresAt: expiresAt.toISOString() }
+    });
+  } catch (error) {
+    logger.error('[Guardian] Error creating invite:', error);
+    res.status(500).json({ success: false, error: 'Failed to create guardian invite' });
+  }
+});
+
+// GET /guardian/list - Returns all guardians (from both tables)
+router.get('/list', authenticate, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const [legacy, relationships] = await Promise.all([
+      db.prepare(`
+        SELECT ga.id, ec.name as guardian_name, ec.email as guardian_email, ga.status,
+               ga.created_at, 'legacy' as source
+        FROM guardian_acknowledgements ga
+        JOIN emergency_contacts ec ON ec.id = ga.contact_id
+        WHERE ga.user_id = ?
+        ORDER BY ga.created_at DESC
+      `).all(userId),
+      db.prepare(`
+        SELECT id, guardian_email, guardian_name, status, permission_view_location,
+               permission_receive_alerts, permission_view_itinerary, location_sharing_enabled,
+               invited_at, accepted_at, created_at, 'relationship' as source
+        FROM guardian_relationships
+        WHERE traveller_id = ?
+        ORDER BY created_at DESC
+      `).all(userId)
+    ]);
+
+    res.json({ success: true, data: { guardians: [...legacy, ...relationships] } });
+  } catch (error) {
+    logger.error('[Guardian] Error listing guardians:', error);
+    res.status(500).json({ success: false, error: 'Failed to list guardians' });
+  }
+});
+
+// GET /guardian/dashboard - Returns guardian's view of travellers they guard
+router.get('/dashboard', authenticate, async (req, res) => {
+  try {
+    const guardianEmail = req.userEmail;
+
+    if (!guardianEmail) {
+      const user = await db.prepare('SELECT email FROM users WHERE id = ?').get(req.userId);
+      if (!user) return res.status(400).json({ success: false, error: 'User email not found' });
+    }
+
+    const user = await db.prepare('SELECT email FROM users WHERE id = ?').get(req.userId);
+    const email = user?.email;
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'User email not found' });
+    }
+
+    const travellers = await db.prepare(`
+      SELECT
+        gr.id,
+        gr.traveller_id,
+        u.name as traveller_name,
+        u.email as traveller_email,
+        gr.status,
+        gr.permission_view_location,
+        gr.permission_receive_alerts,
+        gr.permission_view_itinerary,
+        gr.location_sharing_enabled,
+        gr.last_location_lat,
+        gr.last_location_lng,
+        gr.last_location_at,
+        gr.accepted_at,
+        gr.trip_id
+      FROM guardian_relationships gr
+      JOIN users u ON u.id = gr.traveller_id
+      WHERE LOWER(gr.guardian_email) = LOWER(?) AND gr.status = 'active'
+    `).all(email);
+
+    // For each traveller, get their last check-in and any active SOS
+    const enriched = await Promise.all(travellers.map(async (t) => {
+      const [lastCheckIn, activeSOS] = await Promise.all([
+        db.prepare(`
+          SELECT id, type, created_at, address, latitude, longitude
+          FROM check_ins WHERE user_id = ? ORDER BY created_at DESC LIMIT 1
+        `).get(t.traveller_id),
+        db.prepare(`
+          SELECT id, triggered_at, status, latitude, longitude, address
+          FROM sos_events WHERE user_id = ? AND status = 'active' LIMIT 1
+        `).get(t.traveller_id)
+      ]);
+      return { ...t, lastCheckIn, activeSOS };
+    }));
+
+    res.json({ success: true, data: { travellers: enriched } });
+  } catch (error) {
+    logger.error('[Guardian] Error fetching dashboard:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch guardian dashboard' });
+  }
+});
+
+// PUT /guardian/:id/location - Update location sharing for a guardian relationship
+router.put('/:id/location', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { locationSharingEnabled, latitude, longitude } = req.body;
+
+    const rel = await db.prepare(`
+      SELECT id FROM guardian_relationships WHERE id = ? AND traveller_id = ?
+    `).get(id, userId);
+
+    if (!rel) {
+      return res.status(404).json({ success: false, error: 'Guardian relationship not found' });
+    }
+
+    const updates = ['updated_at = CURRENT_TIMESTAMP'];
+    const params = [];
+
+    if (locationSharingEnabled !== undefined) {
+      updates.push('location_sharing_enabled = ?');
+      params.push(locationSharingEnabled);
+    }
+    if (latitude !== undefined && longitude !== undefined) {
+      updates.push('last_location_lat = ?', 'last_location_lng = ?', 'last_location_at = CURRENT_TIMESTAMP');
+      params.push(latitude, longitude);
+    }
+
+    params.push(id);
+    await db.prepare(`
+      UPDATE guardian_relationships SET ${updates.join(', ')} WHERE id = ?
+    `).run(...params);
+
+    res.json({ success: true, message: 'Location sharing updated' });
+  } catch (error) {
+    logger.error('[Guardian] Error updating location:', error);
+    res.status(500).json({ success: false, error: 'Failed to update location sharing' });
   }
 });
 

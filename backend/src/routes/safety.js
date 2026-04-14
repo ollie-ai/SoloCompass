@@ -313,4 +313,54 @@ router.post('/emergency-alert', async (req, res) => {
   }
 });
 
+/**
+ * GET /safety/embassies/:countryCode
+ * Returns embassy info for a given country code
+ */
+router.get('/embassies/:countryCode', async (req, res) => {
+  try {
+    const { countryCode } = req.params;
+
+    const embassies = await db.prepare(`
+      SELECT id, country_code, nationality_code, embassy_name, address, phone, email,
+             website, emergency_phone, city, latitude, longitude
+      FROM embassies
+      WHERE UPPER(country_code) = UPPER(?)
+      ORDER BY city ASC
+    `).all(countryCode);
+
+    res.json({
+      success: true,
+      data: embassies,
+      fallbackSearchUrl: `https://www.google.com/search?q=embassy+in+${encodeURIComponent(countryCode)}`
+    });
+  } catch (error) {
+    logger.error(`[Safety] Embassy lookup failed: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch embassy information' });
+  }
+});
+
+/**
+ * GET /safety/emergency-services/:countryCode
+ * Returns emergency service numbers for a country
+ */
+router.get('/emergency-services/:countryCode', async (req, res) => {
+  try {
+    const { countryCode } = req.params;
+
+    const numbers = await db.prepare(`
+      SELECT * FROM emergency_numbers WHERE UPPER(country_code) = UPPER(?) LIMIT 1
+    `).get(countryCode);
+
+    res.json({
+      success: true,
+      data: numbers || null,
+      message: numbers ? undefined : `No emergency service data found for ${countryCode}`
+    });
+  } catch (error) {
+    logger.error(`[Safety] Emergency services lookup failed: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch emergency services' });
+  }
+});
+
 export default router;

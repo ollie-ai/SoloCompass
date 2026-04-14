@@ -5,7 +5,9 @@ import { broadcastToUser } from './websocket.js';
 import logger from './logger.js';
 
 const CHECK_INTERVAL_MS = 60000;
-const GRACE_PERIOD_MS = 15 * 60 * 1000;
+const TIER1_MS = 5 * 60 * 1000;   // 5 min: notify first contact only
+const TIER2_MS = 15 * 60 * 1000;  // 15 min: notify ALL contacts
+const TIER3_MS = 30 * 60 * 1000;  // 30 min: trigger full SOS
 const REMINDER_BEFORE_MS = 15 * 60 * 1000;
 
 export function startScheduledCheckInMonitor() {
@@ -76,35 +78,13 @@ export function startScheduledCheckInMonitor() {
         const scheduledTime = new Date(sci.scheduled_time);
         const timeSinceMissed = now - scheduledTime;
         
-        if (timeSinceMissed >= GRACE_PERIOD_MS && !sci.final_warning_sent) {
-          await sendFinalWarning(sci);
-        } else if (timeSinceMissed >= GRACE_PERIOD_MS * 2 && !sci.sos_triggered) {
+        if (timeSinceMissed >= TIER3_MS && !sci.sos_triggered) {
           await triggerSOS(sci);
+        } else if (timeSinceMissed >= TIER2_MS && !sci.final_warning_sent) {
+          await sendTier2Warning(sci);
+        } else if (timeSinceMissed >= TIER1_MS && !sci.escalation_level) {
+          await sendTier1Warning(sci);
         }
-      }
-
-      const finalWarningNeeded = await db.prepare(`
-        SELECT 
-          sci.*,
-          u.id as user_id,
-          u.name as user_name,
-          u.email as user_email
-        FROM scheduled_check_ins sci
-        JOIN users u ON sci.user_id = u.id
-        WHERE sci.is_active = true
-          AND sci.scheduled_time <= ?
-          AND sci.missed_at IS NULL
-          AND (sci.final_warning_sent IS NULL OR sci.final_warning_sent = false)
-      `).all(new Date(now - GRACE_PERIOD_MS).toISOString());
-
-      for (const sci of finalWarningNeeded) {
-        await db.prepare(`
-          UPDATE scheduled_check_ins 
-          SET missed_at = CURRENT_TIMESTAMP, final_warning_sent = true 
-          WHERE id = ?
-        `).run(sci.id);
-        
-        await sendFinalWarning(sci);
       }
 
     } catch (error) {
@@ -112,10 +92,56 @@ export function startScheduledCheckInMonitor() {
     }
   }, CHECK_INTERVAL_MS);
   
-  logger.info('[CheckIn Monitor] Check-in monitor running (checks every 60s, 15min grace period)');
+  logger.info('[CheckIn Monitor] Check-in monitor running (5/15/30 min escalation tiers)');
 }
 
-async function sendFinalWarning(scheduledCheckIn) {
+// Tier 1: 5 minutes missed – notify FIRST emergency contact only
+async function sendTier1Warning(scheduledCheckIn) {
+  try {
+    const allContacts = await db.prepare(`
+      SELECT * FROM emergency_contacts 
+      WHERE user_id = ? AND notify_on_emergency = true
+      ORDER BY is_primary DESC, created_at ASC
+      LIMIT 1
+    `).all(scheduledCheckIn.user_id);
+
+    const user = { id: scheduledCheckIn.user_id, name: scheduledCheckIn.user_name };
+
+    logger.info(`[CheckIn Monitor] Tier-1 warning for user ${scheduledCheckIn.user_id} (first contact only)`);
+
+    broadcastToUser(scheduledCheckIn.user_id, {
+      type: 'checkin_missed',
+      message: `You missed your scheduled check-in. Your primary contact will be notified if you don't check in within 10 minutes.`,
+      scheduledCheckInId: scheduledCheckIn.id
+    });
+
+    await createNotification(
+      scheduledCheckIn.user_id,
+      'checkin_missed',
+      'Missed Check-In',
+      'You missed your scheduled check-in. Your primary contact has been alerted.',
+      { scheduledCheckInId: scheduledCheckIn.id },
+      scheduledCheckIn.id
+    );
+
+    if (allContacts.length > 0) {
+      await notifyEmergencyContacts(allContacts, user, scheduledCheckIn, 'missed');
+      await notifyEmergencyContactsSMS(allContacts, user, scheduledCheckIn, 'missed');
+    }
+
+    await db.prepare(`
+      UPDATE scheduled_check_ins
+      SET missed_at = CURRENT_TIMESTAMP, escalation_level = 1
+      WHERE id = ?
+    `).run(scheduledCheckIn.id);
+
+  } catch (error) {
+    logger.error('[CheckIn Monitor] Error sending tier-1 warning:', error.message);
+  }
+}
+
+// Tier 2: 15 minutes missed – notify ALL contacts
+async function sendTier2Warning(scheduledCheckIn) {
   try {
     const contacts = await db.prepare(`
       SELECT * FROM emergency_contacts 
@@ -124,16 +150,13 @@ async function sendFinalWarning(scheduledCheckIn) {
 
     if (contacts.length === 0) return;
 
-    const user = {
-      id: scheduledCheckIn.user_id,
-      name: scheduledCheckIn.user_name
-    };
+    const user = { id: scheduledCheckIn.user_id, name: scheduledCheckIn.user_name };
 
-    logger.info(`[CheckIn Monitor] Sending final warning for user ${scheduledCheckIn.user_id}`);
+    logger.info(`[CheckIn Monitor] Tier-2 warning for user ${scheduledCheckIn.user_id} (all ${contacts.length} contacts)`);
 
     broadcastToUser(scheduledCheckIn.user_id, {
       type: 'checkin_missed',
-      message: `You missed your scheduled check-in. Your emergency contacts will be notified if you don't check in within 15 minutes.`,
+      message: `All emergency contacts are being notified of your missed check-in.`,
       scheduledCheckInId: scheduledCheckIn.id
     });
 
@@ -141,7 +164,7 @@ async function sendFinalWarning(scheduledCheckIn) {
       scheduledCheckIn.user_id,
       'checkin_missed',
       'Missed Check-In - Final Warning',
-      'You missed your scheduled check-in. Emergency contacts will be notified in 15 minutes.',
+      'All emergency contacts have been notified. SOS will be triggered in 15 minutes if you do not check in.',
       { scheduledCheckInId: scheduledCheckIn.id },
       scheduledCheckIn.id
     );
@@ -150,14 +173,17 @@ async function sendFinalWarning(scheduledCheckIn) {
     await notifyEmergencyContactsSMS(contacts, user, scheduledCheckIn, 'missed');
 
     await db.prepare(`
-      UPDATE scheduled_check_ins SET final_warning_sent = true WHERE id = ?
+      UPDATE scheduled_check_ins
+      SET final_warning_sent = true, escalation_level = 2
+      WHERE id = ?
     `).run(scheduledCheckIn.id);
 
   } catch (error) {
-    logger.error('[CheckIn Monitor] Error sending final warning:', error.message);
+    logger.error('[CheckIn Monitor] Error sending tier-2 warning:', error.message);
   }
 }
 
+// Tier 3: 30 minutes missed – trigger full SOS via sos_events
 async function triggerSOS(scheduledCheckIn) {
   try {
     const contacts = await db.prepare(`
@@ -167,12 +193,23 @@ async function triggerSOS(scheduledCheckIn) {
 
     if (contacts.length === 0) return;
 
-    const user = {
-      id: scheduledCheckIn.user_id,
-      name: scheduledCheckIn.user_name
-    };
+    const user = { id: scheduledCheckIn.user_id, name: scheduledCheckIn.user_name };
 
-    logger.info(`[CheckIn Monitor] Triggering SOS for user ${scheduledCheckIn.user_id}`);
+    logger.warn(`[CheckIn Monitor] Triggering SOS for user ${scheduledCheckIn.user_id}`);
+
+    // Create sos_events record
+    try {
+      await db.prepare(`
+        INSERT INTO sos_events (user_id, trip_id, trigger_type, status, message)
+        VALUES (?, ?, 'missed_checkin', 'active', ?)
+      `).run(
+        scheduledCheckIn.user_id,
+        scheduledCheckIn.trip_id || null,
+        `Missed scheduled check-in at ${new Date(scheduledCheckIn.scheduled_time).toLocaleTimeString()}`
+      );
+    } catch (sosInsertErr) {
+      logger.error('[CheckIn Monitor] Failed to create sos_event:', sosInsertErr.message);
+    }
 
     broadcastToUser(scheduledCheckIn.user_id, {
       type: 'checkin_sos',
@@ -193,7 +230,9 @@ async function triggerSOS(scheduledCheckIn) {
     await notifyEmergencyContactsSMS(contacts, user, scheduledCheckIn, 'emergency');
 
     await db.prepare(`
-      UPDATE scheduled_check_ins SET sos_triggered = true, is_active = false WHERE id = ?
+      UPDATE scheduled_check_ins
+      SET sos_triggered = true, is_active = false, escalation_level = 3
+      WHERE id = ?
     `).run(scheduledCheckIn.id);
 
   } catch (error) {

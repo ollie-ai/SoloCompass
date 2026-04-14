@@ -92,6 +92,7 @@ async function bootstrap() {
     const { default: adminRoutes } = await import('./routes/admin.js');
     const { default: safetyRoutes } = await import('./routes/safety.js');
     const { default: aiRoutes } = await import('./routes/ai.js');
+    const { default: atlasRoutes } = await import('./routes/atlas.js');
     const { default: translateRoutes } = await import('./routes/translate.js');
     const { default: helpRoutes } = await import('./routes/help.js');
     const { default: webhookRoutes } = await import('./routes/webhooks.js');
@@ -157,6 +158,7 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     // routes (applying core ones)
     app.use('/api/auth', authRoutes);
     app.use('/api/ai', aiRoutes);
+    app.use('/api/v1/atlas', atlasRoutes);
     app.use('/api/trips', tripRoutes);
     app.use('/api/accommodations', accommodationsRoutes);
     app.use('/api/bookings', bookingsRoutes);

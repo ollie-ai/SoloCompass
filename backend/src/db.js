@@ -1132,6 +1132,94 @@ async function initializeDatabase() {
         ended_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Atlas conversations table
+      CREATE TABLE IF NOT EXISTS atlas_conversations (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT,
+        context TEXT DEFAULT '{}',
+        message_count INTEGER DEFAULT 0,
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_atlas_conversations_user_id ON atlas_conversations(user_id);
+
+      -- Atlas messages table
+      CREATE TABLE IF NOT EXISTS atlas_messages (
+        id SERIAL PRIMARY KEY,
+        conversation_id INTEGER NOT NULL REFERENCES atlas_conversations(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'tool')),
+        content TEXT NOT NULL,
+        tool_calls TEXT,
+        tool_call_id TEXT,
+        tokens_used INTEGER DEFAULT 0,
+        source TEXT DEFAULT 'azure_openai',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_atlas_messages_conversation_id ON atlas_messages(conversation_id);
+
+      -- Atlas usage logs table
+      CREATE TABLE IF NOT EXISTS atlas_usage_logs (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        conversation_id INTEGER REFERENCES atlas_conversations(id) ON DELETE SET NULL,
+        model TEXT,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        source TEXT,
+        latency_ms INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_atlas_usage_logs_user_id ON atlas_usage_logs(user_id);
+
+      -- Atlas prompt templates table
+      CREATE TABLE IF NOT EXISTS atlas_prompt_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        system_prompt TEXT NOT NULL,
+        user_prompt_template TEXT,
+        context_keys TEXT DEFAULT '[]',
+        tags TEXT DEFAULT '[]',
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Critical event queue for SOS/safety guaranteed delivery
+      CREATE TABLE IF NOT EXISTS critical_event_queue (
+        id SERIAL PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        payload TEXT NOT NULL,
+        priority INTEGER DEFAULT 5,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'delivered', 'failed', 'dead_letter')),
+        attempts INTEGER DEFAULT 0,
+        max_attempts INTEGER DEFAULT 5,
+        next_retry_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_critical_event_queue_status ON critical_event_queue(status, next_retry_at);
+
+      -- Feature flags table
+      CREATE TABLE IF NOT EXISTS feature_flags (
+        id SERIAL PRIMARY KEY,
+        flag_key TEXT UNIQUE NOT NULL,
+        description TEXT,
+        is_enabled BOOLEAN DEFAULT false,
+        enabled_for_tiers TEXT DEFAULT '[]',
+        enabled_for_user_ids TEXT DEFAULT '[]',
+        rollout_percentage INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Create indexes

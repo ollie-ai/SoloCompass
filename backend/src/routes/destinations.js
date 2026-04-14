@@ -13,6 +13,13 @@ import * as advisoryIngestionService from '../services/advisoryIngestionService.
 
 const router = express.Router();
 
+// General rate limiter for destination data endpoints
+const destinationsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: { success: false, error: 'Too many requests, please try again later.' }
+});
+
 const safeJsonParse = (str, fallbackVal = []) => {
   if (!str) return fallbackVal;
   try { return JSON.parse(str); } catch { return fallbackVal; }
@@ -296,7 +303,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // GET /search - search destinations
-router.get('/search', authenticate, async (req, res) => {
+router.get('/search', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { q, limit = 20 } = req.query;
     if (!q || q.trim().length < 2) {
@@ -323,7 +330,7 @@ router.get('/search', authenticate, async (req, res) => {
 });
 
 // GET /trending - trending destinations
-router.get('/trending', authenticate, async (req, res) => {
+router.get('/trending', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { limit = 10 } = req.query;
     const result = await pool.query(`
@@ -348,7 +355,7 @@ router.get('/trending', authenticate, async (req, res) => {
 });
 
 // GET /compare - compare 2-3 destinations
-router.get('/compare', authenticate, async (req, res) => {
+router.get('/compare', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { ids } = req.query;
     if (!ids) return res.status(400).json({ success: false, error: 'ids parameter required (comma-separated)' });
@@ -437,7 +444,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // GET /:id/weather - weather data (12-month historical cache)
-router.get('/:id/weather', authenticate, async (req, res) => {
+router.get('/:id/weather', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const dest = await pool.query('SELECT id, name, latitude, longitude FROM destinations WHERE id = $1', [id]);
@@ -477,7 +484,7 @@ router.get('/:id/weather', authenticate, async (req, res) => {
 });
 
 // GET /:id/cost - cost breakdown
-router.get('/:id/cost', authenticate, async (req, res) => {
+router.get('/:id/cost', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const dest = await pool.query('SELECT id, name, budget_level FROM destinations WHERE id = $1', [id]);
@@ -501,7 +508,7 @@ router.get('/:id/cost', authenticate, async (req, res) => {
 });
 
 // GET /:id/practical - practical info
-router.get('/:id/practical', authenticate, async (req, res) => {
+router.get('/:id/practical', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const dest = await pool.query('SELECT id, name, emergency_contacts FROM destinations WHERE id = $1', [id]);
@@ -532,7 +539,7 @@ router.get('/:id/practical', authenticate, async (req, res) => {
 });
 
 // GET /:id/sunrise-sunset - astronomical data
-router.get('/:id/sunrise-sunset', authenticate, async (req, res) => {
+router.get('/:id/sunrise-sunset', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { date } = req.query;
@@ -553,7 +560,7 @@ router.get('/:id/sunrise-sunset', authenticate, async (req, res) => {
 });
 
 // GET /:id/reviews - list reviews for destination
-router.get('/:id/reviews', authenticate, async (req, res) => {
+router.get('/:id/reviews', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 20, sort = 'newest' } = req.query;
@@ -585,7 +592,7 @@ router.get('/:id/reviews', authenticate, async (req, res) => {
 });
 
 // POST /:id/reviews - submit review for destination
-router.post('/:id/reviews', authenticate, async (req, res) => {
+router.post('/:id/reviews', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;
@@ -619,7 +626,7 @@ router.post('/:id/reviews', authenticate, async (req, res) => {
 });
 
 // GET /:id/tips - community tips for destination
-router.get('/:id/tips', authenticate, async (req, res) => {
+router.get('/:id/tips', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { category, page = 1, limit = 20 } = req.query;
@@ -643,7 +650,7 @@ router.get('/:id/tips', authenticate, async (req, res) => {
 });
 
 // POST /:id/tips - submit tip for destination
-router.post('/:id/tips', authenticate, async (req, res) => {
+router.post('/:id/tips', authenticate, destinationsLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;

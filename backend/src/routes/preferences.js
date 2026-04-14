@@ -1,9 +1,18 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const preferencesLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many requests, please try again later' } },
+});
 
 // Get user preferences
 router.get('/', requireAuth, async (req, res) => {
@@ -127,7 +136,7 @@ router.put('/', requireAuth, async (req, res) => {
 });
 
 // GET /api/preferences/app — get language, currency, units, timezone settings
-router.get('/app', requireAuth, async (req, res) => {
+router.get('/app', preferencesLimiter, requireAuth, async (req, res) => {
   try {
     const row = await db.get(
       'SELECT language, currency, units, timezone, date_format FROM user_preferences WHERE user_id = ?',
@@ -144,7 +153,7 @@ router.get('/app', requireAuth, async (req, res) => {
 });
 
 // PUT /api/preferences/app — save language, currency, units, timezone settings
-router.put('/app', requireAuth, async (req, res) => {
+router.put('/app', preferencesLimiter, requireAuth, async (req, res) => {
   try {
     const { language, currency, units, timezone, date_format } = req.body;
 

@@ -45,8 +45,8 @@ export default function AvatarUpload({ currentUrl, displayName = '', onUpload, s
     .toUpperCase() || '?';
 
   const avatarUrl = preview || currentUrl;
-  // Only allow blob: and https: URLs as image sources to prevent XSS
-  const safeAvatarUrl = avatarUrl && /^(blob:|https?:\/\/)/.test(avatarUrl) ? avatarUrl : null;
+  // Only allow blob: and https: URLs as image sources to prevent XSS and mixed-content
+  const safeAvatarUrl = avatarUrl && /^(blob:|https:\/\/)/.test(avatarUrl) ? avatarUrl : null;
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];

@@ -2121,6 +2121,51 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
+  if (!await hasMigration('v028_content_hub')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS content_guides (
+          id SERIAL PRIMARY KEY,
+          slug TEXT UNIQUE NOT NULL,
+          title TEXT NOT NULL,
+          excerpt TEXT,
+          content TEXT,
+          category TEXT DEFAULT 'general',
+          tags TEXT DEFAULT '[]',
+          destination TEXT,
+          country TEXT,
+          cover_image TEXT,
+          author TEXT DEFAULT 'SoloCompass Team',
+          read_time_minutes INTEGER DEFAULT 5,
+          is_published BOOLEAN DEFAULT true,
+          view_count INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_guides_slug ON content_guides(slug)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_guides_category ON content_guides(category)`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS content_tips (
+          id SERIAL PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          category TEXT DEFAULT 'general',
+          tags TEXT DEFAULT '[]',
+          difficulty TEXT DEFAULT 'beginner' CHECK(difficulty IN ('beginner', 'intermediate', 'advanced')),
+          is_published BOOLEAN DEFAULT true,
+          helpful_count INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      logger.info('[Migration v028] content_guides and content_tips tables created');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_content_hub');
+  }
+
   logger.info('[Migration] All migrations complete');
 }
 

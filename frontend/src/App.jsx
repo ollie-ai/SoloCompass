@@ -60,6 +60,8 @@ const SharedTrip = lazy(() => import('./pages/SharedTrip'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
 const Journal = lazy(() => import('./pages/Journal'));
 const Budget = lazy(() => import('./pages/Budget'));
+const Guides = lazy(() => import('./pages/Guides'));
+const Tips = lazy(() => import('./pages/Tips'));
 
 function LoadingFallback() {
   return (
@@ -361,6 +363,8 @@ function App() {
               }
             />
             <Route path="/terms" element={<Terms />} />
+            <Route path="/guides" element={<Guides />} />
+            <Route path="/tips" element={<Tips />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/cookies" element={<Cookies />} />
             <Route path="/legal" element={<Legal />} />

@@ -11,6 +11,16 @@ import CurrencyConverter from '../components/CurrencyConverter';
 import DestinationChat from '../components/DestinationChat';
 import PlanGate from '../components/PlanGate';
 import AffiliateHub from '../components/destinations/AffiliateHub';
+import WeatherChart from '../components/WeatherChart';
+import PracticalInfoCard from '../components/destinations/PracticalInfoCard';
+import SoloScoreBadge from '../components/destinations/SoloScoreBadge';
+import CommunityTipsList from '../components/destinations/CommunityTipsList';
+import TipSubmitForm from '../components/destinations/TipSubmitForm';
+import ScamAlertList from '../components/destinations/ScamAlertList';
+import NeighbourhoodSafetyMap from '../components/destinations/NeighbourhoodSafetyMap';
+import SafetyScoreBar from '../components/destinations/SafetyScoreBar';
+import ReviewList from '../components/destinations/ReviewList';
+import ReviewFilters from '../components/destinations/ReviewFilters';
 import { 
   MapPin, 
   Clock, 
@@ -33,8 +43,41 @@ import {
   ShieldAlert
 } from 'lucide-react';
 
+function CostTab({ destinationId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    import('../lib/destinationService').then(m => {
+      m.default.getCost(destinationId)
+        .then(res => setData(res.data?.data))
+        .catch(() => setData(null))
+        .finally(() => setLoading(false));
+    });
+  }, [destinationId]);
+  if (loading) return <div className="animate-pulse h-32 bg-gray-100 dark:bg-gray-800 rounded-xl" />;
+  if (!data?.categories?.length) return <p className="text-gray-500 text-sm">No cost data available.</p>;
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div className="px-5 py-3 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700 flex">
+        <span className="flex-1 text-xs font-medium text-gray-500 uppercase tracking-wide">Category</span>
+        <span className="w-24 text-xs font-medium text-gray-500 uppercase tracking-wide text-right">Budget</span>
+        <span className="w-24 text-xs font-medium text-gray-500 uppercase tracking-wide text-right">Mid</span>
+        <span className="w-24 text-xs font-medium text-gray-500 uppercase tracking-wide text-right">Luxury</span>
+      </div>
+      {data.categories.map((cat, i) => (
+        <div key={i} className="px-5 py-3 flex border-b border-gray-100 dark:border-gray-700 last:border-0">
+          <span className="flex-1 text-sm text-gray-700 dark:text-gray-300 capitalize">{cat.category}</span>
+          <span className="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">{cat.budget_low ? `${cat.currency_code || '$'}${cat.budget_low}` : '—'}</span>
+          <span className="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">{cat.budget_mid ? `${cat.currency_code || '$'}${cat.budget_mid}` : '—'}</span>
+          <span className="w-24 text-sm text-gray-600 dark:text-gray-400 text-right">{cat.budget_high ? `${cat.currency_code || '$'}${cat.budget_high}` : '—'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DestinationDetail() {
-  const { id } = useParams();
+  const { id, slug, tab } = useParams();
   const navigate = useNavigate();
   const [destination, setDestination] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -44,6 +87,8 @@ function DestinationDetail() {
   const [safetyStats, setSafetyStats] = useState(null);
   const [safetyLoading, setSafetyLoading] = useState(true);
   const [researchData, setResearchData] = useState(null);
+  const [activeTab, setActiveTab] = useState(tab || 'overview');
+  const [destinationId, setDestinationId] = useState(id || null);
 
   useEffect(() => {
     fetchDestination();
@@ -79,7 +124,7 @@ function DestinationDetail() {
       } catch (e) { console.log('No research'); }
     };
     loadResearch();
-  }, [id]);
+  }, [id, slug]);
 
   useEffect(() => {
     if (destination?.country) {
@@ -114,9 +159,14 @@ function DestinationDetail() {
   const fetchDestination = async () => {
     try {
       setLoading(true);
-      // Try destination first
-      const response = await api.get(`/destinations/${id}`);
+      let response;
+      if (slug) {
+        response = await api.get(`/destinations/by-slug/${slug}`);
+      } else {
+        response = await api.get(`/destinations/${id}`);
+      }
       setDestination(response.data.data);
+      setDestinationId(response.data?.data?.id || response.data?.id || id);
       setError(null);
     } catch (err) {
       console.error('Error fetching destination:', err);
@@ -295,6 +345,35 @@ function DestinationDetail() {
               <Sparkles size={24} />
             </div>
           </Button>
+        </div>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="sticky top-0 z-20 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 mb-6">
+        <div className="max-w-5xl mx-auto px-4">
+          <nav className="flex overflow-x-auto gap-0 -mb-px">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'safety', label: 'Safety' },
+              { id: 'cost', label: 'Cost' },
+              { id: 'weather', label: 'Weather' },
+              { id: 'practical', label: 'Practical' },
+              { id: 'reviews', label: 'Reviews' },
+              { id: 'tips', label: 'Tips' },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={`px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === t.id
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
         </div>
       </div>
 
@@ -699,6 +778,59 @@ function DestinationDetail() {
           </div>
         )}
       </div>
+
+      {/* Tab Content */}
+      {activeTab === 'safety' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Safety</h2>
+          {safetyStats && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+              <h3 className="font-semibold mb-4 text-gray-900 dark:text-white">Safety Scores</h3>
+              <div className="space-y-3">
+                {safetyStats.scores?.overall != null && <SafetyScoreBar label="Overall" score={safetyStats.scores.overall} />}
+                {safetyStats.scores?.women != null && <SafetyScoreBar label="Women" score={safetyStats.scores.women} />}
+                {safetyStats.scores?.lgbtq != null && <SafetyScoreBar label="LGBTQ+" score={safetyStats.scores.lgbtq} />}
+                {safetyStats.scores?.night != null && <SafetyScoreBar label="Night Safety" score={safetyStats.scores.night} />}
+                {safetyStats.scores?.solo != null && <SafetyScoreBar label="Solo Travel" score={safetyStats.scores.solo} />}
+              </div>
+            </div>
+          )}
+          <ScamAlertList destinationId={destinationId} />
+          <NeighbourhoodSafetyMap destinationId={destinationId} />
+        </div>
+      )}
+      {activeTab === 'cost' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Cost Breakdown</h2>
+          <CostTab destinationId={destinationId} />
+        </div>
+      )}
+      {activeTab === 'weather' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Weather</h2>
+          <WeatherChart destinationId={destinationId} />
+        </div>
+      )}
+      {activeTab === 'practical' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Practical Info</h2>
+          <PracticalInfoCard destinationId={destinationId} />
+        </div>
+      )}
+      {activeTab === 'reviews' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Reviews</h2>
+          <ReviewFilters filters={{}} onChange={() => {}} />
+          <ReviewList reviews={reviews} />
+        </div>
+      )}
+      {activeTab === 'tips' && destinationId && (
+        <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">Community Tips</h2>
+          <TipSubmitForm destinationId={destinationId} onSuccess={() => {}} />
+          <CommunityTipsList destinationId={destinationId} />
+        </div>
+      )}
     </div>
   );
 }

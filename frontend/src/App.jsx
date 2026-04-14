@@ -50,6 +50,7 @@ const EmergencyPhrases = lazy(() => import('./pages/EmergencyPhrases'));
 const Translator = lazy(() => import('./pages/Translator'));
 const PinkPath = lazy(() => import('./pages/PinkPath'));
 const CrimeMap = lazy(() => import('./pages/CrimeMap'));
+const Compare = lazy(() => import('./pages/Compare'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Messages = lazy(() => import('./pages/Messages'));
@@ -230,6 +231,38 @@ function App() {
               element={
                 <ProtectedRoute>
                   <DestinationDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/explore"
+              element={
+                <ProtectedRoute>
+                  <Destinations />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/destination/:slug"
+              element={
+                <ProtectedRoute>
+                  <DestinationDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/destination/:slug/:tab"
+              element={
+                <ProtectedRoute>
+                  <DestinationDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/compare"
+              element={
+                <ProtectedRoute>
+                  <Compare />
                 </ProtectedRoute>
               }
             />

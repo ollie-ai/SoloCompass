@@ -40,6 +40,10 @@ const NoTripsDashboard = () => {
         subtitle="Build your itinerary, set up check-ins, and get premium safety tools in one place."
         primaryCta={{ label: "Plan a new trip", href: "/trips/new" }}
         secondaryCta={{ label: "Explore demos", href: "/?demo=true" }}
+        extraCtas={[
+          { label: "🆘 SOS", href: "/safety?sos=1" },
+          { label: "✦ Ask Atlas", href: "/dashboard?atlas=1" },
+        ]}
         statusPanel={
           <div className="space-y-4">
             <div className="flex items-center gap-3 justify-center">

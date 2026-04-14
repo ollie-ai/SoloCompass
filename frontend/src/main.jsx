@@ -39,6 +39,14 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   )
 }
 
+// Inject Vercel Analytics script in production (consent-free, no PII collected)
+if (import.meta.env.PROD) {
+  const va = document.createElement('script');
+  va.defer = true;
+  va.src   = '/_vercel/insights/script.js';
+  document.head.appendChild(va);
+}
+
 // Hide main content initially to prevent FOUC
 document.getElementById('main-content')?.classList.add('visible');
 

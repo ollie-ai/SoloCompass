@@ -87,6 +87,7 @@ const TripImageHero = ({
   subtitle,
   primaryCta,
   secondaryCta,
+  extraCtas = [],
   statusPanel,
   children,
   overlay = 'dark',
@@ -165,6 +166,15 @@ const TripImageHero = ({
                     <ShieldCheck size={18} className="text-emerald-400" /> {secondaryCta.label}
                   </Link>
                 )}
+                {extraCtas.map((cta, i) => (
+                  <Link
+                    key={i}
+                    to={cta.href}
+                    className="bg-white/10 backdrop-blur-xl border border-white/20 text-white px-6 py-4 rounded-2xl font-bold hover:bg-white/20 transition-all flex items-center gap-2 text-sm"
+                  >
+                    {cta.label}
+                  </Link>
+                ))}
               </div>
             </div>
 

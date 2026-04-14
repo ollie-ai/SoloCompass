@@ -107,7 +107,7 @@ async function executeTool(toolName, args) {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const ATLAS_SYSTEM_PROMPT = `You are Atlas, SoloCompass's intelligent travel companion. You specialize in solo travel planning, safety guidance, and personalised destination advice.
+const ATLAS_SYSTEM_PROMPT_DEFAULT = `You are Atlas, SoloCompass's intelligent travel companion. You specialize in solo travel planning, safety guidance, and personalised destination advice.
 
 Your expertise:
 - Solo travel planning and itinerary creation
@@ -124,6 +124,29 @@ Guidelines:
 - Use tools to fetch real data when appropriate
 - Reference specific SoloCompass features (trips, check-ins, guardians) when helpful
 - Be honest about uncertainty`;
+
+// Cache the system prompt so we hit the DB at most once per process startup,
+// then refresh every 10 minutes so edits propagate without a restart.
+let _systemPromptCache = null;
+let _systemPromptCachedAt = 0;
+const PROMPT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+async function getSystemPrompt() {
+  const now = Date.now();
+  if (_systemPromptCache && now - _systemPromptCachedAt < PROMPT_CACHE_TTL_MS) {
+    return _systemPromptCache;
+  }
+  try {
+    const row = await db.get(
+      `SELECT content FROM atlas_prompt_templates WHERE name = 'atlas_system' AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    );
+    _systemPromptCache = row?.content || ATLAS_SYSTEM_PROMPT_DEFAULT;
+  } catch {
+    _systemPromptCache = ATLAS_SYSTEM_PROMPT_DEFAULT;
+  }
+  _systemPromptCachedAt = now;
+  return _systemPromptCache;
+}
 
 async function getConversationMessages(conversationId, limit = 10) {
   const msgs = await db.all(
@@ -183,8 +206,9 @@ router.post('/chat', authenticate, requireFeature(FEATURES.AI_CHAT), checkAILimi
 
     // Build message history
     const history = await getConversationMessages(convId, 10);
+    const systemPrompt = await getSystemPrompt();
     const messages = [
-      { role: 'system', content: ATLAS_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       ...history
     ];
 
@@ -290,10 +314,43 @@ router.post('/chat', authenticate, requireFeature(FEATURES.AI_CHAT), checkAILimi
         }
 
       } catch (err) {
-        logger.warn(`[Atlas] Azure OpenAI streaming failed: ${err.message}`);
-        fullResponse = getFallbackResponse(message);
-        source = 'fallback';
-        send({ event: 'chunk', data: { content: fullResponse } });
+        logger.warn(`[Atlas] Azure OpenAI streaming failed: ${err.message} — trying OpenAI direct`);
+
+        // Fallback: OpenAI direct API (if OPENAI_API_KEY is configured)
+        if (process.env.OPENAI_API_KEY) {
+          try {
+            const { OpenAI } = await import('openai');
+            const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const stream2 = await oai.chat.completions.create({
+              model: process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini',
+              messages,
+              stream: true,
+              max_tokens: 2000,
+              temperature: 0.7,
+            });
+            source = 'openai_direct';
+            for await (const chunk of stream2) {
+              const delta = chunk.choices?.[0]?.delta;
+              if (delta?.content) {
+                fullResponse += delta.content;
+                send({ event: 'chunk', data: { content: delta.content } });
+              }
+              if (chunk.usage) {
+                promptTokens = chunk.usage.prompt_tokens || 0;
+                completionTokens = chunk.usage.completion_tokens || 0;
+              }
+            }
+          } catch (oaiErr) {
+            logger.warn(`[Atlas] OpenAI direct fallback failed: ${oaiErr.message}`);
+            fullResponse = getFallbackResponse(message);
+            source = 'fallback';
+            send({ event: 'chunk', data: { content: fullResponse } });
+          }
+        } else {
+          fullResponse = getFallbackResponse(message);
+          source = 'fallback';
+          send({ event: 'chunk', data: { content: fullResponse } });
+        }
       }
     } else {
       fullResponse = getFallbackResponse(message);

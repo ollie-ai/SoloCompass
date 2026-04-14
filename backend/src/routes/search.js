@@ -128,6 +128,26 @@ router.get('/', authenticate, async (req, res) => {
     // Flatten for 'all' scope and add total count
     const totalCount = Object.values(results).reduce((sum, arr) => sum + arr.length, 0);
 
+    // Persist the search query for the authenticated user (keep last 20 per user)
+    try {
+      const now = new Date().toISOString();
+      await db.run(
+        `INSERT INTO user_recent_searches (user_id, query, searched_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(user_id, query) DO UPDATE SET searched_at = excluded.searched_at`,
+        req.userId, q.trim(), now
+      );
+      // Trim to 20 most recent
+      await db.run(
+        `DELETE FROM user_recent_searches
+         WHERE user_id = ? AND query NOT IN (
+           SELECT query FROM user_recent_searches WHERE user_id = ?
+           ORDER BY searched_at DESC LIMIT 20
+         )`,
+        req.userId, req.userId
+      );
+    } catch { /* non-fatal — search still returns results */ }
+
     res.json({
       success: true,
       data: {
@@ -141,6 +161,38 @@ router.get('/', authenticate, async (req, res) => {
   } catch (err) {
     logger.error(`[Search] Error: ${err.message}`);
     res.status(500).json({ success: false, error: { code: 'SC-ERR-500', message: 'Search failed' } });
+  }
+});
+
+/**
+ * GET /api/search/recent
+ * Return the user's last 20 search queries
+ */
+router.get('/recent', authenticate, async (req, res) => {
+  try {
+    const rows = await db.all(
+      `SELECT query, searched_at FROM user_recent_searches
+       WHERE user_id = ? ORDER BY searched_at DESC LIMIT 20`,
+      req.userId
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    logger.error(`[Search] Recent error: ${err.message}`);
+    res.status(500).json({ success: false, error: { code: 'SC-ERR-500', message: 'Failed to fetch recent searches' } });
+  }
+});
+
+/**
+ * DELETE /api/search/recent
+ * Clear the user's recent searches
+ */
+router.delete('/recent', authenticate, async (req, res) => {
+  try {
+    await db.run(`DELETE FROM user_recent_searches WHERE user_id = ?`, req.userId);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`[Search] Clear recent error: ${err.message}`);
+    res.status(500).json({ success: false, error: { code: 'SC-ERR-500', message: 'Failed to clear recent searches' } });
   }
 });
 

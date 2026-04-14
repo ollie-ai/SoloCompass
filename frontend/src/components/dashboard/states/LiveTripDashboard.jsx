@@ -97,6 +97,10 @@ const LiveTripDashboard = ({ trip = null, alerts = [], stats = {}, safetyData = 
         subtitle={`Today's plan, check-ins, and safety tools at a glance.`}
         primaryCta={{ label: "View trip details", href: `/trips/${trip?.id}` }}
         secondaryCta={{ label: "Check in now", href: "/safety" }}
+        extraCtas={[
+          { label: "🆘 SOS", href: "/safety?sos=1" },
+          { label: "✦ Ask Atlas", href: "/dashboard?atlas=1" },
+        ]}
         overlay="subtle"
         statusPanel={
           <div className="space-y-3">

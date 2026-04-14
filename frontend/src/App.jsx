@@ -309,6 +309,8 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* SC-SHARED-05: /phrasebook alias */}
+            <Route path="/phrasebook" element={<Navigate to="/safety/emergency-phrases" replace />} />
             <Route
               path="/safety/translator"
               element={

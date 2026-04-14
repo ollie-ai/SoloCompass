@@ -935,6 +935,7 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         month TEXT NOT NULL,
+        day TEXT,
         type TEXT NOT NULL,
         count INTEGER DEFAULT 0,
         UNIQUE(user_id, month, type)
@@ -948,6 +949,15 @@ async function initializeDatabase() {
         reason TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(blocker_id, blocked_id)
+      );
+
+      -- User recent searches
+      CREATE TABLE IF NOT EXISTS user_recent_searches (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        query TEXT NOT NULL,
+        searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, query)
       );
 
       -- Budgets (trip-level totals)

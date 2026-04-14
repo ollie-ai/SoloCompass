@@ -20,6 +20,7 @@ import {
 import { calculateSegmentSafetyScore } from '../services/safetyScoringService.js';
 import logger from '../services/logger.js';
 import db from '../db.js';
+import { enqueueEvent } from '../services/criticalEventQueue.js';
 
 const router = express.Router();
 
@@ -292,12 +293,21 @@ router.post('/emergency-alert', async (req, res) => {
 
     const user = await db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId);
     const { createNotification } = await import('../services/notificationService.js');
-    
+
+    // P0: Enqueue as a critical event so it survives process restarts and is
+    // retried with exponential back-off before being dead-lettered.
+    await enqueueEvent(
+      'sos_triggered',
+      { userId, lat, lng, type, message: message || `${user?.name} triggered an SOS alert.` },
+      1, // highest priority
+      userId
+    );
+
     await createNotification(
       userId,
       'checkin_sos',
       '🚨 EMERGENCY ALERT TRIGGERED',
-      message || `${user.name} has triggered an emergency alert.`,
+      message || `${user?.name} has triggered an emergency alert.`,
       { lat, lng, type }
     );
 

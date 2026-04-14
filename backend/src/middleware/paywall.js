@@ -284,52 +284,62 @@ export const checkAILimits = async (req, res, next) => {
       return next();
     }
 
-    // Explorer - check monthly limit (1 per month for itinerary, 5 per month for chat)
+    // Explorer - check limits: 1 itinerary/month, 10 chat messages/day
     const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-    
-    // Check both itinerary and chat usage for Explorer plan
-    const itineraryUsage = await db.prepare(
-      'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
-    ).get(req.userId, currentMonth, 'itinerary');
-
-    const chatUsage = await db.prepare(
-      'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
-    ).get(req.userId, currentMonth, 'chat');
+    const currentDay   = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
     // Determine what type of AI request this is based on route
     const isChatRequest = req.path === '/chat';
     const isItineraryRequest = req.path === '/generate-itinerary';
-    
-    if (isItineraryRequest && itineraryUsage?.count >= 1) {
-      return res.status(429).json({
-        success: false,
-        error: {
-          code: 'AI_LIMIT_REACHED',
-          message: 'Explorer plan includes 1 AI itinerary per month. Your limit resets next month.',
-          upgradeUrl: '/settings?tab=billing',
-          nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
-        }
-      });
+
+    if (isItineraryRequest) {
+      const itineraryUsage = await db.prepare(
+        'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
+      ).get(req.userId, currentMonth, 'itinerary');
+
+      if (itineraryUsage?.count >= 1) {
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'AI_LIMIT_REACHED',
+            message: 'Explorer plan includes 1 AI itinerary per month. Your limit resets next month.',
+            upgradeUrl: '/settings?tab=billing',
+            nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
+          }
+        });
+      }
     }
 
-    if (isChatRequest && chatUsage?.count >= 5) {
-      return res.status(429).json({
-        success: false,
-        error: {
-          code: 'AI_LIMIT_REACHED',
-          message: 'Explorer plan includes 5 AI chat messages per month. Your limit resets next month.',
-          upgradeUrl: '/settings?tab=billing',
-          nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
-        }
-      });
+    if (isChatRequest) {
+      // Spec: 10 messages per day for Explorer plan
+      const chatUsage = await db.prepare(
+        'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND day = ? AND type = ?'
+      ).get(req.userId, currentDay, 'chat');
+
+      if (chatUsage?.count >= 10) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(0, 0, 0, 0);
+        return res.status(429).json({
+          success: false,
+          error: {
+            code: 'AI_LIMIT_REACHED',
+            message: 'Explorer plan includes 10 AI chat messages per day. Your limit resets tomorrow.',
+            upgradeUrl: '/settings?tab=billing',
+            nextReset: tomorrow.toISOString()
+          }
+        });
+      }
     }
 
-    // Track usage
+    // Track usage — insert or increment, keyed by both month and day
     const usageType = isChatRequest ? 'chat' : (isItineraryRequest ? 'itinerary' : 'other');
     if (usageType !== 'other') {
       await db.prepare(
-        'INSERT INTO ai_usage (user_id, month, type, count) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, month, type) DO UPDATE SET count = count + 1'
-      ).run(req.userId, currentMonth, usageType);
+        `INSERT INTO ai_usage (user_id, month, day, type, count)
+         VALUES (?, ?, ?, ?, 1)
+         ON CONFLICT(user_id, month, type) DO UPDATE SET count = count + 1, day = excluded.day`
+      ).run(req.userId, currentMonth, currentDay, usageType);
     }
 
     next();

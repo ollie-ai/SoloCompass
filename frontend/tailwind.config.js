@@ -8,6 +8,15 @@ export default {
     "./src/**/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
+    // Named breakpoints: xs (375) matches smallest phones, 2xl (1440) matches wide desktop
+    screens: {
+      xs:  '375px',
+      sm:  '640px',
+      md:  '768px',
+      lg:  '1024px',
+      xl:  '1280px',
+      '2xl': '1440px',
+    },
     extend: {
       colors: {
         primary: { 
@@ -35,9 +44,33 @@ export default {
           dark: '#0f172a'
         }
       },
+      // Named type-scale — use as text-h1, text-body, etc.
+      fontSize: {
+        'h1':       ['2.5rem',  { lineHeight: '1.15', fontWeight: '900', letterSpacing: '-0.025em' }],
+        'h2':       ['2rem',    { lineHeight: '1.2',  fontWeight: '800', letterSpacing: '-0.02em'  }],
+        'h3':       ['1.5rem',  { lineHeight: '1.3',  fontWeight: '700'                             }],
+        'h4':       ['1.25rem', { lineHeight: '1.4',  fontWeight: '700'                             }],
+        'body-lg':  ['1.125rem',{ lineHeight: '1.75'                                                }],
+        'body':     ['1rem',    { lineHeight: '1.625'                                               }],
+        'body-sm':  ['0.875rem',{ lineHeight: '1.5'                                                 }],
+        'caption':  ['0.75rem', { lineHeight: '1.4',  letterSpacing: '0.01em'                       }],
+        'overline': ['0.6875rem',{ lineHeight: '1.3', fontWeight: '700', letterSpacing: '0.1em',
+                                   textTransform: 'uppercase'                                       }],
+      },
       fontFamily: {
         heading: ['Outfit', 'system-ui', 'sans-serif'],
         sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+      // Named elevation/shadow tokens
+      boxShadow: {
+        'elevation-1': '0 1px 2px 0 rgba(0,0,0,0.05)',
+        'elevation-2': '0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px -1px rgba(0,0,0,0.1)',
+        'elevation-3': '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)',
+        'elevation-4': '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
+        'elevation-5': '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+        'brand':       '0 4px 14px 0 rgba(16,185,129,0.25)',
+        'brand-lg':    '0 8px 24px 0 rgba(16,185,129,0.3)',
+        'inner-sm':    'inset 0 1px 2px 0 rgba(0,0,0,0.05)',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out forwards',

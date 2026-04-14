@@ -45,6 +45,8 @@ export default function AvatarUpload({ currentUrl, displayName = '', onUpload, s
     .toUpperCase() || '?';
 
   const avatarUrl = preview || currentUrl;
+  // Only allow blob: and https: URLs as image sources to prevent XSS
+  const safeAvatarUrl = avatarUrl && /^(blob:|https?:\/\/)/.test(avatarUrl) ? avatarUrl : null;
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -98,9 +100,9 @@ export default function AvatarUpload({ currentUrl, displayName = '', onUpload, s
     <div className="relative inline-block">
       {/* Avatar display */}
       <div className={`${sizeClasses[size]} rounded-full overflow-hidden relative`}>
-        {avatarUrl ? (
+        {safeAvatarUrl ? (
           <img
-            src={avatarUrl}
+            src={safeAvatarUrl}
             alt={displayName || 'Avatar'}
             className="w-full h-full object-cover"
           />

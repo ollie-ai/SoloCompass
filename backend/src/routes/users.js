@@ -20,6 +20,15 @@ const apiLimiter = rateLimit({
   message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many requests, please try again later' } },
 });
 
+// Stricter rate limiter for upload/export operations
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'TOO_MANY_REQUESTS', message: 'Too many requests, please try again later' } },
+});
+
 // Whitelist of allowed profile fields
 const ALLOWED_PROFILE_FIELDS = [
   'name', 'travel_style', 'bio', 'avatar_url', 'phone', 'home_city', 
@@ -41,7 +50,7 @@ const avatarUpload = multer({
 });
 
 // PUT /api/users/me/avatar — dedicated avatar upload with size/type validation
-router.put('/me/avatar', authenticate, avatarUpload.single('avatar'), async (req, res) => {
+router.put('/me/avatar', uploadLimiter, authenticate, avatarUpload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No file uploaded' } });
@@ -426,7 +435,7 @@ router.get('/:id/export', requireAuth, async (req, res) => {
 });
 
 // POST /api/users/me/export — dedicated /me export endpoint (GDPR)
-router.post('/me/export', authenticate, async (req, res) => {
+router.post('/me/export', uploadLimiter, authenticate, async (req, res) => {
   try {
     const userId = req.user.userId;
 

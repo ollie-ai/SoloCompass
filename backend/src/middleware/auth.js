@@ -3,6 +3,29 @@ import crypto from 'crypto';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
+// ── RBAC role name mapping ────────────────────────────────────────────────────
+// Internal DB role values are 'user', 'viewer', 'admin'.
+// The spec (and UI) uses the display names 'Explorer', 'Navigator', 'Admin'.
+// Use this map wherever you need to surface a human-readable tier label.
+export const ROLE_DISPLAY_NAMES = {
+  user: 'Explorer',
+  viewer: 'Navigator',
+  admin: 'Admin',
+};
+
+// Inverse lookup: display name → internal role value
+export const DISPLAY_NAME_TO_ROLE = Object.fromEntries(
+  Object.entries(ROLE_DISPLAY_NAMES).map(([k, v]) => [v, k])
+);
+
+/**
+ * Returns the display name for an internal role.
+ * Falls back to the raw role value so existing code never breaks.
+ */
+export const getRoleDisplayName = (role) => ROLE_DISPLAY_NAMES[role] ?? role;
+
+export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
+
 // Lazy secret accessor - exported for use in other modules
 export const getJWTSecret = () => {
   const secret = process.env.JWT_SECRET;
@@ -108,7 +131,7 @@ export const authenticate = async (req, res, next) => {
 };
 
 export const requireAuth = authenticate;
-export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
+// VALID_USER_ROLES is defined at the top of this file alongside the display-name maps
 
 // Admin role levels: 'support', 'moderator', 'super_admin'
 // All admin roles have basic admin access

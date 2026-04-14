@@ -35,5 +35,29 @@ export default defineConfig({
   build: {
     sourcemap: false,
     cssCodeSplit: true,
+    // Warn (and fail CI via rollup-plugin-visualizer) when any chunk exceeds 200 KB
+    chunkSizeWarningLimit: 200,
+    rollupOptions: {
+      output: {
+        // Manual chunking: split heavyweight vendor libs into separate async chunks
+        // so each route-level chunk stays well below the 200 KB budget.
+        manualChunks: {
+          // React core
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          // State / data-fetching
+          'vendor-query': ['@tanstack/react-query'],
+          'vendor-zustand': ['zustand'],
+          // Forms
+          'vendor-forms': ['react-hook-form'],
+          // UI / animation
+          'vendor-framer': ['framer-motion'],
+          'vendor-leaflet': ['leaflet', 'react-leaflet'],
+          // Stripe
+          'vendor-stripe': ['@stripe/stripe-js', '@stripe/react-stripe-js'],
+          // Drag and drop
+          'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+        },
+      },
+    },
   }
 })

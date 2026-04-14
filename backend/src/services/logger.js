@@ -38,8 +38,10 @@ const colors = {
 
 winston.addColors(colors);
 
-// Custom format
-const format = winston.format.combine(
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Human-readable format for development consoles
+const devFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),
   winston.format.colorize({ all: true }),
   winston.format.printf(
@@ -47,10 +49,19 @@ const format = winston.format.combine(
   ),
 );
 
+// Structured JSON format for production (log aggregation tools, e.g. Datadog, CloudWatch, Loki)
+const jsonFormat = winston.format.combine(
+  winston.format.timestamp(),
+  winston.format.errors({ stack: true }),
+  winston.format.json(),
+);
+
 // Transports
 const transports = [
-  // Console for development
-  new winston.transports.Console(),
+  // Console: JSON in production for machine consumption, colourised text in dev
+  new winston.transports.Console({
+    format: isProduction ? jsonFormat : devFormat,
+  }),
   
   // Daily rotate file for errors
   new winston.transports.DailyRotateFile({
@@ -60,6 +71,7 @@ const transports = [
     maxSize: '20m',
     maxFiles: '14d',
     level: 'error',
+    format: jsonFormat,
   }),
   
   // Daily rotate file for all logs
@@ -69,13 +81,14 @@ const transports = [
     zippedArchive: true,
     maxSize: '20m',
     maxFiles: '14d',
+    format: jsonFormat,
   }),
 ];
 
 const logger = winston.createLogger({
   level: level(),
   levels,
-  format,
+  format: jsonFormat,
   transports,
 });
 

@@ -1,6 +1,7 @@
 import logger from './logger.js';
 import db from '../db.js';
 import { OPS_ALERT_TYPES, OPS_SEVERITY } from './notificationRegistry.js';
+import { dispatchOpsAlert } from './opsAlertDispatcher.js';
 
 export async function createOpsAlert({
   type,
@@ -16,14 +17,21 @@ export async function createOpsAlert({
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(type, severity, notificationType, affectedUserId, provider, JSON.stringify(errorDetails));
 
+    const alertId = result.lastInsertRowid;
+
     logger.warn(`[OpsAlert] Created alert: ${type} - ${severity}`, {
-      alertId: result.lastInsertRowid,
+      alertId,
       notificationType,
       provider,
       errorDetails,
     });
 
-    return { success: true, id: result.lastInsertRowid };
+    // Fire-and-forget outbound dispatch (Slack / PagerDuty / Discord)
+    dispatchOpsAlert({ alertId, type, severity, errorDetails }).catch((err) =>
+      logger.error(`[OpsAlert] Dispatcher error: ${err.message}`)
+    );
+
+    return { success: true, id: alertId };
   } catch (error) {
     logger.error('[OpsAlert] Failed to create alert:', error.message);
     return { success: false, error: error.message };

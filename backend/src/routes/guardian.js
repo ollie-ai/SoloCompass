@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { PLAN_TIERS } from '../middleware/paywall.js';
@@ -16,6 +17,14 @@ const GUARDIAN_LIMITS = {
   [PLAN_TIERS.GUARDIAN]: 3,
   [PLAN_TIERS.NAVIGATOR]: Infinity
 };
+
+const guardianWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many guardian requests. Please wait.' }
+});
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -44,7 +53,7 @@ function formatGuardianAcknowledgement(ga) {
   };
 }
 
-router.post('/send-request', authenticate, async (req, res) => {
+router.post('/send-request', authenticate, guardianWriteLimiter, async (req, res) => {
   try {
     const { contactId, tripId } = req.body;
     const userId = req.userId;
@@ -415,7 +424,7 @@ router.get('/status', authenticate, async (req, res) => {
 });
 
 // POST /guardian/invite - Invite a guardian by email (creates guardian_relationships record)
-router.post('/invite', authenticate, async (req, res) => {
+router.post('/invite', authenticate, guardianWriteLimiter, async (req, res) => {
   try {
     const userId = req.userId;
     const {

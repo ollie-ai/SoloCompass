@@ -17,6 +17,14 @@ const sosTriggerLimiter = rateLimit({
   message: { success: false, error: 'Too many SOS requests. Please wait before trying again.' }
 });
 
+const sosActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many SOS requests. Please wait.' }
+});
+
 // POST /sos/trigger - Trigger SOS alert
 router.post('/trigger', authenticate, sosTriggerLimiter, async (req, res) => {
   try {
@@ -132,7 +140,7 @@ router.post('/trigger', authenticate, sosTriggerLimiter, async (req, res) => {
 });
 
 // POST /sos/cancel - Cancel active SOS
-router.post('/cancel', authenticate, async (req, res) => {
+router.post('/cancel', authenticate, sosActionLimiter, async (req, res) => {
   try {
     const userId = req.userId;
     const { sosEventId } = req.body;
@@ -173,7 +181,7 @@ router.post('/cancel', authenticate, async (req, res) => {
 });
 
 // GET /sos/status - Get current active SOS event
-router.get('/status', authenticate, async (req, res) => {
+router.get('/status', authenticate, sosActionLimiter, async (req, res) => {
   try {
     const userId = req.userId;
 

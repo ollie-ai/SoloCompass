@@ -2238,7 +2238,6 @@ async function seedEmbassies() {
       await p.query(`
         INSERT INTO embassies (country_code, nationality_code, embassy_name, city, address, phone, emergency_phone, website, email)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT DO NOTHING
       `, [e.country, e.nat, e.name, e.city, e.address, e.phone, e.emergency, e.website, e.email]);
     }
 

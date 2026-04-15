@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { requireFeature, FEATURES } from '../middleware/paywall.js';
@@ -7,8 +8,16 @@ import logger from '../services/logger.js';
 
 const router = express.Router();
 
+const returnPlanLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many return plan requests. Please wait.' }
+});
+
 // POST /return-plan - Create a return plan (Guardian+ only)
-router.post('/', authenticate, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
+router.post('/', authenticate, returnPlanLimiter, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
   try {
     const userId = req.userId;
     const {
@@ -88,7 +97,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // PUT /return-plan/:id - Update return plan
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', authenticate, returnPlanLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;
@@ -148,7 +157,7 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 // POST /return-plan/:id/activate - Activate plan and notify guardians (Guardian+ only)
-router.post('/:id/activate', authenticate, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
+router.post('/:id/activate', authenticate, returnPlanLimiter, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;

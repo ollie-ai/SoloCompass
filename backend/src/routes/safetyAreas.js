@@ -1,12 +1,29 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
 
+const safetyReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests. Please wait.' }
+});
+
+const safetyWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many safety reports. Please wait.' }
+});
+
 // GET /safety-areas/:destinationId - Get safety areas for a destination
-router.get('/:destinationId', authenticate, async (req, res) => {
+router.get('/:destinationId', authenticate, safetyReadLimiter, async (req, res) => {
   try {
     const { destinationId } = req.params;
 
@@ -26,7 +43,7 @@ router.get('/:destinationId', authenticate, async (req, res) => {
 });
 
 // GET /safety-areas/nearby?lat=X&lng=Y - Get nearby safety reports/areas
-router.get('/nearby', authenticate, async (req, res) => {
+router.get('/nearby', authenticate, safetyReadLimiter, async (req, res) => {
   try {
     const { lat, lng, radius = 5 } = req.query;
 
@@ -60,7 +77,7 @@ router.get('/nearby', authenticate, async (req, res) => {
 });
 
 // POST /safety-areas/report - Submit a safety report
-router.post('/report', authenticate, async (req, res) => {
+router.post('/report', authenticate, safetyWriteLimiter, async (req, res) => {
   try {
     const userId = req.userId;
     const { latitude, longitude, address, reportType, description, severity = 'medium' } = req.body;
@@ -94,7 +111,7 @@ router.post('/report', authenticate, async (req, res) => {
 });
 
 // GET /safety-areas/reports - Get recent safety reports
-router.get('/reports', authenticate, async (req, res) => {
+router.get('/reports', authenticate, safetyReadLimiter, async (req, res) => {
   try {
     const { limit = 50, status = 'validated' } = req.query;
 

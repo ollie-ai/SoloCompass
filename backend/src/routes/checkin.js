@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { notifyEmergencyContacts, createNotification } from '../services/notificationService.js';
@@ -6,6 +7,14 @@ import { broadcastToUser } from '../services/websocket.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const checkinActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many check-in requests. Please wait.' }
+});
 
 const emergencyRateLimit = new Map();
 const EMERGENCY_RATE_LIMIT = 5;
@@ -997,7 +1006,7 @@ router.post('/trigger-missed/:id', authenticate, async (req, res) => {
 });
 
 // POST /checkin/scheduled/:id/confirm - Confirm a scheduled check-in (I'm safe)
-router.post('/scheduled/:id/confirm', authenticate, async (req, res) => {
+router.post('/scheduled/:id/confirm', authenticate, checkinActionLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;
@@ -1021,16 +1030,19 @@ router.post('/scheduled/:id/confirm', authenticate, async (req, res) => {
     // Reset missed/warning state
     const updates = ['missed_at = NULL', 'final_warning_sent = false', 'sos_triggered = false',
                      'missed_count = 0', 'escalation_level = 0'];
+    const params = [];
 
     // Advance next check-in time if recurring
     if (scheduledCheckIn.is_recurring && scheduledCheckIn.interval_minutes) {
       const nextTime = new Date(Date.now() + scheduledCheckIn.interval_minutes * 60 * 1000);
-      updates.push(`next_checkin_time = '${nextTime.toISOString()}'`);
+      updates.push('next_checkin_time = ?');
+      params.push(nextTime.toISOString());
     }
 
+    params.push(id);
     await db.prepare(`
       UPDATE scheduled_check_ins SET ${updates.join(', ')} WHERE id = ?
-    `).run(id);
+    `).run(...params);
 
     broadcastToUser(userId, {
       type: 'checkin_confirmed',
@@ -1050,7 +1062,7 @@ router.post('/scheduled/:id/confirm', authenticate, async (req, res) => {
 });
 
 // POST /checkin/scheduled/:id/snooze - Snooze a scheduled check-in
-router.post('/scheduled/:id/snooze', authenticate, async (req, res) => {
+router.post('/scheduled/:id/snooze', authenticate, checkinActionLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;

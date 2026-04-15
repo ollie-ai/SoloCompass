@@ -5,13 +5,22 @@ import toast from 'react-hot-toast';
 import DashboardShell from '../components/dashboard/DashboardShell';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../stores/authStore';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { 
   Shield, Bell, Lock, ShieldCheck, AlertTriangle, Phone, MapPin, Eye, Info, Check, Clock, Users, Send, History, 
-  PhoneCall, AlertOctagon, Calendar, X, Plus, Edit2, Trash2, XCircle, CheckCircle, Smartphone, Activity, Compass, Sparkles
+  PhoneCall, AlertOctagon, Calendar, X, Plus, Edit2, Trash2, XCircle, CheckCircle, Smartphone, Activity, Compass, Sparkles,
+  Map, FileText, Building
 } from 'lucide-react';
 import Button from '../components/Button';
 import APIErrorBoundary from '../components/APIErrorBoundary';
 import PlanGate from '../components/PlanGate';
+import MissedCheckInAlert from '../components/safety/MissedCheckInAlert';
+import GuardianInviteForm from '../components/safety/GuardianInviteForm';
+import GuardianDashboard from '../components/safety/GuardianDashboard';
+import ReturnPlanSetup from '../components/safety/ReturnPlanSetup';
+import SafetyMapOverlay from '../components/safety/SafetyMapOverlay';
+import EmbassyFinder from '../components/safety/EmbassyFinder';
+import LocationSharingToggle from '../components/safety/LocationSharingToggle';
 
 const Skeleton = ({ className }) => (
   <div className={`bg-base-content/5 rounded-lg animate-pulse ${className}`} />
@@ -96,6 +105,18 @@ export default function Safety() {
   const [aiAdvice, setAiAdvice] = useState(null);
   const [aiAdviceLoading, setAiAdviceLoading] = useState(false);
 
+  // New state for wired safety components
+  const [missedCheckIn, setMissedCheckIn] = useState(null);
+  const [trips, setTrips] = useState([]);
+  const [returnPlan, setReturnPlan] = useState(null);
+  const [guardianRelationships, setGuardianRelationships] = useState([]);
+  const [activeDestinationId, setActiveDestinationId] = useState(null);
+  const [embassyCountryCode, setEmbassyCountryCode] = useState('');
+  const [showGuardianInvite, setShowGuardianInvite] = useState(false);
+  const [showGuardianDashboard, setShowGuardianDashboard] = useState(false);
+
+  const { on: wsOn } = useWebSocket();
+
   useEffect(() => {
     const timer = setTimeout(() => {
       if (loading) {
@@ -110,12 +131,25 @@ export default function Safety() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Subscribe to WebSocket checkin_missed events
+  useEffect(() => {
+    const unsubscribe = wsOn('checkin_missed', (data) => {
+      if (data.scheduledCheckInId) {
+        const sci = scheduledCheckIns.find((s) => s.id === data.scheduledCheckInId);
+        setMissedCheckIn(sci || { id: data.scheduledCheckInId });
+      }
+    });
+    return unsubscribe;
+  }, [wsOn, scheduledCheckIns]);
+
   const fetchData = async () => {
     try {
-      const [contactsRes, checkInsRes, scheduledRes] = await Promise.all([
+      const [contactsRes, checkInsRes, scheduledRes, tripsRes, guardianRes] = await Promise.all([
         api.get('/emergency-contacts'),
         api.get('/checkin/history'),
-        api.get('/checkin/scheduled?activeOnly=true')
+        api.get('/checkin/scheduled?activeOnly=true'),
+        api.get('/trips').catch(() => null),
+        api.get('/guardian/list').catch(() => null)
       ]);
 
       if (contactsRes.data.success) {
@@ -130,6 +164,26 @@ export default function Safety() {
         const scheduledData = scheduledRes.data.data;
         setScheduledCheckIns(Array.isArray(scheduledData) ? scheduledData : (scheduledData?.scheduled || []));
       }
+      if (tripsRes?.data?.success) {
+        const tripsData = tripsRes.data.data;
+        const tripList = Array.isArray(tripsData) ? tripsData : (tripsData?.trips || []);
+        setTrips(tripList);
+        const activeTrip = tripList.find((t) => t.status === 'active') || tripList[0];
+        if (activeTrip) {
+          setActiveDestinationId(activeTrip.destination_id || activeTrip.id);
+        }
+      }
+      if (guardianRes?.data?.success) {
+        const rel = guardianRes.data.data?.relationships || guardianRes.data.data || [];
+        setGuardianRelationships(Array.isArray(rel) ? rel : []);
+      }
+      // Load return plan (no trip filter – get most recent)
+      api.get('/return-plan').then((res) => {
+        if (res.data?.success) {
+          const plans = res.data.data;
+          setReturnPlan(Array.isArray(plans) ? plans[0] || null : plans);
+        }
+      }).catch(() => null);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
@@ -706,6 +760,15 @@ export default function Safety() {
         </motion.div>
       )}
 
+      {/* Missed Check-In Alert banner */}
+      {missedCheckIn && (
+        <MissedCheckInAlert
+          scheduledCheckIn={missedCheckIn}
+          onConfirm={() => setMissedCheckIn(null)}
+          onSnooze={() => setMissedCheckIn(null)}
+        />
+      )}
+
       {/* Navigation tabs */}
       <motion.div variants={itemVariants} className="mb-6">
          <div className="flex bg-base-200 border border-base-300/50 p-1 gap-1 rounded-xl">
@@ -713,6 +776,8 @@ export default function Safety() {
             { id: 'checkin', label: 'Check-In & SOS', icon: Send },
             { id: 'tools', label: 'Tools', icon: Compass },
             { id: 'contacts', label: 'Guardians', icon: Phone },
+            { id: 'returnplan', label: 'Return Plan', icon: FileText },
+            { id: 'safetymap', label: 'Safety Map', icon: Map },
             { id: 'history', label: 'History', icon: History }
           ].map((tab) => (
             <button
@@ -821,6 +886,22 @@ export default function Safety() {
                       <span>{sosEventLocation.address || `${sosEventLocation.latitude?.toFixed(4)}, ${sosEventLocation.longitude?.toFixed(4)}`}</span>
                     </div>
                   )}
+                  {/* Offline fallback: direct call to local emergency services */}
+                  <div className="mb-6 text-center">
+                    <p className="text-xs opacity-70 mb-2 uppercase tracking-wide font-bold">No signal? Call directly:</p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {[{ label: '112 (International)', number: '112' }, { label: '999 (UK)', number: '999' }, { label: '911 (US/CA)', number: '911' }, { label: '000 (AU)', number: '000' }].map(({ label, number }) => (
+                        <a
+                          key={number}
+                          href={`tel:${number}`}
+                          className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-3 py-2 rounded-lg border border-white/30 transition-colors"
+                        >
+                          <Phone size={12} />
+                          {label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
                   <button
                     onClick={handleSosCancel}
                     className="bg-white text-error font-black px-8 py-3 rounded-xl uppercase tracking-wide text-sm hover:bg-red-50 transition-colors"
@@ -1158,6 +1239,147 @@ export default function Safety() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Guardian Invite Form */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-black text-base-content text-lg">Guardian Network</h3>
+                <p className="text-base-content/40 text-sm font-medium mt-1">Invite someone to watch over you while you travel</p>
+              </div>
+              <button
+                onClick={() => setShowGuardianInvite(!showGuardianInvite)}
+                className="px-3 py-2 bg-brand-vibrant text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-colors flex items-center gap-1.5"
+              >
+                <Plus size={14} />
+                {showGuardianInvite ? 'Cancel' : 'Invite'}
+              </button>
+            </div>
+
+            {showGuardianInvite && (
+              <div className="mb-4 border border-base-300/50 rounded-xl p-4">
+                <GuardianInviteForm
+                  trips={trips}
+                  onSuccess={() => {
+                    setShowGuardianInvite(false);
+                    fetchData();
+                  }}
+                />
+              </div>
+            )}
+
+            {guardianRelationships.length > 0 && (
+              <div className="space-y-3">
+                {guardianRelationships.map((rel) => (
+                  <div key={rel.id} className="flex items-center justify-between p-3 border border-base-300/50 rounded-xl bg-base-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-brand-vibrant/10 rounded-xl flex items-center justify-center">
+                        <Users size={16} className="text-brand-vibrant" />
+                      </div>
+                      <div>
+                        <p className="font-black text-sm text-base-content">{rel.guardian_name || rel.guardian_email}</p>
+                        <p className="text-xs text-base-content/50 capitalize">{rel.status || 'pending'}</p>
+                      </div>
+                    </div>
+                    {rel.source === 'relationship' && (
+                      <LocationSharingToggle
+                        guardianId={rel.id}
+                        enabled={rel.location_sharing_enabled}
+                        onToggled={() => fetchData()}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Guardian Dashboard (for users who are guardians themselves) */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-base-content text-lg">People I'm Guarding</h3>
+              <button
+                onClick={() => setShowGuardianDashboard(!showGuardianDashboard)}
+                className="text-xs font-bold text-brand-vibrant hover:underline"
+              >
+                {showGuardianDashboard ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showGuardianDashboard && <GuardianDashboard />}
+          </div>
+
+          {/* Embassy Finder */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center gap-2 mb-4">
+              <Building size={18} className="text-brand-vibrant" />
+              <h3 className="font-black text-base-content text-lg">Embassy Finder</h3>
+            </div>
+            <p className="text-sm text-base-content/60 mb-4">Find your country's embassy at your destination.</p>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                maxLength={3}
+                value={embassyCountryCode}
+                onChange={(e) => setEmbassyCountryCode(e.target.value.toUpperCase())}
+                placeholder="e.g. TH, JP, FR"
+                className="flex-1 px-3 py-2.5 border border-base-300 rounded-xl bg-base-100 text-sm font-mono uppercase focus:outline-none focus:border-brand-vibrant"
+              />
+            </div>
+            {embassyCountryCode.length >= 2 && (
+              <EmbassyFinder countryCode={embassyCountryCode} />
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Return Plan Tab */}
+      {activeTab === 'returnplan' && (
+        <motion.div variants={itemVariants} className="space-y-6">
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="mb-6">
+              <h3 className="font-black text-base-content text-lg">Safe Return Plan</h3>
+              <p className="text-sm text-base-content/60 mt-1">Document your embassy, hospital, flight, and accommodation details so your guardians can get you home safely.</p>
+            </div>
+            <PlanGate
+              minPlan="guardian"
+              title="Safe Return Planning"
+              description="Upgrade to Guardian to create a safe return plan that your guardians can use in an emergency."
+            >
+              <ReturnPlanSetup
+                tripId={trips.find((t) => t.status === 'active')?.id || trips[0]?.id}
+                existingPlan={returnPlan}
+                onSaved={() => {
+                  api.get('/return-plan').then((res) => {
+                    if (res.data?.success) {
+                      const plans = res.data.data;
+                      setReturnPlan(Array.isArray(plans) ? plans[0] || null : plans);
+                    }
+                  }).catch(() => null);
+                }}
+              />
+            </PlanGate>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Safety Map Tab */}
+      {activeTab === 'safetymap' && (
+        <motion.div variants={itemVariants} className="space-y-6">
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="mb-6">
+              <h3 className="font-black text-base-content text-lg">Area Safety</h3>
+              <p className="text-sm text-base-content/60 mt-1">Community-sourced safety ratings for areas in your destination.</p>
+            </div>
+            {activeDestinationId ? (
+              <SafetyMapOverlay destinationId={activeDestinationId} />
+            ) : (
+              <div className="text-center py-8 text-base-content/50">
+                <Map size={36} className="mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No active trip destination found.</p>
+                <p className="text-xs mt-1">Add a trip to see safety area data.</p>
               </div>
             )}
           </div>

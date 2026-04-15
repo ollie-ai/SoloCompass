@@ -9,6 +9,8 @@ const TIER1_MS = 5 * 60 * 1000;   // 5 min: notify first contact only
 const TIER2_MS = 15 * 60 * 1000;  // 15 min: notify ALL contacts
 const TIER3_MS = 30 * 60 * 1000;  // 30 min: trigger full SOS
 const REMINDER_BEFORE_MS = 15 * 60 * 1000;
+const REMINDER_AT_MS = 0;          // 0 min: reminder exactly at scheduled time
+const REMINDER_AFTER_MS = 5 * 60 * 1000; // 5 min after: gentle follow-up before escalation
 
 export function startScheduledCheckInMonitor() {
   logger.info('[CheckIn Monitor] Starting scheduled check-in monitor');
@@ -17,6 +19,7 @@ export function startScheduledCheckInMonitor() {
     try {
       const now = new Date();
       
+      // --- 15-minute advance reminder ---
       const upcomingCheckIns = await db.prepare(`
         SELECT 
           sci.*,
@@ -58,7 +61,101 @@ export function startScheduledCheckInMonitor() {
           sci.id
         );
 
-        logger.info(`[CheckIn Monitor] Reminder sent for scheduled check-in ${sci.id}`);
+        logger.info(`[CheckIn Monitor] 15-min advance reminder sent for check-in ${sci.id}`);
+      }
+
+      // --- At-time reminder (sent within 1 check-interval window of scheduled_time) ---
+      const atTimeCheckIns = await db.prepare(`
+        SELECT 
+          sci.*,
+          u.id as user_id,
+          u.name as user_name,
+          u.email as user_email
+        FROM scheduled_check_ins sci
+        JOIN users u ON sci.user_id = u.id
+        WHERE sci.is_active = true
+          AND sci.scheduled_time > ?
+          AND sci.scheduled_time <= ?
+          AND sci.missed_at IS NULL
+          AND (sci.at_time_reminder_sent IS NULL OR sci.at_time_reminder_sent = false)
+      `).all(
+        new Date(now.getTime() - CHECK_INTERVAL_MS).toISOString(),
+        now.toISOString()
+      );
+
+      for (const sci of atTimeCheckIns) {
+        await db.prepare(`
+          UPDATE scheduled_check_ins SET at_time_reminder_sent = true WHERE id = ?
+        `).run(sci.id).catch(() => null); // column may not exist on older DB versions
+
+        broadcastToUser(sci.user_id, {
+          type: 'checkin_reminder',
+          scheduledCheckIn: {
+            id: sci.id,
+            scheduledTime: sci.scheduled_time,
+            tripId: sci.trip_id
+          },
+          message: `Your check-in is due NOW. Tap to confirm you're safe!`
+        });
+
+        await createNotification(
+          sci.user_id,
+          'checkin_reminder',
+          'Check-In Due Now',
+          `Your scheduled check-in is due now. Confirm you're safe to avoid alerting your contacts.`,
+          { scheduledCheckInId: sci.id, tripId: sci.trip_id },
+          sci.id
+        ).catch(() => null);
+
+        logger.info(`[CheckIn Monitor] At-time reminder sent for check-in ${sci.id}`);
+      }
+
+      // --- +5-min follow-up reminder (before escalation kicks in at 5 min) ---
+      const followUpCheckIns = await db.prepare(`
+        SELECT 
+          sci.*,
+          u.id as user_id,
+          u.name as user_name,
+          u.email as user_email
+        FROM scheduled_check_ins sci
+        JOIN users u ON sci.user_id = u.id
+        WHERE sci.is_active = true
+          AND sci.scheduled_time <= ?
+          AND sci.scheduled_time > ?
+          AND sci.missed_at IS NULL
+          AND sci.escalation_level IS NULL
+          AND (sci.followup_reminder_sent IS NULL OR sci.followup_reminder_sent = false)
+      `).all(
+        new Date(now.getTime() - REMINDER_AT_MS).toISOString(),
+        new Date(now.getTime() - REMINDER_AFTER_MS).toISOString()
+      );
+
+      for (const sci of followUpCheckIns) {
+        await db.prepare(`
+          UPDATE scheduled_check_ins SET followup_reminder_sent = true WHERE id = ?
+        `).run(sci.id).catch(() => null);
+
+        broadcastToUser(sci.user_id, {
+          type: 'checkin_missed',
+          scheduledCheckIn: {
+            id: sci.id,
+            scheduledTime: sci.scheduled_time,
+            tripId: sci.trip_id
+          },
+          scheduledCheckInId: sci.id,
+          message: `You missed your check-in 5 minutes ago. Tap to confirm you're safe before your contacts are alerted.`
+        });
+
+        await createNotification(
+          sci.user_id,
+          'checkin_missed',
+          'Missed Check-In – Please Respond',
+          `Your check-in was 5 minutes ago. Confirm you are safe now, or your primary contact will be notified shortly.`,
+          { scheduledCheckInId: sci.id, tripId: sci.trip_id },
+          sci.id
+        ).catch(() => null);
+
+        logger.info(`[CheckIn Monitor] 5-min follow-up reminder sent for check-in ${sci.id}`);
       }
       
       const missedCheckIns = await db.prepare(`

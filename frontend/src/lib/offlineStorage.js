@@ -6,6 +6,7 @@ const OFFLINE_DATA_SCHEMA = {
   destinationAI: null,
   emergencyNumbers: null,
   currencyRates: null,
+  pendingCheckins: [],
   lastSync: null
 };
 
@@ -110,6 +111,22 @@ export const offlineStorage = {
       console.error('Error clearing offline data:', error);
       return false;
     }
+  },
+
+  getPendingCheckins() {
+    const data = this.getOfflineData();
+    return data?.pendingCheckins || [];
+  },
+
+  addPendingCheckin(checkin) {
+    const data = this.getOfflineData() || { ...OFFLINE_DATA_SCHEMA };
+    const pending = data.pendingCheckins || [];
+    pending.push({ ...checkin, queuedAt: new Date().toISOString() });
+    return this.setOfflineData({ pendingCheckins: pending });
+  },
+
+  clearPendingCheckins() {
+    return this.setOfflineData({ pendingCheckins: [] });
   },
 
   getOfflineEssentialsStatus() {

@@ -1,13 +1,14 @@
 import express from 'express';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 import { createNotification } from '../services/notificationService.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
 
-// POST /return-plan - Create a return plan
-router.post('/', authenticate, async (req, res) => {
+// POST /return-plan - Create a return plan (Guardian+ only)
+router.post('/', authenticate, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
   try {
     const userId = req.userId;
     const {
@@ -146,8 +147,8 @@ router.put('/:id', authenticate, async (req, res) => {
   }
 });
 
-// POST /return-plan/:id/activate - Activate plan and notify guardians
-router.post('/:id/activate', authenticate, async (req, res) => {
+// POST /return-plan/:id/activate - Activate plan and notify guardians (Guardian+ only)
+router.post('/:id/activate', authenticate, requireFeature(FEATURES.SAFE_RETURN_TIMER), async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.userId;

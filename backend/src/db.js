@@ -2201,6 +2201,53 @@ async function runMigrations() {
   logger.info('[Migration] All migrations complete');
 }
 
+// Seed embassy data for top nationality/destination combinations
+async function seedEmbassies() {
+  const p = getPool();
+  if (!p) return;
+  try {
+    const existing = await p.query('SELECT COUNT(*) as count FROM embassies');
+    if (parseInt(existing.rows[0]?.count || '0') > 0) return; // already seeded
+
+    const embassies = [
+      // UK embassies abroad
+      { country: 'TH', nat: 'GB', name: 'British Embassy Bangkok', city: 'Bangkok', address: '14 Wireless Road, Lumpini, Pathum Wan, Bangkok 10330', phone: '+66 2 305 8333', emergency: '+66 2 305 8333', website: 'https://www.gov.uk/world/organisations/british-embassy-bangkok', email: 'ukinbangkok@fcdo.gov.uk' },
+      { country: 'JP', nat: 'GB', name: 'British Embassy Tokyo', city: 'Tokyo', address: '1 Ichiban-cho, Chiyoda-ku, Tokyo 102-8381', phone: '+81 3 5211 1100', emergency: '+81 3 5211 1100', website: 'https://www.gov.uk/world/organisations/british-embassy-tokyo', email: null },
+      { country: 'FR', nat: 'GB', name: 'British Embassy Paris', city: 'Paris', address: '35 rue du Faubourg St Honoré, 75383 Paris Cedex 08', phone: '+33 1 44 51 31 00', emergency: '+33 1 44 51 31 00', website: 'https://www.gov.uk/world/organisations/british-embassy-paris', email: null },
+      { country: 'ES', nat: 'GB', name: 'British Embassy Madrid', city: 'Madrid', address: 'Calle Fernando el Santo 16, 28010 Madrid', phone: '+34 91 714 6300', emergency: '+34 91 714 6300', website: 'https://www.gov.uk/world/organisations/british-embassy-madrid', email: null },
+      { country: 'IT', nat: 'GB', name: 'British Embassy Rome', city: 'Rome', address: 'Via XX Settembre 80/A, 00187 Rome', phone: '+39 06 4220 0001', emergency: '+39 06 4220 2900', website: 'https://www.gov.uk/world/organisations/british-embassy-rome', email: null },
+      // US embassies abroad
+      { country: 'TH', nat: 'US', name: 'US Embassy Bangkok', city: 'Bangkok', address: '95 Wireless Road, Bangkok 10330', phone: '+66 2 205 4000', emergency: '+66 2 205 4000', website: 'https://th.usembassy.gov', email: 'acsbkk@state.gov' },
+      { country: 'JP', nat: 'US', name: 'US Embassy Tokyo', city: 'Tokyo', address: '1-10-5 Akasaka, Minato-ku, Tokyo 107-8420', phone: '+81 3 3224 5000', emergency: '+81 3 3224 5000', website: 'https://jp.usembassy.gov', email: null },
+      { country: 'FR', nat: 'US', name: 'US Embassy Paris', city: 'Paris', address: '4 avenue Gabriel, 75008 Paris', phone: '+33 1 43 12 22 22', emergency: '+33 1 43 12 22 22', website: 'https://fr.usembassy.gov', email: null },
+      { country: 'ES', nat: 'US', name: 'US Embassy Madrid', city: 'Madrid', address: 'Calle Serrano 75, 28006 Madrid', phone: '+34 91 587 2200', emergency: '+34 91 587 2240', website: 'https://es.usembassy.gov', email: null },
+      { country: 'MX', nat: 'US', name: 'US Embassy Mexico City', city: 'Mexico City', address: 'Paseo de la Reforma 305, Cuauhtémoc, 06500 Mexico City', phone: '+52 55 5080 2000', emergency: '+52 55 5080 2000', website: 'https://mx.usembassy.gov', email: null },
+      // Australian embassies abroad
+      { country: 'TH', nat: 'AU', name: 'Australian Embassy Bangkok', city: 'Bangkok', address: '181 Wireless Road, Lumpini, Bangkok 10330', phone: '+66 2 344 6300', emergency: '+66 2 344 6300', website: 'https://thailand.embassy.gov.au', email: 'consular.bangkok@dfat.gov.au' },
+      { country: 'JP', nat: 'AU', name: 'Australian Embassy Tokyo', city: 'Tokyo', address: '2-1-14 Mita, Minato-ku, Tokyo 108-8361', phone: '+81 3 5232 4111', emergency: '+81 3 5232 4111', website: 'https://japan.embassy.gov.au', email: null },
+      { country: 'ID', nat: 'AU', name: 'Australian Embassy Jakarta', city: 'Jakarta', address: 'Jl. H.R. Rasuna Said Kav. C15-16, Kuningan, Jakarta 12940', phone: '+62 21 2550 5555', emergency: '+62 21 2550 5555', website: 'https://indonesia.embassy.gov.au', email: null },
+      // Canadian embassies abroad
+      { country: 'TH', nat: 'CA', name: 'Canadian Embassy Bangkok', city: 'Bangkok', address: '15th Floor, Abdulrahim Place, 990 Rama IV Road, Bangrak, Bangkok 10500', phone: '+66 2 636 0540', emergency: '+66 2 636 0540', website: 'https://www.canadainternational.gc.ca/thailand-thailande', email: 'bngkk@international.gc.ca' },
+      { country: 'FR', nat: 'CA', name: 'Canadian Embassy Paris', city: 'Paris', address: '35 avenue Montaigne, 75008 Paris', phone: '+33 1 44 43 29 00', emergency: '+33 1 44 43 29 00', website: 'https://www.canadainternational.gc.ca/france', email: null },
+      // New Zealand embassies abroad
+      { country: 'TH', nat: 'NZ', name: 'New Zealand Embassy Bangkok', city: 'Bangkok', address: 'M Thai Tower, All Seasons Place, 87 Wireless Road, Bangkok 10330', phone: '+66 2 254 2530', emergency: '+66 2 254 2530', website: 'https://www.mfat.govt.nz/en/countries-and-regions/south-east-asia/thailand', email: 'nzebangkok@mfat.govt.nz' },
+      { country: 'JP', nat: 'NZ', name: 'New Zealand Embassy Tokyo', city: 'Tokyo', address: '20-40 Kamiyamacho, Shibuya-ku, Tokyo 150-0047', phone: '+81 3 3467 2271', emergency: '+81 3 3467 2271', website: 'https://www.mfat.govt.nz/en/countries-and-regions/north-asia/japan', email: null },
+    ];
+
+    for (const e of embassies) {
+      await p.query(`
+        INSERT INTO embassies (country_code, nationality_code, embassy_name, city, address, phone, emergency_phone, website, email)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT DO NOTHING
+      `, [e.country, e.nat, e.name, e.city, e.address, e.phone, e.emergency, e.website, e.email]);
+    }
+
+    logger.info(`[DB] Seeded ${embassies.length} embassy records`);
+  } catch (err) {
+    logger.warn('[DB] Embassy seed skipped:', err.message);
+  }
+}
+
 // Auto-initialize sequence
 let isInitialized = false;
 let initPromise = null;
@@ -2246,6 +2293,7 @@ async function init() {
       // 2. Initialize schema and migrations
       await initializeDatabase();
       await runMigrations();
+      await seedEmbassies();
       
       isInitialized = true;
       logger.info('[DB] Database fully initialized');

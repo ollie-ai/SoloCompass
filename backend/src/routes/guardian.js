@@ -2,12 +2,20 @@ import express from 'express';
 import crypto from 'crypto';
 import db from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { PLAN_TIERS } from '../middleware/paywall.js';
 import { createNotification } from '../services/notificationService.js';
 import { sendEmail } from '../services/resendClient.js';
 import logger from '../services/logger.js';
 const router = express.Router();
 
 const GUARDIAN_EXPIRY_DAYS = 30;
+
+// Max guardian relationships per subscription tier
+const GUARDIAN_LIMITS = {
+  [PLAN_TIERS.EXPLORER]: 1,
+  [PLAN_TIERS.GUARDIAN]: 3,
+  [PLAN_TIERS.NAVIGATOR]: Infinity
+};
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -46,6 +54,24 @@ router.post('/send-request', authenticate, async (req, res) => {
         success: false,
         error: 'Contact ID is required',
       });
+    }
+
+    // Enforce per-tier guardian limit
+    const userRow = await db.prepare('SELECT subscription_tier FROM users WHERE id = ?').get(userId);
+    const tier = userRow?.subscription_tier || PLAN_TIERS.EXPLORER;
+    const limit = GUARDIAN_LIMITS[tier] ?? 1;
+    if (isFinite(limit)) {
+      const existing = await db.prepare(`
+        SELECT COUNT(*) as count FROM guardian_acknowledgements
+        WHERE user_id = ? AND status != 'declined'
+      `).get(userId);
+      if ((existing?.count || 0) >= limit) {
+        return res.status(403).json({
+          success: false,
+          error: `Your plan allows a maximum of ${limit} guardian${limit !== 1 ? 's' : ''}. Upgrade to add more.`,
+          upgradeUrl: '/settings?tab=billing'
+        });
+      }
     }
 
     const contact = await db.prepare(`
@@ -409,6 +435,24 @@ router.post('/invite', authenticate, async (req, res) => {
     const atIdx = emailTrimmed.indexOf('@');
     if (atIdx < 1 || emailTrimmed.lastIndexOf('.') <= atIdx + 1) {
       return res.status(400).json({ success: false, error: 'Invalid email format' });
+    }
+
+    // Enforce per-tier guardian limit
+    const userRow = await db.prepare('SELECT subscription_tier FROM users WHERE id = ?').get(userId);
+    const tier = userRow?.subscription_tier || PLAN_TIERS.EXPLORER;
+    const limit = GUARDIAN_LIMITS[tier] ?? 1;
+    if (isFinite(limit)) {
+      const existing = await db.prepare(`
+        SELECT COUNT(*) as count FROM guardian_relationships
+        WHERE traveller_id = ? AND status != 'declined'
+      `).get(userId);
+      if ((existing?.count || 0) >= limit) {
+        return res.status(403).json({
+          success: false,
+          error: `Your plan allows a maximum of ${limit} guardian${limit !== 1 ? 's' : ''}. Upgrade to add more.`,
+          upgradeUrl: '/settings?tab=billing'
+        });
+      }
     }
 
     const token = generateToken();

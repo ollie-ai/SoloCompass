@@ -5,8 +5,8 @@ import {
   Plane, Train, Bus, Ship, Car, Zap, Plus, Edit2, Trash2, X, Loader2,
   MapPin, Calendar, Clock, Hash, DollarSign, ArrowRight, Ticket, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { getTransportSegments, createTransportSegment, updateTransportSegment, deleteTransportSegment } from '../lib/api';
-import { getErrorMessage } from '../lib/utils';
+import { getTransportSegments, createTransportSegment, updateTransportSegment, deleteTransportSegment } from '../../lib/api';
+import { getErrorMessage } from '../../lib/utils';
 
 const TRANSPORT_TYPES = [
   { value: 'flight', label: 'Flight', Icon: Plane },

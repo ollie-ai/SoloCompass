@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { body, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth.js';
 import { sanitizeAll } from '../middleware/validate.js';
@@ -6,6 +7,14 @@ import db from '../db.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const transportMutateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, code: 'RATE_LIMITED', message: 'Too many transport requests. Please slow down.' }
+});
 
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -78,7 +87,7 @@ router.get('/:tripId/:segmentId', requireAuth, async (req, res) => {
 });
 
 // POST /api/transport/:tripId - Create transport segment
-router.post('/:tripId', requireAuth,
+router.post('/:tripId', transportMutateLimiter, requireAuth,
   sanitizeAll(['provider', 'referenceNumber', 'departureLocation', 'arrivalLocation', 'notes', 'flightNumber']),
   [
     body('type').notEmpty().isIn(TRANSPORT_TYPES).withMessage(`Type must be one of: ${TRANSPORT_TYPES.join(', ')}`),
@@ -136,7 +145,7 @@ router.post('/:tripId', requireAuth,
 );
 
 // PUT /api/transport/:tripId/:segmentId - Update transport segment
-router.put('/:tripId/:segmentId', requireAuth,
+router.put('/:tripId/:segmentId', transportMutateLimiter, requireAuth,
   sanitizeAll(['provider', 'referenceNumber', 'departureLocation', 'arrivalLocation', 'notes', 'flightNumber']),
   [
     body('type').optional().isIn(TRANSPORT_TYPES),
@@ -194,7 +203,7 @@ router.put('/:tripId/:segmentId', requireAuth,
 );
 
 // DELETE /api/transport/:tripId/:segmentId - Delete transport segment
-router.delete('/:tripId/:segmentId', requireAuth, async (req, res) => {
+router.delete('/:tripId/:segmentId', transportMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { tripId, segmentId } = req.params;
 
@@ -261,7 +270,7 @@ router.get('/:tripId/:segmentId/status', requireAuth, async (req, res) => {
 });
 
 // POST /api/transport/:tripId/:segmentId/boarding-pass - Store boarding pass info
-router.post('/:tripId/:segmentId/boarding-pass', requireAuth,
+router.post('/:tripId/:segmentId/boarding-pass', transportMutateLimiter, requireAuth,
   [body('fileUrl').optional(), body('barcodeData').optional()],
   handleValidationErrors,
   async (req, res) => {

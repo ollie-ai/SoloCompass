@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { body, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth.js';
 import { sanitizeAll } from '../middleware/validate.js';
@@ -6,6 +7,14 @@ import db from '../db.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const journalMutateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, code: 'RATE_LIMITED', message: 'Too many journal requests. Please slow down.' }
+});
 
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -35,15 +44,16 @@ router.get('/:tripId', requireAuth, async (req, res) => {
       ORDER BY je.entry_date DESC, je.created_at DESC
     `).all(tripId, req.userId);
 
-    // Attach photo counts
+    // Attach photo counts - SQLite compatible
     const entryIds = entries.map(e => e.id);
     let photoCounts = {};
     if (entryIds.length > 0) {
+      const placeholders = entryIds.map(() => '?').join(',');
       const photos = await db.prepare(`
         SELECT entry_id, COUNT(*) as count FROM journal_photos
-        WHERE entry_id = ANY(?)
+        WHERE entry_id IN (${placeholders})
         GROUP BY entry_id
-      `).all([entryIds]);
+      `).all(...entryIds);
       photoCounts = Object.fromEntries(photos.map(p => [p.entry_id, parseInt(p.count)]));
     }
 
@@ -123,7 +133,7 @@ router.get('/:tripId/:entryId', requireAuth, async (req, res) => {
 });
 
 // POST /api/journal/:tripId - Create a journal entry
-router.post('/:tripId', requireAuth,
+router.post('/:tripId', journalMutateLimiter, requireAuth,
   sanitizeAll(['title', 'content', 'location', 'weather']),
   [
     body('title').notEmpty().withMessage('Title is required').isLength({ max: 255 }),
@@ -177,7 +187,7 @@ router.post('/:tripId', requireAuth,
 );
 
 // PUT /api/journal/:tripId/:entryId - Update a journal entry
-router.put('/:tripId/:entryId', requireAuth,
+router.put('/:tripId/:entryId', journalMutateLimiter, requireAuth,
   sanitizeAll(['title', 'content', 'location', 'weather']),
   [
     body('title').optional().notEmpty().isLength({ max: 255 }),
@@ -238,7 +248,7 @@ router.put('/:tripId/:entryId', requireAuth,
 );
 
 // DELETE /api/journal/:tripId/:entryId - Delete a journal entry
-router.delete('/:tripId/:entryId', requireAuth, async (req, res) => {
+router.delete('/:tripId/:entryId', journalMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { tripId, entryId } = req.params;
 
@@ -257,7 +267,7 @@ router.delete('/:tripId/:entryId', requireAuth, async (req, res) => {
 });
 
 // POST /api/journal/:tripId/:entryId/photos - Add photo to entry
-router.post('/:tripId/:entryId/photos', requireAuth,
+router.post('/:tripId/:entryId/photos', journalMutateLimiter, requireAuth,
   [body('fileUrl').notEmpty().withMessage('File URL is required')],
   handleValidationErrors,
   async (req, res) => {
@@ -288,7 +298,7 @@ router.post('/:tripId/:entryId/photos', requireAuth,
 );
 
 // DELETE /api/journal/:tripId/:entryId/photos/:photoId - Delete photo
-router.delete('/:tripId/:entryId/photos/:photoId', requireAuth, async (req, res) => {
+router.delete('/:tripId/:entryId/photos/:photoId', journalMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { entryId, photoId } = req.params;
 

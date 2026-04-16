@@ -1441,7 +1441,7 @@ router.get('/:id/legs', requireAuth, async (req, res) => {
 });
 
 // POST /:id/legs
-router.post('/:id/legs', requireAuth, [
+router.post('/:id/legs', tripMutateLimiter, requireAuth, [
   body('title').notEmpty().withMessage('Leg title is required'),
 ], handleValidationErrors, async (req, res) => {
   try {
@@ -1468,7 +1468,7 @@ router.post('/:id/legs', requireAuth, [
 });
 
 // PUT /:id/legs/:legId
-router.put('/:id/legs/:legId', requireAuth, async (req, res) => {
+router.put('/:id/legs/:legId', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id, legId } = req.params;
     const { title, destination, startDate, endDate, notes, legOrder } = req.body;
@@ -1500,7 +1500,7 @@ router.put('/:id/legs/:legId', requireAuth, async (req, res) => {
 });
 
 // DELETE /:id/legs/:legId
-router.delete('/:id/legs/:legId', requireAuth, async (req, res) => {
+router.delete('/:id/legs/:legId', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id, legId } = req.params;
     const leg = await db.prepare(`
@@ -1523,7 +1523,7 @@ router.delete('/:id/legs/:legId', requireAuth, async (req, res) => {
 // ============================================================
 
 // POST /:id/itinerary/days
-router.post('/:id/itinerary/days', requireAuth, [
+router.post('/:id/itinerary/days', tripMutateLimiter, requireAuth, [
   body('dayNumber').optional().isInt({ min: 1 }),
   body('date').optional().isISO8601(),
 ], handleValidationErrors, async (req, res) => {
@@ -1555,7 +1555,7 @@ router.post('/:id/itinerary/days', requireAuth, [
 });
 
 // DELETE /:id/itinerary/days/:dayId
-router.delete('/:id/itinerary/days/:dayId', requireAuth, async (req, res) => {
+router.delete('/:id/itinerary/days/:dayId', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id, dayId } = req.params;
     const day = await db.prepare(`
@@ -1580,7 +1580,7 @@ router.delete('/:id/itinerary/days/:dayId', requireAuth, async (req, res) => {
 // ============================================================
 
 // PUT /:id/activities/reorder
-router.put('/:id/activities/reorder', requireAuth, [
+router.put('/:id/activities/reorder', tripMutateLimiter, requireAuth, [
   body('activities').isArray().withMessage('activities must be an array'),
   body('activities.*.id').isNumeric(),
   body('activities.*.orderIndex').isNumeric(),

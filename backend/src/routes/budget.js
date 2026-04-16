@@ -422,7 +422,7 @@ router.get('/:tripId/export-csv', authenticate, async (req, res) => {
     `).all(budget.id);
 
     const trip = await db.prepare('SELECT name FROM trips WHERE id = ?').get(tripId);
-    const tripName = (trip?.name || 'trip').replace(/[^a-z0-9]/gi, '_');
+    const tripName = (trip?.name || 'trip').replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
 
     const csvRows = [
       ['Date', 'Category', 'Description', 'Amount', 'Currency', 'Original Amount', 'Original Currency', 'Type'],

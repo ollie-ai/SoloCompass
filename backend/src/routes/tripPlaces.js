@@ -53,7 +53,7 @@ function formatPlace(p) {
     name: p.name,
     address: p.address,
     category: p.category,
-    status: p.status || (p.visited ? 'visited' : 'want_to_visit'),
+    status: p.status || 'want_to_visit',
     latitude: p.latitude,
     longitude: p.longitude,
     userRating: p.user_rating,

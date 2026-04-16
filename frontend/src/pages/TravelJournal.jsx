@@ -177,7 +177,7 @@ function EntryCard({ entry, onEdit, onDelete }) {
             <div className="flex items-center gap-3 text-xs text-base-content/50">
               <span className="flex items-center gap-1">
                 <Calendar size={10} />
-                {new Date(entry.entryDate).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                {entry.entryDate ? new Date(entry.entryDate).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
               </span>
               {entry.location && (
                 <span className="flex items-center gap-1">

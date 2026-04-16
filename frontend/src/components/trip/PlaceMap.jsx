@@ -33,6 +33,9 @@ export default function PlaceMap({ places }) {
 
   const placesWithCoords = (places || []).filter(p => p.latitude && p.longitude);
 
+  // Serialize places to string to detect any changes (coords, status, etc.)
+  const placesKey = placesWithCoords.map(p => `${p.id}:${p.latitude}:${p.longitude}:${p.status}`).join('|');
+
   useEffect(() => {
     if (!mapContainerRef.current || placesWithCoords.length === 0) return;
 
@@ -116,7 +119,7 @@ export default function PlaceMap({ places }) {
         mapRef.current = null;
       }
     };
-  }, [placesWithCoords.length]);
+  }, [placesKey]);
 
   if (placesWithCoords.length === 0) {
     return (

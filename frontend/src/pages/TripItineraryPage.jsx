@@ -18,7 +18,7 @@ export default function TripItineraryPage() {
       .then(r => { setTrip(r.data.data); })
       .catch(err => { toast.error(getErrorMessage(err)); navigate(`/trips/${id}`); })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, navigate]);
 
   const handleDeleteActivity = async (activityId) => {
     try {

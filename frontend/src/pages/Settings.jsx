@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Input from '../components/Input';
 import Loading from '../components/Loading';
 import Skeleton from '../components/Skeleton';
+import BillingHistory from '../components/BillingHistory';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { User, Shield, Bell, MapPin, Sparkles, Globe, Trash2, AlertTriangle, Download, CreditCard, Check, Crown, Zap, ArrowUpRight, X, Smartphone, Monitor, Lock, KeyRound, Fingerprint, LogOut, ChevronRight, Save, CheckCircle, RotateCcw, ShieldAlert, Clock, Users, Wallet, Mail, MessageSquare, Phone, Info, Eye, ShieldCheck, Camera, Search } from 'lucide-react';
@@ -1333,6 +1334,8 @@ const Settings = () => {
                       )}
                     </div>
                   </div>
+
+                  <BillingHistory />
 
                   <div className={cardClass}>
                     <div className="p-5 border-b border-base-300/50">

@@ -16,6 +16,7 @@ import LiveTripDashboard from '../components/dashboard/states/LiveTripDashboard'
 import CompletedDashboard from '../components/dashboard/states/CompletedDashboard';
 import SubscriptionBanner from '../components/dashboard/SubscriptionBanner';
 import APIErrorBoundary from '../components/APIErrorBoundary';
+import OnboardingWizard from '../components/OnboardingWizard';
 
 // Stable selector for user - prevents unnecessary re-renders
 const selectUser = (state) => state.user;
@@ -277,6 +278,7 @@ const Dashboard = () => {
               </div>
             )}
             <SubscriptionBanner />
+            <OnboardingWizard className="mb-6" />
             {renderState()}
           </DashboardShell>
         </motion.div>

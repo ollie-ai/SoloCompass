@@ -58,6 +58,8 @@ const GuardianAcknowledge = lazy(() => import('./pages/GuardianAcknowledge'));
 const GuardianDecline = lazy(() => import('./pages/GuardianDecline'));
 const SharedTrip = lazy(() => import('./pages/SharedTrip'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
+const FAQ = lazy(() => import('./pages/FAQ'));
+const Changelog = lazy(() => import('./pages/Changelog'));
 
 function LoadingFallback() {
   return (
@@ -349,6 +351,8 @@ function App() {
             <Route path="/partnerships" element={<Partnerships />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="/about" element={<About />} />
+            <Route path="/faq" element={<FAQ />} />
+            <Route path="/changelog" element={<Changelog />} />
             <Route path="/guardian/acknowledge/:token" element={<GuardianAcknowledge />} />
             <Route path="/guardian/decline/:token" element={<GuardianDecline />} />
             <Route path="/trips/shared/:shareCode" element={<SharedTrip />} />

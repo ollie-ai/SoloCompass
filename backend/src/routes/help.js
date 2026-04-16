@@ -12,6 +12,7 @@ const supportTicketLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
+const requireSupportLimiter = supportTicketLimiter;
 
 const emergencyKeywords = ['sos', 'emergency', 'urgent', 'unsafe', 'danger'];
 
@@ -237,6 +238,169 @@ router.get('/tickets', supportTicketLimiter, requireAuth, async (req, res) => {
   } catch (error) {
     logger.error(`[Help] Failed to list tickets: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to fetch support tickets' });
+  }
+});
+
+/**
+ * POST /api/help/tickets/:id/rate
+ * Rate support experience after ticket resolved
+ */
+router.post('/tickets/:id/rate', requireSupportLimiter, requireAuth, [
+  body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be 1-5'),
+  body('comment').optional().isLength({ max: 500 }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { rating, comment = '' } = req.body;
+
+    const ticket = await db.get('SELECT id, user_id, status FROM support_tickets WHERE id = ?', id);
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+    if (ticket.user_id !== req.userId) {
+      return res.status(403).json({ success: false, error: 'You can only rate your own tickets' });
+    }
+
+    const existing = await db.get('SELECT id FROM ticket_ratings WHERE ticket_id = ?', id);
+    if (existing) {
+      return res.status(409).json({ success: false, error: 'You have already rated this ticket' });
+    }
+
+    await db.run(
+      'INSERT INTO ticket_ratings (ticket_id, user_id, rating, comment) VALUES (?, ?, ?, ?)',
+      id, req.userId, rating, comment
+    );
+
+    res.json({ success: true, data: { message: 'Thank you for your feedback!' } });
+  } catch (error) {
+    logger.error(`[Help] Failed to rate ticket: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to submit rating' });
+  }
+});
+
+/**
+ * GET /api/help/changelog
+ * Public changelog entries
+ */
+router.get('/changelog', async (req, res) => {
+  try {
+    const entries = await db.all(
+      `SELECT id, version, title, description, type, published_at, created_at
+       FROM changelog_entries WHERE published = true
+       ORDER BY published_at DESC LIMIT 50`
+    );
+
+    if (!entries || entries.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          entries: [
+            { id: 1, version: '2.0.0', title: 'Emergency support priority lane', description: 'SOS tickets are now automatically fast-tracked to urgent status.', type: 'feature', published_at: new Date().toISOString() },
+            { id: 2, version: '1.9.0', title: 'GDPR consent management', description: 'Detailed consent tracking for data processing and cookie preferences.', type: 'feature', published_at: new Date(Date.now() - 7 * 86400000).toISOString() },
+            { id: 3, version: '1.8.0', title: 'Destination content blocks', description: 'AI-generated safety briefs, solo suitability scores and arrival checklists.', type: 'feature', published_at: new Date(Date.now() - 30 * 86400000).toISOString() },
+          ]
+        }
+      });
+    }
+
+    res.json({ success: true, data: { entries } });
+  } catch (error) {
+    logger.error(`[Help] Failed to get changelog: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to get changelog' });
+  }
+});
+
+/**
+ * GET /api/help/articles
+ * In-app help centre articles
+ */
+router.get('/articles', async (req, res) => {
+  try {
+    const articles = await db.all(
+      `SELECT id, title, category, display_order FROM faq_articles WHERE active = true ORDER BY category, display_order`
+    );
+
+    const defaultArticles = [
+      { id: 1, title: 'Getting started with SoloCompass', category: 'getting_started', display_order: 1 },
+      { id: 2, title: 'Setting up safety check-ins', category: 'safety', display_order: 1 },
+      { id: 3, title: 'Managing your subscription', category: 'billing', display_order: 1 },
+    ];
+
+    res.json({ success: true, data: { articles: articles?.length > 0 ? articles : defaultArticles } });
+  } catch (error) {
+    logger.error(`[Help] Failed to get articles: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to get help articles' });
+  }
+});
+
+/**
+ * POST /api/help/feature-requests
+ * Submit a feature request (P3)
+ */
+router.post('/feature-requests', requireAuth, [
+  body('title').trim().isLength({ min: 5, max: 200 }).withMessage('Title must be 5-200 characters'),
+  body('description').optional().isLength({ max: 2000 }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { title, description = '' } = req.body;
+    const result = await db.run(
+      'INSERT INTO feature_requests (user_id, title, description) VALUES (?, ?, ?)',
+      req.userId, title, description
+    );
+
+    res.status(201).json({
+      success: true,
+      data: { id: result.lastInsertRowid, message: 'Feature request submitted. Thanks for the feedback!' }
+    });
+  } catch (error) {
+    logger.error(`[Help] Failed to submit feature request: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to submit feature request' });
+  }
+});
+
+/**
+ * POST /api/help/waitlist
+ * Join a waitlist for an upcoming feature (P3)
+ */
+router.post('/waitlist', [
+  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('feature').optional().isLength({ max: 100 }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { email, feature = null } = req.body;
+    const userId = req.userId || null;
+
+    try {
+      await db.run(
+        'INSERT INTO waitlist_entries (email, feature, user_id) VALUES (?, ?, ?)',
+        email, feature, userId
+      );
+    } catch (insertError) {
+      if (insertError.message?.includes('unique') || insertError.message?.includes('duplicate')) {
+        return res.json({ success: true, data: { message: "You're already on the waitlist!" } });
+      }
+      throw insertError;
+    }
+
+    res.status(201).json({ success: true, data: { message: "You're on the waitlist! We'll notify you when this feature launches." } });
+  } catch (error) {
+    logger.error(`[Help] Failed to join waitlist: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to join waitlist' });
   }
 });
 

@@ -32,7 +32,8 @@ import {
   LifeBuoy,
   Megaphone,
   Gauge,
-  ShieldCheck
+  ShieldCheck,
+  Flag
 } from 'lucide-react';
 
 // Eager load all components (faster)
@@ -58,6 +59,7 @@ import AnnouncementsSection from '../components/admin/AnnouncementsSection';
 import StripeReconciliation from '../components/admin/StripeReconciliation';
 import MetricsThresholds from '../components/admin/MetricsThresholds';
 import ActionApprovalSection from '../components/admin/ActionApprovalSection';
+import AdminReportsSection from '../components/admin/AdminReportsSection';
 
 const AdminPage = ({ activeTab }) => {
   const { user } = useAuthStore();
@@ -115,6 +117,8 @@ const AdminPage = ({ activeTab }) => {
         return <MetricsThresholds />;
       case 'actions':
         return <ActionApprovalSection />;
+      case 'reports':
+        return <AdminReportsSection />;
       default:
         return <AdminDashboard />;
     }
@@ -160,6 +164,8 @@ const AdminPage = ({ activeTab }) => {
         return { title: 'Reconciliation', subtitle: 'Stripe entitlement reconciliation' };
       case 'support':
         return { title: 'Support', subtitle: 'Support tickets and user issues' };
+      case 'reports':
+        return { title: 'Content Reports', subtitle: 'User-submitted content and safety reports' };
       case 'announcements':
         return { title: 'Announcements', subtitle: 'Site-wide announcements and banners' };
       case 'metrics':
@@ -221,6 +227,7 @@ const AdminLayout = () => {
     { id: 'billing', label: 'Billing', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10', hover: 'hover:bg-emerald-500/10 hover:text-emerald-600' },
     { id: 'reconciliation', label: 'Reconciliation', icon: CreditCard, color: 'text-violet-500', bg: 'bg-violet-500/10', hover: 'hover:bg-violet-500/10 hover:text-violet-600' },
     { id: 'support', label: 'Support', icon: LifeBuoy, color: 'text-blue-500', bg: 'bg-blue-500/10', hover: 'hover:bg-blue-500/10 hover:text-blue-600' },
+    { id: 'reports', label: 'Reports', icon: Flag, color: 'text-red-500', bg: 'bg-red-500/10', hover: 'hover:bg-red-500/10 hover:text-red-600' },
     { id: 'actions', label: 'Approvals', icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-500/10', hover: 'hover:bg-violet-500/10 hover:text-violet-600' },
     
     // Settings

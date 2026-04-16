@@ -215,6 +215,55 @@ router.get('/subscription-status', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/billing/invoices
+ * Retrieve billing history (invoices) from Stripe
+ */
+router.get('/invoices', requireAuth, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const user = await db.prepare('SELECT stripe_customer_id, subscription_tier, is_premium FROM users WHERE id = ?').get(userId);
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    if (!user.stripe_customer_id || !process.env.STRIPE_SECRET_KEY) {
+      return res.json({
+        success: true,
+        data: {
+          invoices: [],
+          message: 'No billing history available.'
+        }
+      });
+    }
+
+    const invoiceList = await stripe.invoices.list({
+      customer: user.stripe_customer_id,
+      limit: 24,
+      status: 'paid',
+    });
+
+    const invoices = (invoiceList.data || []).map((inv) => ({
+      id: inv.id,
+      number: inv.number,
+      amount: inv.amount_paid,
+      currency: inv.currency,
+      status: inv.status,
+      pdfUrl: inv.invoice_pdf,
+      hostedUrl: inv.hosted_invoice_url,
+      periodStart: inv.period_start,
+      periodEnd: inv.period_end,
+      createdAt: inv.created,
+    }));
+
+    res.json({ success: true, data: { invoices } });
+  } catch (error) {
+    logger.error(`[Billing] Get invoices failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to retrieve billing history' });
+  }
+});
+
 router.post('/webhook', async (req, res) => {
   try {
     const sig = req.headers['stripe-signature'];

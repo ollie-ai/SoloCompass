@@ -4217,3 +4217,75 @@ router.post('/check-action-approval', ...adminGuard, async (req, res) => {
 });
 
 export default router;
+
+// ──────────────────────────────────────────────
+// Reports moderation queue
+// ──────────────────────────────────────────────
+
+router.get('/reports', ...adminGuard, async (req, res) => {
+  try {
+    const { status = 'pending', limit = 50, offset = 0 } = req.query;
+    const params = [];
+    let whereClause = 'WHERE 1=1';
+
+    if (status && status !== 'all') {
+      whereClause += ' AND r.status = ?';
+      params.push(status);
+    }
+
+    const rows = await db.all(`
+      SELECT r.*,
+             reporter.email AS reporter_email,
+             reviewer.email AS reviewer_email
+      FROM reports r
+      LEFT JOIN users reporter ON r.reporter_id = reporter.id
+      LEFT JOIN users reviewer ON r.reviewed_by = reviewer.id
+      ${whereClause}
+      ORDER BY r.created_at DESC
+      LIMIT ? OFFSET ?
+    `, ...params, parseInt(limit), parseInt(offset));
+
+    const countQuery = status && status !== 'all'
+      ? 'SELECT COUNT(*) AS count FROM reports WHERE status = ?'
+      : 'SELECT COUNT(*) AS count FROM reports';
+    const count = status && status !== 'all'
+      ? await db.get(countQuery, status)
+      : await db.get(countQuery);
+
+    res.json({ success: true, data: { reports: rows || [], total: count?.count || 0 } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list reports: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to list reports' });
+  }
+});
+
+router.patch('/reports/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, resolution_note = '' } = req.body;
+    const allowed = ['under_review', 'resolved', 'dismissed'];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, error: `Status must be one of: ${allowed.join(', ')}` });
+    }
+
+    const report = await db.get('SELECT id FROM reports WHERE id = ?', id);
+    if (!report) return res.status(404).json({ success: false, error: 'Report not found' });
+
+    await db.run(
+      `UPDATE reports SET status = ?, resolution_note = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      status, resolution_note, req.userId, id
+    );
+
+    await db.run(
+      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
+      req.userId, 'report_reviewed', JSON.stringify({ reportId: id, status, resolution_note })
+    );
+
+    res.json({ success: true, data: { message: 'Report updated' } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to update report ${req.params.id}: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update report' });
+  }
+});
+

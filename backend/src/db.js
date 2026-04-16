@@ -2115,6 +2115,112 @@ async function runMigrations() {
     await markMigration('v028_p0_security_consent_support');
   }
 
+  // --- Migration v029: reports, faq_articles, onboarding_progress ---
+  if (!await hasMigration('v029_reports_faq_onboarding')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS reports (
+          id SERIAL PRIMARY KEY,
+          reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          reported_entity_type TEXT NOT NULL CHECK(reported_entity_type IN ('user', 'trip', 'destination', 'review', 'content')),
+          entity_id INTEGER NOT NULL,
+          reason TEXT NOT NULL,
+          details TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'under_review', 'resolved', 'dismissed')),
+          resolution_note TEXT,
+          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          reviewed_at TIMESTAMPTZ,
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_entity ON reports(reported_entity_type, entity_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS faq_articles (
+          id SERIAL PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          category TEXT NOT NULL,
+          display_order INTEGER DEFAULT 0,
+          active BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_faq_articles_category_order ON faq_articles(category, display_order)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS onboarding_progress (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          step TEXT NOT NULL,
+          completed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          metadata JSONB,
+          UNIQUE(user_id, step)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_onboarding_user ON onboarding_progress(user_id)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS changelog_entries (
+          id SERIAL PRIMARY KEY,
+          version TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          type TEXT DEFAULT 'feature' CHECK(type IN ('feature', 'improvement', 'fix', 'security', 'breaking')),
+          published BOOLEAN DEFAULT false,
+          published_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_changelog_published ON changelog_entries(published, published_at DESC)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ticket_ratings (
+          id SERIAL PRIMARY KEY,
+          ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+          comment TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feature_requests (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT DEFAULT 'submitted' CHECK(status IN ('submitted', 'under_review', 'planned', 'in_progress', 'done', 'declined')),
+          votes INTEGER DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_requests_status ON feature_requests(status, votes DESC)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS waitlist_entries (
+          id SERIAL PRIMARY KEY,
+          email TEXT NOT NULL,
+          feature TEXT,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(email, feature)
+        )
+      `);
+
+      logger.info('[Migration v029] reports/faq/onboarding/changelog/ratings/feature_requests tables created');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_reports_faq_onboarding');
+  }
+
   logger.info('[Migration] All migrations complete');
 }
 

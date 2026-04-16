@@ -19,7 +19,7 @@ export const trackEvent = async (eventName, properties = {}) => {
   }
 
   try {
-    await api.post('/analytics/track', { type: 'event', eventType, properties });
+    await api.post('/analytics/track', { type: 'event', eventType: eventName, properties });
   } catch {
     // Silently fail — analytics shouldn't break the app
   }

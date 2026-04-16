@@ -231,12 +231,19 @@ self.addEventListener('message', (event) => {
       names.forEach((name) => caches.delete(name));
     });
   }
+
+  if (event.data === 'replayPushQueue') {
+    replayQueuedPushNotifications();
+  }
 });
 
-// Background sync for offline actions
+// Background sync event — replay queued push notifications when back online
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-checkins') {
     event.waitUntil(syncPendingCheckins());
+  }
+  if (event.tag === 'replay-push-queue') {
+    event.waitUntil(replayQueuedPushNotifications());
   }
 });
 
@@ -244,25 +251,109 @@ async function syncPendingCheckins() {
   console.log('[SW] Syncing pending check-ins...');
 }
 
-// Push notifications
-self.addEventListener('push', (event) => {
-  if (!event.data) return;
+// ─── Offline push queue ────────────────────────────────────────────────────
+// When a push arrives and the device is offline (or no clients are visible)
+// we store it in IndexedDB so it can be replayed when connectivity returns.
 
-  const data = event.data.json();
-  
+const DB_NAME = 'solocompass-push-queue';
+const DB_STORE = 'pending';
+
+async function openPushQueueDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function enqueuePushPayload(payload) {
+  try {
+    const db = await openPushQueueDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).add({ payload, queuedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('[SW] Failed to enqueue push payload:', err);
+  }
+}
+
+async function dequeuePendingPushPayloads() {
+  try {
+    const db = await openPushQueueDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      const store = tx.objectStore(DB_STORE);
+      const items = [];
+      const cursorReq = store.openCursor();
+      cursorReq.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          items.push(cursor.value);
+          cursor.delete();
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve(items);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('[SW] Failed to dequeue push payloads:', err);
+    return [];
+  }
+}
+
+async function showNotificationFromPayload(data) {
   const options = {
     body: data.body || 'You have a new notification',
     icon: '/logo192.png',
     badge: '/logo192.png',
     vibrate: [100, 50, 100],
-    data: {
-      url: data.url || '/'
-    },
-    actions: data.actions || []
+    data: { url: data.url || '/' },
+    actions: data.actions || [],
   };
+  return self.registration.showNotification(data.title || 'SoloCompass', options);
+}
+
+// Replay queued notifications — triggered by 'sync' or when clients come online
+async function replayQueuedPushNotifications() {
+  const pending = await dequeuePendingPushPayloads();
+  for (const item of pending) {
+    try {
+      await showNotificationFromPayload(item.payload);
+    } catch (err) {
+      console.warn('[SW] Failed to show queued notification:', err);
+    }
+  }
+}
+
+// Push notifications
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  let data;
+  try {
+    data = event.data.json();
+  } catch {
+    data = { body: event.data.text() };
+  }
 
   event.waitUntil(
-    self.registration.showNotification(data.title || 'SoloCompass', options)
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (visibleClients) => {
+      if (visibleClients.length === 0) {
+        // No active clients — queue the notification for replay
+        await enqueuePushPayload(data);
+      }
+      return showNotificationFromPayload(data);
+    })
   );
 });
 

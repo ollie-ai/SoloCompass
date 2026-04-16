@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { ErrorBoundary } from 'react-error-boundary'
 import App from './App.jsx'
 import './index.css'
+import { reportWebVitals } from './hooks/useWebVitals.js'
 
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
@@ -51,3 +52,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </ErrorBoundary>
   </React.StrictMode>,
 )
+
+// Start observing Core Web Vitals (production only, non-blocking)
+reportWebVitals();

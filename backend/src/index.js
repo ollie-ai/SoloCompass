@@ -96,6 +96,7 @@ async function bootstrap() {
     const { default: translateRoutes } = await import('./routes/translate.js');
     const { default: helpRoutes } = await import('./routes/help.js');
     const { default: featuresRoutes } = await import('./routes/features.js');
+    const { default: appVersionRoutes } = await import('./routes/appVersion.js');
     const { default: webhookRoutes } = await import('./routes/webhooks.js');
     const { default: notificationRoutes } = await import('./routes/notifications.js');
     const { default: verificationRoutes } = await import('./routes/verification.js');
@@ -178,6 +179,7 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/help', helpRoutes);
     app.use('/api/features', featuresRoutes);
+    app.use('/api/v1/app', appVersionRoutes);
     app.use('/api/currency', currencyRoutes);
     app.use('/api/weather', weatherRoutes);
     app.use('/api/matching', matchingRoutes);

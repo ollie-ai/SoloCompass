@@ -58,6 +58,7 @@ const GuardianAcknowledge = lazy(() => import('./pages/GuardianAcknowledge'));
 const GuardianDecline = lazy(() => import('./pages/GuardianDecline'));
 const SharedTrip = lazy(() => import('./pages/SharedTrip'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
+const WhatsNew = lazy(() => import('./components/WhatsNew'));
 
 function LoadingFallback() {
   return (
@@ -357,6 +358,7 @@ function App() {
         </Routes>
         </Suspense>
         <BottomNav />
+        <WhatsNew />
       </BrowserRouter>
     </ErrorBoundary>
   );

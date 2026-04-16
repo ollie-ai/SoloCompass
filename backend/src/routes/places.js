@@ -99,6 +99,30 @@ router.get('/details', async (req, res) => {
 });
 
 /**
+ * GET /places/:placeId/details
+ * Get place details by placeId path param
+ */
+router.get('/:placeId/details', async (req, res) => {
+  try {
+    const { placeId } = req.params;
+    if (!placeId) {
+      return res.status(400).json({
+        error: 'Missing place ID',
+        message: 'Place ID is required'
+      });
+    }
+    const result = await getPlaceDetails(placeId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[Places] Details by ID fetch failed: ${error.message}`);
+    res.status(500).json({
+      error: 'Details fetch failed',
+      message: error.message
+    });
+  }
+});
+
+/**
  * GET /places/autocomplete?input=London&lat=51.5&lng=-0.12
  * Autocomplete place search
  */

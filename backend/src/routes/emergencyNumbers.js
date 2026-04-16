@@ -6,6 +6,7 @@ import {
   getEmergencyNumbersRefreshMetadata,
   refreshEmergencyNumbersDataset,
 } from '../services/emergencyNumbersService.js';
+import logger from '../services/logger.js';
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ router.post('/refresh', async (req, res) => {
       data: result,
     });
   } catch (error) {
-    console.error('[EmergencyNumbers] Refresh Error:', error.message);
+    logger.error(`[EmergencyNumbers] Refresh Error: ${error.message}`);
     res.status(500).json({ success: false, error: 'Refresh failed' });
   }
 });
@@ -51,7 +52,7 @@ router.get('/', async (req, res) => {
       countries: allNumbers
     });
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -73,7 +74,7 @@ router.get('/:countryCode', async (req, res) => {
     
     res.json(numbers);
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -84,7 +85,7 @@ router.get('/check/:countryCode', async (req, res) => {
     const available = isAvailable(countryCode);
     res.json({ countryCode, available });
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

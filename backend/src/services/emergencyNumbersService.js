@@ -3,7 +3,6 @@ import axios from 'axios';
 import logger from './logger.js';
 
 const EMERGENCY_TYPES = ['police', 'ambulance', 'fire', 'general'];
-const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 let emergencyNumbersData = emergencyNumbers;
 let refreshTimer = null;
@@ -285,10 +284,15 @@ export function startMonthlyEmergencyNumbersRefresh() {
 }
 
 export function getEmergencyNumbersRefreshMetadata() {
+  const nextRefreshAt = refreshMetadata.nextScheduledRefreshAt
+    ? new Date(refreshMetadata.nextScheduledRefreshAt).getTime()
+    : null;
+  const now = Date.now();
+
   return {
     ...refreshMetadata,
-    refreshIntervalDays: 30,
-    refreshIntervalMs: MONTH_MS,
+    refreshInterval: 'monthly',
+    nextRefreshInMs: nextRefreshAt ? Math.max(0, nextRefreshAt - now) : null,
     sourceRecordCount: Object.keys(emergencyNumbersData || {}).length,
   };
 }

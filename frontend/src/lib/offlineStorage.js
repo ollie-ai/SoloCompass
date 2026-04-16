@@ -6,6 +6,7 @@ const OFFLINE_DATA_SCHEMA = {
   destinationAI: null,
   emergencyNumbers: null,
   currencyRates: null,
+  returnPlan: null,
   pendingCheckins: [],
   lastSync: null
 };
@@ -129,12 +130,26 @@ export const offlineStorage = {
     return this.setOfflineData({ pendingCheckins: [] });
   },
 
+  getReturnPlan() {
+    const data = this.getOfflineData();
+    return data?.returnPlan || null;
+  },
+
+  setReturnPlan(plan) {
+    return this.setOfflineData({ returnPlan: plan });
+  },
+
+  clearReturnPlan() {
+    return this.setOfflineData({ returnPlan: null });
+  },
+
   getOfflineEssentialsStatus() {
     const data = this.getOfflineData();
     return {
       offlineMaps: !!data?.destinations,
       emergencyNumbers: !!data?.emergencyNumbers,
-      currencyOffline: !!data?.currencyRates
+      currencyOffline: !!data?.currencyRates,
+      returnPlan: !!data?.returnPlan
     };
   }
 };

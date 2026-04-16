@@ -653,4 +653,93 @@ router.put('/:id/location', authenticate, async (req, res) => {
   }
 });
 
+// GET /guardian/:id/location - Guardian reads a traveller's shared location
+router.get('/:id/location', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const guardianUserId = req.userId;
+
+    // Look up the relationship — the caller must be the guardian
+    const guardianUser = await db.prepare('SELECT email FROM users WHERE id = ?').get(guardianUserId);
+    if (!guardianUser) {
+      return res.status(400).json({ success: false, error: 'User not found' });
+    }
+
+    const rel = await db.prepare(`
+      SELECT gr.id, gr.traveller_id, gr.location_sharing_enabled,
+             gr.last_location_lat, gr.last_location_lng, gr.last_location_at,
+             gr.permission_view_location,
+             u.name as traveller_name
+      FROM guardian_relationships gr
+      JOIN users u ON u.id = gr.traveller_id
+      WHERE gr.id = ? AND LOWER(gr.guardian_email) = LOWER(?) AND gr.status = 'active'
+    `).get(id, guardianUser.email);
+
+    if (!rel) {
+      return res.status(404).json({ success: false, error: 'Guardian relationship not found' });
+    }
+
+    if (!rel.permission_view_location) {
+      return res.status(403).json({ success: false, error: 'Traveller has not granted location permission' });
+    }
+
+    if (!rel.location_sharing_enabled) {
+      return res.json({
+        success: true,
+        data: {
+          relationshipId: rel.id,
+          travellerId: rel.traveller_id,
+          travellerName: rel.traveller_name,
+          locationSharingEnabled: false,
+          location: null
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        relationshipId: rel.id,
+        travellerId: rel.traveller_id,
+        travellerName: rel.traveller_name,
+        locationSharingEnabled: true,
+        location: rel.last_location_lat ? {
+          latitude: rel.last_location_lat,
+          longitude: rel.last_location_lng,
+          updatedAt: rel.last_location_at
+        } : null
+      }
+    });
+  } catch (error) {
+    logger.error('[Guardian] Error fetching traveller location:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch location' });
+  }
+});
+
+// DELETE /guardian/:id - Remove a guardian relationship (traveller removes a guardian)
+router.delete('/:id', authenticate, guardianWriteLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+
+    // Allow removal if caller is traveller OR guardian
+    const rel = await db.prepare(`
+      SELECT id FROM guardian_relationships
+      WHERE id = ? AND (traveller_id = ? OR guardian_email = (SELECT email FROM users WHERE id = ?))
+    `).get(id, userId, userId);
+
+    if (!rel) {
+      return res.status(404).json({ success: false, error: 'Guardian relationship not found' });
+    }
+
+    await db.prepare('DELETE FROM guardian_relationships WHERE id = ?').run(id);
+
+    logger.info(`[Guardian] Relationship ${id} removed by user ${userId}`);
+    res.json({ success: true, message: 'Guardian relationship removed' });
+  } catch (error) {
+    logger.error('[Guardian] Error removing guardian:', error);
+    res.status(500).json({ success: false, error: 'Failed to remove guardian' });
+  }
+});
+
 export default router;

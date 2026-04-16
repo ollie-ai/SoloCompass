@@ -16,6 +16,7 @@ import * as pushService from '../services/pushService.js';
 import * as email from '../services/email.js';
 import logger from '../services/logger.js';
 import PDFDocument from 'pdfkit';
+import { getEmergencyNumbersWithFallback } from '../services/emergencyNumbersService.js';
 
 const router = express.Router();
 
@@ -293,6 +294,14 @@ router.post('/', requireAuth, sanitizeAll(['name', 'destination', 'notes']), [
     `).run(req.userId, name, destination, startDate || null, endDate || null, budget || null, notes || null);
 
     const trip = await db.prepare('SELECT id, user_id, name, destination, start_date, end_date, budget, notes, status FROM trips WHERE id = ?').get(result.lastInsertRowid);
+
+    // Fire-and-forget: cache emergency numbers for the trip destination
+    getEmergencyNumbersWithFallback(destination).then(emergencyData => {
+      if (emergencyData) {
+        // Attach cached emergency numbers to the trip response payload via a background log
+        logger.info(`[Trips] Cached emergency numbers for ${destination} (${emergencyData.countryCode})`);
+      }
+    }).catch(() => {});
 
     res.json({ 
       success: true, 

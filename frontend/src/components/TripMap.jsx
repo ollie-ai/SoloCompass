@@ -238,7 +238,6 @@ export default function TripMap({ trip, className = '' }) {
 
       {/* Map */}
       <div style={{ height: '400px' }}>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <MapContainer
           center={allPositions[0] || [51.505, -0.09]}
           zoom={13}

@@ -92,7 +92,7 @@ async function ensurePhotosTable() {
 ensurePhotosTable();
 
 // POST /api/trips/:tripId/photos — Upload one or more photos
-router.post('/:tripId/photos', requireAuth, photoUploadLimiter, upload.array('photos', 10), async (req, res) => {
+router.post('/:tripId/photos', photoUploadLimiter, requireAuth, upload.array('photos', 10), async (req, res) => {
   try {
     const { tripId } = req.params;
     const userId = req.user.id;
@@ -199,7 +199,7 @@ router.post('/:tripId/photos', requireAuth, photoUploadLimiter, upload.array('ph
 });
 
 // GET /api/trips/:tripId/photos — List photos for a trip
-router.get('/:tripId/photos', requireAuth, photoReadLimiter, async (req, res) => {
+router.get('/:tripId/photos', photoReadLimiter, requireAuth, async (req, res) => {
   try {
     const { tripId } = req.params;
     const userId = req.user.id;
@@ -251,7 +251,7 @@ router.get('/:tripId/photos', requireAuth, photoReadLimiter, async (req, res) =>
 });
 
 // DELETE /api/trips/:tripId/photos/:photoId — Delete a photo
-router.delete('/:tripId/photos/:photoId', requireAuth, photoMutateLimiter, async (req, res) => {
+router.delete('/:tripId/photos/:photoId', photoMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { tripId, photoId } = req.params;
     const userId = req.user.id;
@@ -288,7 +288,7 @@ router.delete('/:tripId/photos/:photoId', requireAuth, photoMutateLimiter, async
 });
 
 // PATCH /api/trips/:tripId/photos/:photoId — Update photo caption/metadata
-router.patch('/:tripId/photos/:photoId', requireAuth, photoMutateLimiter, async (req, res) => {
+router.patch('/:tripId/photos/:photoId', photoMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { tripId, photoId } = req.params;
     const userId = req.user.id;

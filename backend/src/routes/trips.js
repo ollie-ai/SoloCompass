@@ -1331,6 +1331,34 @@ router.get('/:id/time-weather', requireAuth, async (req, res) => {
   }
 });
 
+// Duplicate a trip
+router.post('/:id/duplicate', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const trip = await db.prepare('SELECT * FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+    
+    const newName = `${trip.name} (Copy)`;
+    const result = await db.prepare(`
+      INSERT INTO trips (user_id, name, destination, start_date, end_date, budget, notes, status, vibe_check)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+    `).run(req.userId, newName, trip.destination, trip.start_date, trip.end_date, trip.budget, trip.notes, trip.vibe_check);
+    
+    const newTrip = await db.prepare('SELECT * FROM trips WHERE id = ?').get(result.lastInsertRowid);
+    
+    res.status(201).json({
+      success: true,
+      data: newTrip
+    });
+  } catch (error) {
+    logger.error('Duplicate trip error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to duplicate trip'));
+  }
+});
+
 // Generate a shareable link for a trip
 router.post('/:id/share', requireAuth, async (req, res) => {
   try {
@@ -1481,6 +1509,22 @@ router.get('/:id/collaborators', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Get collaborators error:', error);
     res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to get collaborators'));
+  }
+});
+
+// Get trip templates
+router.get('/templates/list', async (req, res) => {
+  try {
+    const templates = await db.prepare(`
+      SELECT id, name, description, destination_type, created_at
+      FROM trip_templates
+      ORDER BY created_at DESC
+    `).all();
+    
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    logger.error('Get trip templates error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch templates'));
   }
 });
 

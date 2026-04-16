@@ -6,6 +6,8 @@ export const FEATURES = {
   BUDGET: true,
   FLIGHTS: true,
   MATCHING: true,
+  JOURNAL: true,
+  TEMPLATES: true,
 };
 
 export const FEATURE_LABELS = {
@@ -16,6 +18,8 @@ export const FEATURE_LABELS = {
   BUDGET: 'Budget Tracker',
   FLIGHTS: 'Flight Status',
   MATCHING: 'Trip Matching',
+  JOURNAL: 'Travel Journal',
+  TEMPLATES: 'Trip Templates',
 };
 
 export const FEATURE_DESCRIPTIONS = {
@@ -26,4 +30,6 @@ export const FEATURE_DESCRIPTIONS = {
   BUDGET: 'Track and manage your trip expenses',
   FLIGHTS: 'Track flight status and get updates',
   MATCHING: 'Find travel buddies for your trips',
+  JOURNAL: 'Keep a travel journal with daily logs and highlights',
+  TEMPLATES: 'Start trips quickly with pre-built templates',
 };

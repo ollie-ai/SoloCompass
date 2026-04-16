@@ -235,4 +235,61 @@ export const getNearbyPlaces = async (lat, lng, type = null, radius = 1000) => {
   return response.data
 }
 
+// Trip sharing
+export const shareTrip = async (tripId) => {
+  const response = await api.post(`/trips/${tripId}/share`, {}, { headers: getAuthHeaders() })
+  return response.data
+}
+
+// Trip duplication
+export const duplicateTrip = async (tripId) => {
+  const response = await api.post(`/trips/${tripId}/duplicate`, {}, { headers: getAuthHeaders() })
+  return response.data
+}
+
+// Packing list sharing
+export const sharePackingList = async (listId) => {
+  const response = await api.post(`/packing-lists/${listId}/share`, {}, { headers: getAuthHeaders() })
+  return response.data
+}
+
+// Journal
+export const getJournalTemplates = async () => {
+  const response = await api.get('/journal/templates', { headers: getAuthHeaders() })
+  return response.data
+}
+
+export const getJournalEntries = async (tripId) => {
+  const response = await api.get(`/journal/${tripId}/entries`, { headers: getAuthHeaders() })
+  return response.data
+}
+
+export const createJournalEntry = async (tripId, data) => {
+  const response = await api.post(`/journal/${tripId}/entries`, data, { headers: getAuthHeaders() })
+  return response.data
+}
+
+export const shareJournalEntry = async (entryId, expiresAt = null) => {
+  const response = await api.post(`/journal/entries/${entryId}/share`, { expiresAt }, { headers: getAuthHeaders() })
+  return response.data
+}
+
+// Exchange rates
+export const getExchangeRates = async (base = 'GBP', symbols = '') => {
+  const response = await api.get(`/exchange/rates`, { params: { base, symbols }, headers: getAuthHeaders() })
+  return response.data
+}
+
+// Budget summary
+export const getBudgetSummary = async (tripId) => {
+  const response = await api.get(`/budget/${tripId}/summary`, { headers: getAuthHeaders() })
+  return response.data
+}
+
+// Trip templates
+export const getTripTemplates = async () => {
+  const response = await api.get('/trips/templates', { headers: getAuthHeaders() })
+  return response.data
+}
+
 export default api;

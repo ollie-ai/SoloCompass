@@ -1,12 +1,40 @@
 import express from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import { supabaseStorage } from '../services/supabaseStorage.js';
 
 const router = express.Router();
+
+// Rate limiter for photo uploads (expensive: file I/O + storage)
+const photoUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many photo uploads. Please wait a few minutes.' } },
+});
+
+// Rate limiter for photo reads/listing
+const photoReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests. Please slow down.' } },
+});
+
+// Rate limiter for photo mutations (delete, update)
+const photoMutateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests. Please slow down.' } },
+});
 
 const PHOTOS_BUCKET = 'journal-photos';
 const MAX_PHOTOS_PER_TRIP = 100;
@@ -64,7 +92,7 @@ async function ensurePhotosTable() {
 ensurePhotosTable();
 
 // POST /api/trips/:tripId/photos — Upload one or more photos
-router.post('/:tripId/photos', requireAuth, upload.array('photos', 10), async (req, res) => {
+router.post('/:tripId/photos', requireAuth, photoUploadLimiter, upload.array('photos', 10), async (req, res) => {
   try {
     const { tripId } = req.params;
     const userId = req.user.id;
@@ -171,7 +199,7 @@ router.post('/:tripId/photos', requireAuth, upload.array('photos', 10), async (r
 });
 
 // GET /api/trips/:tripId/photos — List photos for a trip
-router.get('/:tripId/photos', requireAuth, async (req, res) => {
+router.get('/:tripId/photos', requireAuth, photoReadLimiter, async (req, res) => {
   try {
     const { tripId } = req.params;
     const userId = req.user.id;
@@ -223,7 +251,7 @@ router.get('/:tripId/photos', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/trips/:tripId/photos/:photoId — Delete a photo
-router.delete('/:tripId/photos/:photoId', requireAuth, async (req, res) => {
+router.delete('/:tripId/photos/:photoId', requireAuth, photoMutateLimiter, async (req, res) => {
   try {
     const { tripId, photoId } = req.params;
     const userId = req.user.id;
@@ -260,7 +288,7 @@ router.delete('/:tripId/photos/:photoId', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/trips/:tripId/photos/:photoId — Update photo caption/metadata
-router.patch('/:tripId/photos/:photoId', requireAuth, async (req, res) => {
+router.patch('/:tripId/photos/:photoId', requireAuth, photoMutateLimiter, async (req, res) => {
   try {
     const { tripId, photoId } = req.params;
     const userId = req.user.id;

@@ -1418,6 +1418,191 @@ router.get('/shared/:shareCode', async (req, res) => {
   }
 });
 
+// ============================================================
+// TRIP LEGS (Multi-leg trips)
+// ============================================================
+
+// GET /:id/legs
+router.get('/:id/legs', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    const legs = await db.prepare(`
+      SELECT id, trip_id, title, destination, start_date, end_date, leg_order, notes, created_at, updated_at
+      FROM trip_legs WHERE trip_id = ? ORDER BY leg_order ASC, start_date ASC
+    `).all(id);
+    res.json({ success: true, data: legs });
+  } catch (error) {
+    logger.error('Get trip legs error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip legs'));
+  }
+});
+
+// POST /:id/legs
+router.post('/:id/legs', requireAuth, [
+  body('title').notEmpty().withMessage('Leg title is required'),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, destination, startDate, endDate, notes } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    const maxOrder = await db.prepare('SELECT COALESCE(MAX(leg_order), 0) as max FROM trip_legs WHERE trip_id = ?').get(id);
+    const legOrder = (maxOrder?.max || 0) + 1;
+
+    const result = await db.prepare(`
+      INSERT INTO trip_legs (trip_id, user_id, title, destination, start_date, end_date, leg_order, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, req.userId, title, destination || null, startDate || null, endDate || null, legOrder, notes || null);
+
+    const leg = await db.prepare('SELECT * FROM trip_legs WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: leg });
+  } catch (error) {
+    logger.error('Create trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to create trip leg'));
+  }
+});
+
+// PUT /:id/legs/:legId
+router.put('/:id/legs/:legId', requireAuth, async (req, res) => {
+  try {
+    const { id, legId } = req.params;
+    const { title, destination, startDate, endDate, notes, legOrder } = req.body;
+
+    const leg = await db.prepare(`
+      SELECT tl.id FROM trip_legs tl
+      JOIN trips t ON tl.trip_id = t.id
+      WHERE tl.id = ? AND tl.trip_id = ? AND t.user_id = ?
+    `).get(legId, id, req.userId);
+    if (!leg) return res.status(404).json(formatError('NOT_FOUND', 'Trip leg not found'));
+
+    const updates = ['updated_at = CURRENT_TIMESTAMP'];
+    const params = [];
+    if (title !== undefined) { updates.push('title = ?'); params.push(title); }
+    if (destination !== undefined) { updates.push('destination = ?'); params.push(destination); }
+    if (startDate !== undefined) { updates.push('start_date = ?'); params.push(startDate); }
+    if (endDate !== undefined) { updates.push('end_date = ?'); params.push(endDate); }
+    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+    if (legOrder !== undefined) { updates.push('leg_order = ?'); params.push(legOrder); }
+    params.push(legId);
+
+    await db.prepare(`UPDATE trip_legs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const updated = await db.prepare('SELECT * FROM trip_legs WHERE id = ?').get(legId);
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    logger.error('Update trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to update trip leg'));
+  }
+});
+
+// DELETE /:id/legs/:legId
+router.delete('/:id/legs/:legId', requireAuth, async (req, res) => {
+  try {
+    const { id, legId } = req.params;
+    const leg = await db.prepare(`
+      SELECT tl.id FROM trip_legs tl
+      JOIN trips t ON tl.trip_id = t.id
+      WHERE tl.id = ? AND tl.trip_id = ? AND t.user_id = ?
+    `).get(legId, id, req.userId);
+    if (!leg) return res.status(404).json(formatError('NOT_FOUND', 'Trip leg not found'));
+
+    await db.prepare('DELETE FROM trip_legs WHERE id = ?').run(legId);
+    res.json({ success: true, message: 'Trip leg deleted' });
+  } catch (error) {
+    logger.error('Delete trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete trip leg'));
+  }
+});
+
+// ============================================================
+// ITINERARY DAYS — manual add-day
+// ============================================================
+
+// POST /:id/itinerary/days
+router.post('/:id/itinerary/days', requireAuth, [
+  body('dayNumber').optional().isInt({ min: 1 }),
+  body('date').optional().isISO8601(),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dayNumber, date, title, notes } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    // Determine next day_number if not supplied
+    let dn = dayNumber;
+    if (!dn) {
+      const maxDay = await db.prepare('SELECT COALESCE(MAX(day_number), 0) as max FROM itinerary_days WHERE trip_id = ?').get(id);
+      dn = (maxDay?.max || 0) + 1;
+    }
+
+    const result = await db.prepare(`
+      INSERT INTO itinerary_days (trip_id, day_number, date, title, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, dn, date || null, title || null, notes || null);
+
+    const day = await db.prepare('SELECT * FROM itinerary_days WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: { ...day, activities: [] } });
+  } catch (error) {
+    logger.error('Add itinerary day error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to add itinerary day'));
+  }
+});
+
+// DELETE /:id/itinerary/days/:dayId
+router.delete('/:id/itinerary/days/:dayId', requireAuth, async (req, res) => {
+  try {
+    const { id, dayId } = req.params;
+    const day = await db.prepare(`
+      SELECT id.id FROM itinerary_days id
+      WHERE id.id = ? AND id.trip_id = ?
+    `).get(dayId, id);
+    // ownership via trip
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip || !day) return res.status(404).json(formatError('NOT_FOUND', 'Day not found'));
+
+    await db.prepare('DELETE FROM activities WHERE day_id = ?').run(dayId);
+    await db.prepare('DELETE FROM itinerary_days WHERE id = ?').run(dayId);
+    res.json({ success: true, message: 'Day deleted' });
+  } catch (error) {
+    logger.error('Delete itinerary day error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete itinerary day'));
+  }
+});
+
+// ============================================================
+// ACTIVITY REORDER (drag-and-drop)
+// ============================================================
+
+// PUT /:id/activities/reorder
+router.put('/:id/activities/reorder', requireAuth, [
+  body('activities').isArray().withMessage('activities must be an array'),
+  body('activities.*.id').isNumeric(),
+  body('activities.*.orderIndex').isNumeric(),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { activities } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    for (const { id: actId, orderIndex } of activities) {
+      await db.prepare('UPDATE activities SET order_index = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND trip_id = ?').run(orderIndex, actId, id);
+    }
+
+    res.json({ success: true, message: 'Activities reordered' });
+  } catch (error) {
+    logger.error('Reorder activities error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to reorder activities'));
+  }
+});
+
 // Add collaborator to a trip
 router.post('/:id/collaborators', requireAuth, async (req, res) => {
   try {

@@ -104,6 +104,8 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
+    const { default: journalRoutes } = await import('./routes/journal.js');
+    const { default: transportRoutes } = await import('./routes/transport.js');
 
     const app = express();
     const server = createServer(app);
@@ -202,6 +204,8 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/translate', translateRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
+    app.use('/api/journal', journalRoutes);
+    app.use('/api/transport', transportRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {

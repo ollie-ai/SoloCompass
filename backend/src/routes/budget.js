@@ -110,7 +110,7 @@ router.get('/:tripId', authenticate, async (req, res) => {
 router.post('/:tripId', authenticate, async (req, res) => {
   try {
     const { tripId } = req.params;
-    const { totalBudget, currency = 'USD' } = req.body;
+    const { totalBudget, currency = 'USD', dailyTarget } = req.body;
 
     if (totalBudget === undefined || totalBudget < 0) {
       return res.status(400).json({ success: false, error: 'Valid total budget is required' });
@@ -125,18 +125,18 @@ router.post('/:tripId', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Trip not found' });
     }
 
-    let budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, created_at, updated_at FROM budgets WHERE trip_id = ? AND user_id = ?').get(tripId, req.userId);
+    let budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, daily_target, created_at, updated_at FROM budgets WHERE trip_id = ? AND user_id = ?').get(tripId, req.userId);
 
     if (budget) {
       await db.prepare(`
-        UPDATE budgets SET total_budget = ?, currency = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-      `).run(totalBudget, currency, budget.id);
-      budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, created_at, updated_at FROM budgets WHERE id = ?').get(budget.id);
+        UPDATE budgets SET total_budget = ?, currency = ?, daily_target = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(totalBudget, currency, dailyTarget || null, budget.id);
+      budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, daily_target, created_at, updated_at FROM budgets WHERE id = ?').get(budget.id);
     } else {
       const result = await db.prepare(`
-        INSERT INTO budgets (user_id, trip_id, total_budget, currency) VALUES (?, ?, ?, ?)
-      `).run(req.userId, tripId, totalBudget, currency);
-      budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, created_at, updated_at FROM budgets WHERE id = ?').get(result.lastInsertRowid);
+        INSERT INTO budgets (user_id, trip_id, total_budget, currency, daily_target) VALUES (?, ?, ?, ?, ?)
+      `).run(req.userId, tripId, totalBudget, currency, dailyTarget || null);
+      budget = await db.prepare('SELECT id, user_id, trip_id, total_budget, currency, daily_target, created_at, updated_at FROM budgets WHERE id = ?').get(result.lastInsertRowid);
     }
 
     // Sync trip budget
@@ -149,6 +149,7 @@ router.post('/:tripId', authenticate, async (req, res) => {
         tripId: budget.trip_id,
         totalBudget: budget.total_budget,
         currency: budget.currency,
+        dailyTarget: budget.daily_target,
         totalSpent: 0,
         totalIncome: 0,
         remaining: budget.total_budget,
@@ -167,12 +168,21 @@ router.get('/:tripId/summary', authenticate, async (req, res) => {
     const { targetCurrency } = req.query;
 
     const budget = await db.prepare(`
-      SELECT id, user_id, trip_id, total_budget, currency, created_at, updated_at FROM budgets WHERE trip_id = ? AND user_id = ?
+      SELECT id, user_id, trip_id, total_budget, currency, daily_target, created_at, updated_at FROM budgets WHERE trip_id = ? AND user_id = ?
     `).get(tripId, req.userId);
 
     if (!budget) {
       return res.json({ success: true, data: null });
     }
+
+    // Get trip dates to compute days elapsed / total
+    const trip = await db.prepare('SELECT start_date, end_date FROM trips WHERE id = ?').get(tripId);
+    const tripDays = trip?.start_date && trip?.end_date
+      ? Math.max(1, Math.ceil((new Date(trip.end_date) - new Date(trip.start_date)) / (1000 * 60 * 60 * 24)) + 1)
+      : null;
+    const daysElapsed = trip?.start_date
+      ? Math.max(1, Math.ceil((new Date() - new Date(trip.start_date)) / (1000 * 60 * 60 * 24)))
+      : null;
 
     const items = await db.prepare(`
       SELECT category, type, amount, original_currency, original_amount 
@@ -203,12 +213,18 @@ router.get('/:tripId/summary', authenticate, async (req, res) => {
     }
 
     let totalBudget = budget.total_budget;
+    let dailyTarget = budget.daily_target;
     let displayCurrency = budget.currency;
     
     if (targetCurrency && budget.currency !== targetCurrency) {
       totalBudget = await convertCurrency(budget.total_budget, budget.currency, targetCurrency);
+      if (dailyTarget) {
+        dailyTarget = await convertCurrency(dailyTarget, budget.currency, targetCurrency);
+      }
       displayCurrency = targetCurrency;
     }
+
+    const dailyAverage = daysElapsed && totalSpent > 0 ? Number(totalSpent) / daysElapsed : null;
 
     res.json({
       success: true,
@@ -218,6 +234,10 @@ router.get('/:tripId/summary', authenticate, async (req, res) => {
         totalSpent: Number(totalSpent),
         totalIncome: Number(totalIncome),
         remaining: Number(totalBudget) - Number(totalSpent) + Number(totalIncome),
+        dailyTarget,
+        dailyAverage,
+        tripDays,
+        daysElapsed,
         byCategory
       }
     });
@@ -380,6 +400,52 @@ router.delete('/:tripId/items/:id', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Error deleting item:', error);
     res.status(500).json({ success: false, error: 'Failed to delete item' });
+  }
+});
+
+// GET /:tripId/export-csv - Export budget items as CSV
+router.get('/:tripId/export-csv', authenticate, async (req, res) => {
+  try {
+    const { tripId } = req.params;
+
+    const budget = await db.prepare(`
+      SELECT id, currency FROM budgets WHERE trip_id = ? AND user_id = ?
+    `).get(tripId, req.userId);
+
+    if (!budget) {
+      return res.status(404).json({ success: false, error: 'Budget not found' });
+    }
+
+    const items = await db.prepare(`
+      SELECT category, description, amount, original_amount, original_currency, type, created_at
+      FROM budget_items WHERE budget_id = ? ORDER BY created_at ASC
+    `).all(budget.id);
+
+    const trip = await db.prepare('SELECT name FROM trips WHERE id = ?').get(tripId);
+    const tripName = (trip?.name || 'trip').replace(/[^a-z0-9]/gi, '_');
+
+    const csvRows = [
+      ['Date', 'Category', 'Description', 'Amount', 'Currency', 'Original Amount', 'Original Currency', 'Type'],
+      ...items.map(i => [
+        new Date(i.created_at).toISOString().split('T')[0],
+        i.category,
+        `"${(i.description || '').replace(/"/g, '""')}"`,
+        i.amount,
+        budget.currency,
+        i.original_amount || i.amount,
+        i.original_currency,
+        i.type,
+      ])
+    ];
+
+    const csv = csvRows.map(row => row.join(',')).join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${tripName}_budget.csv"`);
+    res.send(csv);
+  } catch (error) {
+    logger.error('Error exporting budget CSV:', error);
+    res.status(500).json({ success: false, error: 'Failed to export budget' });
   }
 });
 

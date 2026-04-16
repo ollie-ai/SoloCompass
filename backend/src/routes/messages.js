@@ -6,6 +6,17 @@ import logger from '../services/logger.js';
 const router = express.Router();
 router.use(authenticate);
 
+const isBlockedBetweenUsers = async (userA, userB) => {
+  const blocked = await db.prepare(`
+    SELECT id
+    FROM buddy_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+    LIMIT 1
+  `).get(userA, userB, userB, userA);
+  return !!blocked;
+};
+
 router.get('/conversations', async (req, res) => {
   try {
     const userId = req.userId;
@@ -136,6 +147,13 @@ router.post('/conversations', async (req, res) => {
       });
     }
 
+    if (await isBlockedBetweenUsers(userId, participantId)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Messaging is disabled for blocked users' }
+      });
+    }
+
     const existingConv = await db.prepare(`
       SELECT id FROM buddy_conversations
       WHERE (
@@ -204,6 +222,14 @@ router.post('/conversations/:conversationId', async (req, res) => {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Not a participant in this conversation' }
+      });
+    }
+
+    const otherUserId = conversation.participant_a === userId ? conversation.participant_b : conversation.participant_a;
+    if (await isBlockedBetweenUsers(userId, otherUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Messaging is disabled for blocked users' }
       });
     }
 

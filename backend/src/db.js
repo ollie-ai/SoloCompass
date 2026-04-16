@@ -208,6 +208,7 @@ async function initializeDatabase() {
         name TEXT,
         role TEXT DEFAULT 'user' CHECK(role IN ('user', 'viewer', 'admin')),
         is_premium BOOLEAN DEFAULT false,
+        is_flagged BOOLEAN DEFAULT false,
         subscription_tier TEXT DEFAULT 'free',
         stripe_customer_id TEXT,
         premium_expires_at TIMESTAMP,
@@ -926,8 +927,22 @@ async function initializeDatabase() {
         trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
         message TEXT,
         status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'declined', 'blocked')),
+        archived_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Buddy reports
+      CREATE TABLE IF NOT EXISTS buddy_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        details TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TIMESTAMP,
+        reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       );
 
       -- AI usage tracking
@@ -1187,6 +1202,9 @@ async function initializeDatabase() {
       
       -- Buddy block indexes
       CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocker ON buddy_blocks(blocker_id);
+      CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocked ON buddy_blocks(blocked_id);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported_status ON buddy_reports(reported_id, status);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter_created ON buddy_reports(reporter_id, created_at DESC);
 
       -- Buddy messages indexes
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON buddy_messages(conversation_id, created_at DESC);
@@ -2031,6 +2049,45 @@ async function runMigrations() {
       logger.warn('[Migration v027] skipped:', error.message);
     }
     await markMigration('v027_ai_observability');
+  }
+
+  // --- Migration v028: Buddy safety reports and connection archival ---
+  if (!await hasMigration('v028_buddy_safety')) {
+    try {
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN DEFAULT false
+      `);
+
+      await pool.query(`
+        ALTER TABLE buddy_requests
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS buddy_reports (
+          id SERIAL PRIMARY KEY,
+          reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          reason TEXT NOT NULL,
+          details TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at TIMESTAMP,
+          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        )
+      `);
+
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported_status ON buddy_reports(reported_id, status)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter_created ON buddy_reports(reporter_id, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocked ON buddy_blocks(blocked_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_requests_archived_at ON buddy_requests(archived_at)`);
+
+      logger.info('[Migration v028] buddy safety schema applied');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_buddy_safety');
   }
 
   logger.info('[Migration] All migrations complete');

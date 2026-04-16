@@ -16,6 +16,7 @@ import SoloIDCard from '../components/SoloIDCard';
 import MatchingProfile from '../components/MatchingProfile';
 import MatchingProfileEdit from '../components/MatchingProfileEdit';
 import VerificationModal from '../components/VerificationModal';
+import BlockReportModal from '../components/BlockReportModal';
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -43,6 +44,9 @@ const Buddies = () => {
   const [activeTab, setActiveTab] = useState('discover');
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [showBlockReportModal, setShowBlockReportModal] = useState(false);
+  const [safetyActionLoading, setSafetyActionLoading] = useState(false);
   const searchRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -142,6 +146,45 @@ const Buddies = () => {
       setPotentialMatches(prev => (prev || []).filter(m => m.userId !== userId));
     } catch (error) {
       toast.error('Failed to block user');
+    }
+  };
+
+  const openConnectionSafetyModal = (connection) => {
+    setSelectedConnection(connection);
+    setShowBlockReportModal(true);
+  };
+
+  const closeConnectionSafetyModal = () => {
+    setShowBlockReportModal(false);
+    setSelectedConnection(null);
+  };
+
+  const handleReportConnection = async ({ reason, details }) => {
+    if (!selectedConnection?.id) return;
+    setSafetyActionLoading(true);
+    try {
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/report`, { reason, details });
+      toast.success('Report submitted');
+      closeConnectionSafetyModal();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Failed to submit report');
+    } finally {
+      setSafetyActionLoading(false);
+    }
+  };
+
+  const handleBlockConnection = async () => {
+    if (!selectedConnection?.id) return;
+    setSafetyActionLoading(true);
+    try {
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/block`);
+      toast.success('User blocked');
+      setConnections(prev => (prev || []).filter(c => c.id !== selectedConnection.id));
+      closeConnectionSafetyModal();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Failed to block user');
+    } finally {
+      setSafetyActionLoading(false);
     }
   };
 
@@ -825,9 +868,20 @@ const Buddies = () => {
                           </div>
                         )}
 
-                        <div className="flex items-center gap-1.5 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
-                          <Calendar size={12} />
-                          Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
+                        <div className="flex items-center justify-between gap-2 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Calendar size={12} />
+                            Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openConnectionSafetyModal(conn);
+                            }}
+                            className="px-2 py-1 rounded-lg border border-base-300 text-base-content/60 hover:text-error hover:border-error/40"
+                          >
+                            Safety
+                          </button>
                         </div>
                       </motion.div>
                     );
@@ -928,6 +982,14 @@ const Buddies = () => {
       <VerificationModal 
         isOpen={showVerificationModal} 
         onClose={() => setShowVerificationModal(false)} 
+      />
+      <BlockReportModal
+        open={showBlockReportModal}
+        loading={safetyActionLoading}
+        userName={selectedConnection?.user?.name || selectedConnection?.buddy_name}
+        onClose={closeConnectionSafetyModal}
+        onReport={handleReportConnection}
+        onBlock={handleBlockConnection}
       />
       </div>
     </DashboardShell>

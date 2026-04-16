@@ -114,6 +114,40 @@ const ServiceStatus = ({ name, status, icon: Icon }) => {
   );
 };
 
+const MiniTrendChart = ({ title, points = [], valueKey = 'value', color = '#0ea5e9' }) => {
+  const safePoints = Array.isArray(points) ? points : [];
+  const values = safePoints.map((p) => Number(p?.[valueKey] || 0));
+  const max = Math.max(1, ...values);
+  const min = Math.min(...values, 0);
+  const range = Math.max(1, max - min);
+  const width = 320;
+  const height = 80;
+
+  const coords = safePoints.map((point, index) => {
+    const x = safePoints.length <= 1 ? 0 : (index / (safePoints.length - 1)) * width;
+    const y = height - (((Number(point?.[valueKey] || 0) - min) / range) * height);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const latest = safePoints[safePoints.length - 1]?.[valueKey] || 0;
+
+  return (
+    <div className="p-4 bg-base-100 rounded-xl border border-base-300">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-bold text-base-content">{title}</p>
+        <span className="text-xs font-black text-base-content/50">{latest}</span>
+      </div>
+      {safePoints.length > 1 ? (
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-20">
+          <polyline fill="none" stroke={color} strokeWidth="3" points={coords} strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <div className="h-20 flex items-center justify-center text-xs text-base-content/40">No trend data</div>
+      )}
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
@@ -121,6 +155,7 @@ const AdminDashboard = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [health, setHealth] = useState(null);
   const [metricsSummary, setMetricsSummary] = useState({ total: 0, critical: 0, warning: 0, healthy: 0 });
+  const [timeSeries, setTimeSeries] = useState({ users: [], trips: [], engagement: [] });
 
   useEffect(() => {
     fetchDashboardData();
@@ -144,6 +179,7 @@ const fetchDashboardData = async () => {
       // Set data (with fallbacks for failed requests)
       const [statsRes, opsRes, modRes, auditRes, errorsRes, healthRes, metricsRes] = results;
       setStats(statsRes?.data?.data || {});
+      setTimeSeries(statsRes?.data?.data?.timeSeries || { users: [], trips: [], engagement: [] });
       setAlerts({
         ops: opsRes?.data?.data?.alerts?.filter(a => !a.resolved_at).length || 0,
         errors: errorsRes?.data?.data?.total || 0,
@@ -243,6 +279,13 @@ const fetchDashboardData = async () => {
           icon={Activity}
           to="/admin/health"
         />
+      </div>
+
+      {/* Analytics Trends */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <MiniTrendChart title="User growth trend" points={timeSeries.users} valueKey="value" color="#0ea5e9" />
+        <MiniTrendChart title="Trip creation trend" points={timeSeries.trips} valueKey="value" color="#10b981" />
+        <MiniTrendChart title="Engagement trend" points={timeSeries.engagement} valueKey="events" color="#f59e0b" />
       </div>
 
       {/* Two Column Layout */}

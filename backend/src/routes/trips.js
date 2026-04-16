@@ -189,6 +189,171 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Get timeline view for a trip (server-side aggregation)
+router.get('/:id/timeline', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare(`
+      SELECT id, user_id, name, destination, start_date, end_date, status
+      FROM trips WHERE id = ? AND user_id = ?
+    `).get(id, req.userId);
+
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const itineraryActivities = await db.prepare(`
+      SELECT
+        a.id,
+        a.name,
+        a.type,
+        a.location,
+        a.time,
+        a.cost,
+        a.notes,
+        a.created_at,
+        d.day_number,
+        d.date as day_date
+      FROM activities a
+      JOIN itinerary_days d ON a.day_id = d.id
+      WHERE d.trip_id = ?
+      ORDER BY d.day_number ASC, a.order_index ASC
+    `).all(id);
+
+    const bookings = await db.prepare(`
+      SELECT
+        id, type, provider, booking_reference, status, travel_date, departure_datetime, arrival_datetime, created_at
+      FROM bookings
+      WHERE trip_id = ?
+      ORDER BY COALESCE(travel_date, created_at) ASC
+    `).all(id);
+
+    const documents = await db.prepare(`
+      SELECT id, document_type, name, expiry_date, created_at
+      FROM trip_documents
+      WHERE trip_id = ?
+      ORDER BY created_at ASC
+    `).all(id);
+
+    const timeline = [
+      ...(itineraryActivities || []).map((item) => ({
+        id: `activity-${item.id}`,
+        source: 'itinerary',
+        type: 'activity',
+        title: item.name,
+        subtitle: item.type || 'Activity',
+        location: item.location || null,
+        timestamp: item.day_date || item.created_at,
+        meta: {
+          dayNumber: item.day_number,
+          time: item.time || null,
+          cost: item.cost ?? null,
+          notes: item.notes || null,
+        },
+      })),
+      ...(bookings || []).map((item) => ({
+        id: `booking-${item.id}`,
+        source: 'bookings',
+        type: 'booking',
+        title: item.provider || item.type || 'Booking',
+        subtitle: item.type || 'Booking',
+        timestamp: item.travel_date || item.departure_datetime || item.created_at,
+        meta: {
+          status: item.status || null,
+          bookingReference: item.booking_reference || null,
+          arrivalDateTime: item.arrival_datetime || null,
+        },
+      })),
+      ...(documents || []).map((item) => ({
+        id: `document-${item.id}`,
+        source: 'documents',
+        type: 'document',
+        title: item.name,
+        subtitle: item.document_type || 'Document',
+        timestamp: item.expiry_date || item.created_at,
+        meta: {
+          expiryDate: item.expiry_date || null,
+        },
+      })),
+    ].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+    res.json({
+      success: true,
+      data: {
+        trip: {
+          id: trip.id,
+          name: trip.name,
+          destination: trip.destination,
+          startDate: trip.start_date,
+          endDate: trip.end_date,
+          status: trip.status,
+        },
+        timeline,
+      },
+    });
+  } catch (error) {
+    logger.error('Get trip timeline error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip timeline'));
+  }
+});
+
+// Get dedicated packing-list view for a trip
+router.get('/:id/packing-list', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const list = await db.prepare(`
+      SELECT id, trip_id, name, is_shared, created_at, updated_at
+      FROM packing_lists
+      WHERE trip_id = ? AND user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(id, req.userId);
+
+    if (!list) {
+      return res.json({ success: true, data: null });
+    }
+
+    const items = await db.prepare(`
+      SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes, created_at, updated_at
+      FROM packing_items
+      WHERE packing_list_id = ?
+      ORDER BY category ASC, is_essential DESC, name ASC
+    `).all(list.id);
+
+    res.json({
+      success: true,
+      data: {
+        id: list.id,
+        tripId: list.trip_id,
+        name: list.name,
+        isShared: Boolean(list.is_shared),
+        createdAt: list.created_at,
+        updatedAt: list.updated_at,
+        items: (items || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          quantity: item.quantity,
+          isPacked: Boolean(item.is_packed),
+          isEssential: Boolean(item.is_essential),
+          isCustom: Boolean(item.is_custom),
+          notes: item.notes,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+        })),
+      },
+    });
+  } catch (error) {
+    logger.error('Get trip packing list error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip packing list'));
+  }
+});
+
 // Get itinerary versions for a trip
 router.get('/:id/versions', requireAuth, async (req, res) => {
   try {

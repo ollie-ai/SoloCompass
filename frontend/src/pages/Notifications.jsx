@@ -7,10 +7,57 @@ import {
   Bell, Check, CheckSquare, Trash2 as Trash, 
   AlertTriangle as Warning, Clock, MapPin, 
   Info as InfoIcon, ChevronRight, X, Settings as SettingsIcon,
-  Filter, Calendar, Ghost
+  Filter, Calendar, Ghost, ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+
+/**
+ * Maps a notification to its deep-link route.
+ */
+function getNotificationRoute(notification) {
+  const type = notification.type;
+  const data = typeof notification.data === 'string'
+    ? (() => { try { return JSON.parse(notification.data); } catch { return {}; } })()
+    : (notification.data || {});
+
+  switch (type) {
+    case 'checkin_reminder':
+    case 'checkin_missed':
+    case 'checkin_sos':
+    case 'checkin_sent':
+    case 'checkin_confirmed':
+    case 'checkin_scheduled':
+      return '/safety';
+    case 'trip_update':
+    case 'trip_created':
+    case 'itinerary_generated':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'buddy_request':
+    case 'buddy_accepted':
+    case 'buddy_match':
+      return '/buddies';
+    case 'message':
+    case 'new_message':
+      return data.conversationId ? `/messages/${data.conversationId}` : '/messages';
+    case 'advisory':
+    case 'travel_advisory':
+      return data.destinationId ? `/destinations/${data.destinationId}` : '/advisories';
+    case 'budget_alert':
+    case 'flight_update':
+    case 'flight_change':
+    case 'document_expiry':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'billing':
+    case 'subscription':
+    case 'payment':
+      return '/settings?tab=billing';
+    case 'verification':
+      return '/settings?tab=profile';
+    default:
+      return null;
+  }
+}
 
 const Notifications = () => {
   const { user } = useAuthStore();
@@ -199,6 +246,17 @@ const Notifications = () => {
                       className="text-[10px] font-black text-brand-vibrant uppercase tracking-widest px-3 py-1.5 bg-brand-vibrant/10 rounded-lg hover:bg-brand-vibrant/20 transition-all"
                     >
                       Mark read
+                    </button>
+                  )}
+                  {getNotificationRoute(notification) && (
+                    <button
+                      onClick={() => {
+                        if (!notification.is_read) markAsRead(notification.id);
+                        navigate(getNotificationRoute(notification));
+                      }}
+                      className="text-[10px] font-black text-blue-500 uppercase tracking-widest px-3 py-1.5 bg-blue-500/10 rounded-lg hover:bg-blue-500/20 transition-all flex items-center gap-1"
+                    >
+                      <ExternalLink size={10} /> View
                     </button>
                   )}
                   <button

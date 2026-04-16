@@ -1,11 +1,60 @@
 import { useState, useEffect, memo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import PropTypes from 'prop-types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, X, Check, CheckSquare, Trash2 as Trash, AlertTriangle as Warning, Clock, MapPin, Info } from 'lucide-react';
 import api from '../lib/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
+/**
+ * Maps a notification to its deep-link route.
+ */
+function getNotificationRoute(notification) {
+  const type = notification.type;
+  const data = typeof notification.data === 'string'
+    ? (() => { try { return JSON.parse(notification.data); } catch { return {}; } })()
+    : (notification.data || {});
+
+  switch (type) {
+    case 'checkin_reminder':
+    case 'checkin_missed':
+    case 'checkin_sos':
+    case 'checkin_sent':
+    case 'checkin_confirmed':
+    case 'checkin_scheduled':
+      return '/safety';
+    case 'trip_update':
+    case 'trip_created':
+    case 'itinerary_generated':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'buddy_request':
+    case 'buddy_accepted':
+    case 'buddy_match':
+      return '/buddies';
+    case 'message':
+    case 'new_message':
+      return data.conversationId ? `/messages/${data.conversationId}` : '/messages';
+    case 'advisory':
+    case 'travel_advisory':
+      return data.destinationId ? `/destinations/${data.destinationId}` : '/advisories';
+    case 'budget_alert':
+    case 'flight_update':
+    case 'flight_change':
+    case 'document_expiry':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'billing':
+    case 'subscription':
+    case 'payment':
+      return '/settings?tab=billing';
+    case 'verification':
+      return '/settings?tab=profile';
+    default:
+      return null;
+  }
+}
+
 const NotificationDropdown = memo(({ unreadCount, onCountChange }) => {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -242,7 +291,14 @@ const NotificationDropdown = memo(({ unreadCount, onCountChange }) => {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         className={`group relative px-4 py-3 transition-colors cursor-pointer ${getTypeBg(notification.type, notification.read)}`}
-                        onClick={() => !notification.read && markAsRead(notification.id)}
+                        onClick={() => {
+                          if (!notification.read) markAsRead(notification.id);
+                          const route = getNotificationRoute(notification);
+                          if (route) {
+                            setIsOpen(false);
+                            navigate(route);
+                          }
+                        }}
                       >
                         <div className="flex items-start gap-3">
                           <div className={`mt-0.5 flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${

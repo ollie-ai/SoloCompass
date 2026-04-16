@@ -1,12 +1,20 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+const dashboardReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, code: 'RATE_LIMITED', message: 'Too many dashboard requests. Please slow down.' },
+});
 
 // GET /dashboard/activity - Paginated activity feed for current user
-router.get('/activity', requireAuth, async (req, res) => {
+router.get('/activity', requireAuth, dashboardReadLimiter, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20', 10)));

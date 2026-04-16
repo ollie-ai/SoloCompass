@@ -190,7 +190,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 // Get timeline view for a trip (server-side aggregation)
-router.get('/:id/timeline', requireAuth, async (req, res) => {
+router.get('/:id/timeline', requireAuth, tripMutateLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const trip = await db.prepare(`
@@ -298,7 +298,7 @@ router.get('/:id/timeline', requireAuth, async (req, res) => {
 });
 
 // Get dedicated packing-list view for a trip
-router.get('/:id/packing-list', requireAuth, async (req, res) => {
+router.get('/:id/packing-list', requireAuth, tripMutateLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);

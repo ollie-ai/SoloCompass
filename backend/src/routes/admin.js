@@ -200,9 +200,105 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
 });
 
 /**
- * GET /api/admin/user-activity/:userId
- * Fetch activity timeline for a specific user
+ * GET /api/admin/analytics/timeseries
+ * Returns daily time-series data for users, trips, and revenue over the requested period.
+ * Query params:
+ *   period  – "7d" | "30d" | "90d" (default "30d")
+ *   metrics – comma-separated list of "users" | "trips" | "revenue" (default all)
  */
+router.get('/analytics/timeseries', ...adminGuard, async (req, res) => {
+  try {
+    const period = req.query.period || '30d';
+    const days = Math.min(parseInt(period) || 30, 365);
+    const metricsParam = req.query.metrics || 'users,trips,revenue';
+    const wantedMetrics = metricsParam.split(',').map(m => m.trim().toLowerCase());
+
+    // Build an array of date buckets (YYYY-MM-DD) from oldest to newest
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      buckets.push(d.toISOString().slice(0, 10));
+    }
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    // Initialise result maps
+    const userMap = Object.fromEntries(buckets.map(b => [b, 0]));
+    const tripMap = Object.fromEntries(buckets.map(b => [b, 0]));
+    const revenueMap = Object.fromEntries(buckets.map(b => [b, 0]));
+
+    // Daily new users
+    if (wantedMetrics.includes('users')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM users
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in userMap) userMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries users query failed:', e.message); }
+    }
+
+    // Daily new trips
+    if (wantedMetrics.includes('trips')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM trips
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in tripMap) tripMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries trips query failed:', e.message); }
+    }
+
+    // Daily subscription activations as a revenue proxy (premium users created)
+    if (wantedMetrics.includes('revenue')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM users
+           WHERE is_premium = true AND created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in revenueMap) revenueMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries revenue query failed:', e.message); }
+    }
+
+    // Assemble into array series
+    const series = buckets.map(date => {
+      const point = { date };
+      if (wantedMetrics.includes('users')) point.users = userMap[date];
+      if (wantedMetrics.includes('trips')) point.trips = tripMap[date];
+      if (wantedMetrics.includes('revenue')) point.newSubscriptions = revenueMap[date];
+      return point;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        period: `${days}d`,
+        metrics: wantedMetrics,
+        series,
+      }
+    });
+  } catch (error) {
+    logger.error(`[Admin] Analytics timeseries failed: ${error.message}`);
+    res.status(500).json({ error: 'Failed to get analytics time-series' });
+  }
+});
+
+
 router.get('/user-activity/:userId', ...adminGuard, async (req, res) => {
   try {
     const { userId } = req.params;

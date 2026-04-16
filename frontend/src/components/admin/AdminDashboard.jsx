@@ -23,7 +23,8 @@ import {
   Mail,
   Server,
   Settings,
-  Gauge
+  Gauge,
+  BarChart3
 } from 'lucide-react';
 
 const StatCard = ({ title, value, change, changeType, icon: Icon, color, to }) => {
@@ -114,6 +115,45 @@ const ServiceStatus = ({ name, status, icon: Icon }) => {
   );
 };
 
+const MiniBarChart = ({ data, metricKey }) => {
+  if (!data || data.length === 0) return null;
+  const values = data.map(d => d[metricKey] ?? 0);
+  const max = Math.max(...values, 1);
+  const colorMap = {
+    users: '#0ea5e9',
+    trips: '#10b981',
+    newSubscriptions: '#8b5cf6',
+  };
+  const color = colorMap[metricKey] || '#0ea5e9';
+
+  return (
+    <div className="flex items-end gap-0.5 h-24 w-full">
+      {data.map((point, i) => {
+        const height = Math.max(2, Math.round((values[i] / max) * 100));
+        const isLast = i === data.length - 1;
+        return (
+          <div
+            key={point.date}
+            className="flex-1 relative group"
+            title={`${point.date}: ${values[i]}`}
+          >
+            <div
+              className="w-full rounded-t-sm transition-opacity group-hover:opacity-80"
+              style={{ height: `${height}%`, backgroundColor: color, opacity: isLast ? 1 : 0.55 }}
+            />
+            {/* Tooltip on hover */}
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+              <div className="bg-base-content text-base-100 text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
+                {values[i]}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
@@ -121,6 +161,8 @@ const AdminDashboard = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [health, setHealth] = useState(null);
   const [metricsSummary, setMetricsSummary] = useState({ total: 0, critical: 0, warning: 0, healthy: 0 });
+  const [timeseries, setTimeseries] = useState([]);
+  const [tsMetric, setTsMetric] = useState('users');
 
   useEffect(() => {
     fetchDashboardData();
@@ -138,11 +180,12 @@ const fetchDashboardData = async () => {
         api.get('/admin/audit-logs', { params: { limit: 5 } }),
         api.get('/admin/audit-logs', { params: { type: 'client_error', days: 7, limit: 1 } }),
         api.get('/admin/system-health'),
-        api.get('/admin/metrics/violations')
+        api.get('/admin/metrics/violations'),
+        api.get('/admin/analytics/timeseries?period=30d&metrics=users,trips,revenue'),
       ]);
       
       // Set data (with fallbacks for failed requests)
-      const [statsRes, opsRes, modRes, auditRes, errorsRes, healthRes, metricsRes] = results;
+      const [statsRes, opsRes, modRes, auditRes, errorsRes, healthRes, metricsRes, tsRes] = results;
       setStats(statsRes?.data?.data || {});
       setAlerts({
         ops: opsRes?.data?.data?.alerts?.filter(a => !a.resolved_at).length || 0,
@@ -153,6 +196,9 @@ const fetchDashboardData = async () => {
       setHealth(healthRes?.data?.data);
       if (metricsRes?.data?.success) {
         setMetricsSummary(metricsRes.data.data.summary || { total: 0, critical: 0, warning: 0, healthy: 0 });
+      }
+      if (tsRes?.data?.success) {
+        setTimeseries(tsRes.data.data.series || []);
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
@@ -314,6 +360,36 @@ const fetchDashboardData = async () => {
           </div>
         </div>
       </div>
+
+      {/* Growth Trends */}
+      {timeseries.length > 0 && (
+        <div className="bg-base-100 rounded-2xl border border-base-300 overflow-hidden">
+          <div className="p-4 border-b border-base-300 bg-base-200/30 flex items-center justify-between">
+            <h3 className="font-black text-base-content flex items-center gap-2">
+              <BarChart3 size={18} className="text-sky-500" />
+              Growth Trends (Last 30 Days)
+            </h3>
+            <div className="flex items-center gap-1 text-xs">
+              {[
+                { key: 'users', label: 'Users', color: 'text-sky-500 bg-sky-500/10' },
+                { key: 'trips', label: 'Trips', color: 'text-emerald-500 bg-emerald-500/10' },
+                { key: 'newSubscriptions', label: 'Subscriptions', color: 'text-violet-500 bg-violet-500/10' },
+              ].map(m => (
+                <button
+                  key={m.key}
+                  onClick={() => setTsMetric(m.key)}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${tsMetric === m.key ? m.color : 'text-base-content/40 hover:text-base-content/60'}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="p-4">
+            <MiniBarChart data={timeseries} metricKey={tsMetric} />
+          </div>
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div className="bg-base-100 rounded-2xl border border-base-300 p-4">

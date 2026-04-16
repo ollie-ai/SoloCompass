@@ -16,6 +16,7 @@ import LiveTripDashboard from '../components/dashboard/states/LiveTripDashboard'
 import CompletedDashboard from '../components/dashboard/states/CompletedDashboard';
 import SubscriptionBanner from '../components/dashboard/SubscriptionBanner';
 import APIErrorBoundary from '../components/APIErrorBoundary';
+import SEO from '../components/SEO';
 
 // Stable selector for user - prevents unnecessary re-renders
 const selectUser = (state) => state.user;
@@ -247,6 +248,10 @@ const Dashboard = () => {
 
   return (
     <APIErrorBoundary>
+      <SEO
+        title="Dashboard"
+        description="Your SoloCompass mission control — view your active trips, safety status, and travel insights."
+      />
       <AnimatePresence mode="wait">
         <motion.div
           key={displayState}

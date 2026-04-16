@@ -12,6 +12,7 @@ import {
 import Button from '../components/Button';
 import APIErrorBoundary from '../components/APIErrorBoundary';
 import PlanGate from '../components/PlanGate';
+import SEO from '../components/SEO';
 
 const Skeleton = ({ className }) => (
   <div className={`bg-base-content/5 rounded-lg animate-pulse ${className}`} />
@@ -557,6 +558,10 @@ export default function Safety() {
 
   return (
     <DashboardShell>
+      <SEO
+        title="Safety Center"
+        description="Manage your emergency contacts, scheduled check-ins, and SOS settings on SoloCompass."
+      />
       <APIErrorBoundary>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <PageHeader 

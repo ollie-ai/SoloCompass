@@ -13,6 +13,8 @@ import VerificationModal from '../components/VerificationModal';
 import { ACTIVITY_INTERESTS, VIBE_INTERESTS } from '../constants/interests';
 import DashboardShell from '../components/dashboard/DashboardShell';
 import PageHeader from '../components/PageHeader';
+import ConfirmDialog from '../components/ConfirmDialog';
+import SEO from '../components/SEO';
 
 const EASE = [0.16, 1, 0.3, 1];
 const cardClass = "glass-card p-6 rounded-3xl border border-base-300/50";
@@ -47,6 +49,7 @@ const Settings = () => {
   });
   const [subscriptionStatus, setSubscriptionStatus] = useState(null);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
   const defaultNotifPrefs = {
     emailNotifications: true,
     pushNotifications: true,
@@ -164,13 +167,14 @@ const Settings = () => {
     toast.success('Reset to default preferences');
   };
 
-  const handleCancelSubscription = async () => {
-    const confirmed = window.confirm(
-      'Are you sure you want to cancel your subscription? You will lose access to premium features at the end of your current billing period.'
-    );
+  const handleCancelSubscription = () => {
+    setConfirmDialog({
+      open: true,
+      action: 'cancel_subscription',
+    });
+  };
 
-    if (!confirmed) return;
-
+  const executeCancelSubscription = async () => {
     setLoadingSubscription(true);
     try {
       await api.post('/billing/cancel-subscription');
@@ -181,6 +185,7 @@ const Settings = () => {
       toast.error(err.response?.data?.error?.message || err.response?.data?.error || 'Failed to cancel subscription');
     } finally {
       setLoadingSubscription(false);
+      setConfirmDialog({ open: false, action: null });
     }
   };
 
@@ -332,22 +337,22 @@ const Settings = () => {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    const confirmed = window.confirm(
-      'ARE YOU SURE? This will permanently delete your SoloCompass account and ALL associated trip data, itineraries, and quiz results. This action CANNOT be undone.'
-    );
+  const handleDeleteAccount = () => {
+    setConfirmDialog({ open: true, action: 'delete_account' });
+  };
 
-    if (!confirmed) return;
-
+  const executeDeleteAccount = async () => {
     setSaving(true);
     try {
       await api.delete(`/users/${user?.id}`);
+      setConfirmDialog({ open: false, action: null });
       await logout();
       navigate('/');
       import('react-hot-toast').then(toast => toast.default.success('Your account has been deleted.'));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete account');
       setSaving(false);
+      setConfirmDialog({ open: false, action: null });
     }
   };
 
@@ -418,6 +423,36 @@ const Settings = () => {
 
   return (
     <DashboardShell>
+      <SEO
+        title="Account Settings"
+        description="Manage your SoloCompass profile, security, notifications, and billing preferences."
+      />
+
+      {/* Cancel Subscription dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open && confirmDialog.action === 'cancel_subscription'}
+        onConfirm={executeCancelSubscription}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title="Cancel Subscription?"
+        description="You will lose access to premium features at the end of your current billing period. This cannot be undone until you re-subscribe."
+        confirmLabel="Yes, Cancel"
+        cancelLabel="Keep Subscription"
+        variant="warning"
+        loading={loadingSubscription}
+      />
+
+      {/* Delete Account dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open && confirmDialog.action === 'delete_account'}
+        onConfirm={executeDeleteAccount}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title="Permanently Delete Account?"
+        description="This will permanently delete your SoloCompass account and ALL associated trip data, itineraries, and account information. This action CANNOT be undone."
+        confirmLabel="Delete My Account"
+        cancelLabel="Keep Account"
+        variant="danger"
+        loading={saving}
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-12">
           <PageHeader

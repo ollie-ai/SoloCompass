@@ -21,8 +21,8 @@ const getHeader = (isEmergency = false) => `
   <title>${BRAND.name}</title>
   <meta name="color-scheme" content="light dark">
   <meta name="supported-color-schemes" content="light dark">
-  <!-- @media only screen and (max-width: 600px) - tables use max-width for fluid mobile layout -->
   <style>
+    /* Dark mode support for email clients that support prefers-color-scheme */
     @media (prefers-color-scheme: dark) {
       body, .email-body { background-color: #1e293b !important; }
       .email-content { background-color: #334155 !important; }

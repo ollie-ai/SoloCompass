@@ -13,7 +13,7 @@ router.use(authenticate);
  */
 router.get('/search', async (req, res) => {
   try {
-    const { q, query, lat, lng, radius, type } = req.query;
+    const { q, query, lat, lng, radius, type, category } = req.query;
 
     const searchQuery = q || query;
     if (!searchQuery) {
@@ -27,7 +27,8 @@ router.get('/search', async (req, res) => {
       lat: lat ? parseFloat(lat) : null,
       lng: lng ? parseFloat(lng) : null,
       radius: radius ? parseInt(radius) : 5000,
-      type
+      type,
+      category
     });
 
     res.json({ success: true, data: results, count: results.length });

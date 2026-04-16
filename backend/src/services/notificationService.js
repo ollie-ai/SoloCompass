@@ -4,6 +4,16 @@ import logger from './logger.js';
 import { FROM_EMAIL, FROM_NAME, getResendClient } from './resendClient.js';
 import { broadcastToUser } from './websocket.js';
 
+function getUnsubscribeUrl(token = 'pending-token') {
+  const apiBase = process.env.BACKEND_URL || 'http://localhost:3005';
+  return `${apiBase}/api/notifications/unsubscribe?token=${token}`;
+}
+
+function unsubscribeFooter(token) {
+  const url = getUnsubscribeUrl(token);
+  return `<p style="color:#64748b;font-size:12px;margin-top:16px;">To unsubscribe: <a href="${url}">${url}</a></p>`;
+}
+
 // Helper for formatting location in emails
 export function formatLocation(latitude, longitude, address) {
   if (address) return address;
@@ -50,6 +60,7 @@ export async function sendSafeCheckinNotification(contact, user, checkIn, locati
         </div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">This notification was sent by SoloCompass Safety Check-In.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -57,7 +68,8 @@ export async function sendSafeCheckinNotification(contact, user, checkIn, locati
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[SoloCompass] ${user.name} checked in safely ✓`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -107,6 +119,7 @@ export async function sendEmergencyAlertNotification(contact, user, checkIn, loc
         </div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">SoloCompass Support: support@solocompass.com</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -114,7 +127,8 @@ export async function sendEmergencyAlertNotification(contact, user, checkIn, loc
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[URGENT] ${user.name} - Emergency Alert from SoloCompass`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -151,6 +165,7 @@ export async function sendMissedCheckinNotification(contact, user, scheduledChec
         <p><strong>${user.name}</strong> scheduled a check-in for <strong>${scheduledTime}</strong> but has not checked in yet.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">This notification was sent by SoloCompass Safety Check-In.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -158,7 +173,8 @@ export async function sendMissedCheckinNotification(contact, user, scheduledChec
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[SoloCompass] ${user.name} - Missed Check-In`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -228,6 +244,7 @@ export async function sendTestNotification(contact, user) {
         </div>
         <p>Hi ${contact.name},</p>
         <p>This is a test notification from SoloCompass.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -235,7 +252,8 @@ export async function sendTestNotification(contact, user) {
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: '[SoloCompass] Test Notification - Emergency Contact Setup',
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };

@@ -1,6 +1,8 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { authenticate } from '../middleware/auth.js';
 import { getFlightStatus, getFlightById } from '../services/flightService.js';
+import { searchFlights } from '../services/flightSearch.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
@@ -19,7 +21,14 @@ const requireApiKey = (req, res, next) => {
   next();
 };
 
-router.use(requireApiKey);
+const flightSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => `${req.userId || 'anon'}:flight-search`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Rate limit exceeded', message: 'Maximum 5 flight searches per minute' },
+});
 
 /**
  * GET /flights/search?flight_number=BA123&date=2026-04-15
@@ -27,7 +36,28 @@ router.use(requireApiKey);
  */
 router.get('/search', async (req, res) => {
   try {
-    const { flight_number, date } = req.query;
+    const { flight_number, date, origin, destination, returnDate, passengers } = req.query;
+
+    // Flight offers search mode
+    if (origin || destination) {
+      if (!origin || !destination || !date) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required parameters',
+          message: 'origin, destination and date are required',
+        });
+      }
+      return flightSearchLimiter(req, res, async () => {
+        const options = await searchFlights({
+          origin: String(origin).toUpperCase(),
+          destination: String(destination).toUpperCase(),
+          date: String(date),
+          returnDate: returnDate ? String(returnDate) : undefined,
+          passengers: passengers ? Math.max(1, parseInt(passengers, 10)) : 1,
+        });
+        return res.json({ success: true, data: options, count: options.length });
+      });
+    }
 
     if (!flight_number) {
       return res.status(400).json({
@@ -48,6 +78,13 @@ router.get('/search', async (req, res) => {
       return res.status(400).json({
         error: 'Invalid date format',
         message: 'Date must be in YYYY-MM-DD format'
+      });
+    }
+
+    if (!AVIATIONSTACK_API_KEY) {
+      return res.status(503).json({
+        error: 'Flight API not configured',
+        message: 'AviationStack API key not set in environment',
       });
     }
 
@@ -92,6 +129,12 @@ router.get('/search', async (req, res) => {
 router.get('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!AVIATIONSTACK_API_KEY) {
+      return res.status(503).json({
+        error: 'Flight API not configured',
+        message: 'AviationStack API key not set in environment'
+      });
+    }
 
     const flight = await getFlightById(id, AVIATIONSTACK_API_KEY);
 

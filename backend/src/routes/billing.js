@@ -8,9 +8,7 @@ import {
     PLAN_PRICE_IDS 
 } from '../services/stripe.js';
 import { requireAuth } from '../middleware/auth.js';
-import { createNotification, getNotificationPreferences } from '../services/notificationService.js';
-import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
-import * as pushService from '../services/pushService.js';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
@@ -152,13 +150,11 @@ router.post('/cancel-subscription', requireAuth, async (req, res) => {
       });
     }
 
-    await createNotification(
-      userId,
-      'subscription_cancelled',
-      'Subscription Cancelled',
-      `Your ${currentTier} subscription has been cancelled. You can upgrade anytime.`,
-      { tier: currentTier }
-    );
+    await dispatchNotification(userId, 'subscription_cancelled', {
+      title: 'Subscription Cancelled',
+      message: `Your ${currentTier} subscription has been cancelled. You can upgrade anytime.`,
+      tier: currentTier,
+    });
 
     res.json({ success: true, data: { message: 'Subscription cancelled successfully' } });
   } catch (error) {

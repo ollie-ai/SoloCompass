@@ -215,6 +215,8 @@ async function initializeDatabase() {
         reset_token_expires TIMESTAMP,
         is_verified BOOLEAN DEFAULT false,
         verification_token TEXT,
+        two_factor_secret TEXT,
+        two_factor_enabled BOOLEAN DEFAULT false,
         failed_attempts INTEGER DEFAULT 0,
         locked_until TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -974,6 +976,8 @@ async function initializeDatabase() {
         amount REAL NOT NULL,
         original_currency TEXT DEFAULT 'USD',
         original_amount REAL,
+        converted_amount REAL,
+        exchange_rate REAL DEFAULT 1,
         type TEXT DEFAULT 'expense' CHECK(type IN ('expense', 'income')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -2031,6 +2035,55 @@ async function runMigrations() {
       logger.warn('[Migration v027] skipped:', error.message);
     }
     await markMigration('v027_ai_observability');
+  }
+
+  // --- Migration v028: budget_items conversion columns ---
+  if (!await hasMigration('v028_budget_item_conversion_fields')) {
+    try {
+      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS converted_amount REAL`);
+      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS exchange_rate REAL DEFAULT 1`);
+      await pool.query(`UPDATE budget_items SET converted_amount = COALESCE(converted_amount, amount), exchange_rate = COALESCE(exchange_rate, 1)`);
+      logger.info('[Migration v028] budget item conversion columns added');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_budget_item_conversion_fields');
+  }
+
+  // --- Migration v029: users 2FA columns ---
+  if (!await hasMigration('v029_users_two_factor')) {
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false`);
+      logger.info('[Migration v029] users 2FA columns added');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_users_two_factor');
+  }
+
+  // --- Migration v030: user_sessions table ---
+  if (!await hasMigration('v030_user_sessions_table')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL,
+          device_name TEXT,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          last_active_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_last_active ON user_sessions(last_active_at DESC)`);
+      logger.info('[Migration v030] user_sessions table created');
+    } catch (error) {
+      logger.warn('[Migration v030] skipped:', error.message);
+    }
+    await markMigration('v030_user_sessions_table');
   }
 
   logger.info('[Migration] All migrations complete');

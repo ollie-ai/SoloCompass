@@ -24,6 +24,22 @@ async function convertCurrency(amount, from, to) {
   }
 }
 
+async function convertCurrencyWithRate(amount, from, to) {
+  if (from === to) return { convertedAmount: Number(amount), exchangeRate: 1 };
+  try {
+    const baseUrl = process.env.FRANKFURTER_BASE_URL || 'https://api.frankfurter.app';
+    const response = await fetch(`${baseUrl}/latest?amount=${amount}&from=${from}&to=${to}`);
+    if (!response.ok) throw new Error('Conversion failed');
+    const data = await response.json();
+    const convertedAmount = data.rates ? Number(data.rates[to]) : Number(amount);
+    const exchangeRate = Number(amount) > 0 ? convertedAmount / Number(amount) : 1;
+    return { convertedAmount, exchangeRate };
+  } catch (error) {
+    logger.error('Currency conversion error:', error);
+    return { convertedAmount: Number(amount), exchangeRate: 1 };
+  }
+}
+
 router.get('/currencies', async (req, res) => {
   try {
     res.json({
@@ -49,7 +65,7 @@ router.get('/:tripId', authenticate, async (req, res) => {
     }
 
     let items = await db.prepare(`
-      SELECT id, budget_id, category, description, amount, original_amount, original_currency, type, created_at, updated_at FROM budget_items WHERE budget_id = ? ORDER BY created_at DESC
+      SELECT id, budget_id, category, description, amount, original_amount, original_currency, converted_amount, exchange_rate, type, created_at, updated_at FROM budget_items WHERE budget_id = ? ORDER BY created_at DESC
     `).all(budget.id);
 
     let totalSpent = 0;
@@ -74,6 +90,8 @@ router.get('/:tripId', authenticate, async (req, res) => {
         amount: amount,
         originalAmount: item.original_amount || item.amount,
         originalCurrency: item.original_currency,
+        convertedAmount: item.converted_amount || item.amount,
+        exchangeRate: item.exchange_rate || 1,
         type: item.type,
         createdAt: item.created_at
       };
@@ -256,14 +274,14 @@ router.post('/:tripId/items', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Budget not found. Create a budget first.' });
     }
 
-    const convertedAmount = await convertCurrency(amount, currency, budget.currency);
+    const { convertedAmount, exchangeRate } = await convertCurrencyWithRate(amount, currency, budget.currency);
 
     const result = await db.prepare(`
-      INSERT INTO budget_items (budget_id, category, description, amount, original_amount, original_currency, type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(budget.id, category, description || null, convertedAmount, amount, currency, type);
+      INSERT INTO budget_items (budget_id, category, description, amount, original_amount, original_currency, converted_amount, exchange_rate, type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(budget.id, category, description || null, convertedAmount, amount, currency, convertedAmount, exchangeRate, type);
 
-    const item = await db.prepare('SELECT id, budget_id, category, description, amount, original_amount, original_currency, type, created_at FROM budget_items WHERE id = ?').get(result.lastInsertRowid);
+    const item = await db.prepare('SELECT id, budget_id, category, description, amount, original_amount, original_currency, converted_amount, exchange_rate, type, created_at FROM budget_items WHERE id = ?').get(result.lastInsertRowid);
 
     res.status(201).json({
       success: true,
@@ -274,6 +292,8 @@ router.post('/:tripId/items', authenticate, async (req, res) => {
         amount: item.amount,
         originalAmount: item.original_amount,
         originalCurrency: item.original_currency,
+        convertedAmount: item.converted_amount || item.amount,
+        exchangeRate: item.exchange_rate || 1,
         type: item.type,
         createdAt: item.created_at
       }
@@ -320,9 +340,9 @@ router.put('/:tripId/items/:id', authenticate, async (req, res) => {
 
     if (amount !== undefined) {
       const useCurrency = currency && CURRENCIES.includes(currency) ? currency : item.original_currency;
-      const convertedAmount = await convertCurrency(amount, useCurrency, budget.currency);
-      updates.push('amount = ?, original_amount = ?, original_currency = ?');
-      params.push(convertedAmount, amount, useCurrency);
+      const { convertedAmount, exchangeRate } = await convertCurrencyWithRate(amount, useCurrency, budget.currency);
+      updates.push('amount = ?, original_amount = ?, original_currency = ?, converted_amount = ?, exchange_rate = ?');
+      params.push(convertedAmount, amount, useCurrency, convertedAmount, exchangeRate);
     }
 
     if (type !== undefined) {
@@ -336,7 +356,7 @@ router.put('/:tripId/items/:id', authenticate, async (req, res) => {
     params.push(id);
     await db.prepare(`UPDATE budget_items SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
-    const updated = await db.prepare('SELECT id, budget_id, category, description, amount, original_amount, original_currency, type, created_at, updated_at FROM budget_items WHERE id = ?').get(id);
+    const updated = await db.prepare('SELECT id, budget_id, category, description, amount, original_amount, original_currency, converted_amount, exchange_rate, type, created_at, updated_at FROM budget_items WHERE id = ?').get(id);
 
     res.json({
       success: true,
@@ -347,6 +367,8 @@ router.put('/:tripId/items/:id', authenticate, async (req, res) => {
         amount: updated.amount,
         originalAmount: updated.original_amount,
         originalCurrency: updated.original_currency,
+        convertedAmount: updated.converted_amount || updated.amount,
+        exchangeRate: updated.exchange_rate || 1,
         type: updated.type,
         createdAt: updated.created_at
       }

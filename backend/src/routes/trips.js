@@ -7,15 +7,14 @@ import { premiumOnly } from '../middleware/paywall.js';
 import { sanitizeAll } from '../middleware/validate.js';
 import db from '../db.js';
 import { generateItinerary } from '../services/itineraryAI.js';
+import { generateStructuredItinerary } from '../services/itineraryGenerator.js';
 import { getTripReadiness, generateChecklist } from '../services/readinessService.js';
 import { getTimezoneInfo } from '../services/timezoneService.js';
 import { getForecast } from '../services/weatherService.js';
-import { createNotification, getNotificationPreferences, sendTripUpdate } from '../services/notificationService.js';
-import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
-import * as pushService from '../services/pushService.js';
-import * as email from '../services/email.js';
+import { sendTripUpdate } from '../services/notificationService.js';
 import logger from '../services/logger.js';
 import PDFDocument from 'pdfkit';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 
 const router = express.Router();
 
@@ -53,23 +52,7 @@ const handleValidationErrors = (req, res, next) => {
 
 async function sendTripNotification(userId, notificationType, title, message, data = null, relatedId = null) {
   try {
-    await createNotification(userId, notificationType, title, message, data, relatedId);
-    
-    const prefs = await getNotificationPreferences(userId);
-    const channels = getChannelsForType(notificationType, prefs);
-    
-    if (channels.includes(CHANNEL.PUSH)) {
-      await pushService.sendPushNotification(userId, { title, body: message, ...data });
-    }
-    
-    if (channels.includes(CHANNEL.EMAIL)) {
-      const user = await db.prepare('SELECT email, name FROM users WHERE id = ?').get(userId);
-      if (user?.email) {
-        if (notificationType === 'trip_reminder') {
-          await email.sendTripConfirmed(user.email, { name: user.name, ...data });
-        }
-      }
-    }
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}), relatedId });
   } catch (err) {
     logger.error(`[TripNotification] Failed to send ${notificationType}:`, err.message);
   }
@@ -137,6 +120,28 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Get trips error:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch trips' } });
+  }
+});
+
+// Generate a structured itinerary payload for client-side planning workflows
+router.post('/ai-generate', requireAuth, async (req, res) => {
+  try {
+    const { destinationId, startDate, endDate, preferences = {} } = req.body || {};
+    if (!destinationId || !startDate || !endDate) {
+      return res.status(400).json(formatError('VALIDATION_ERROR', 'destinationId, startDate and endDate are required'));
+    }
+
+    const data = await generateStructuredItinerary({
+      destinationId: parseInt(destinationId, 10),
+      startDate,
+      endDate,
+      preferences,
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('AI structured itinerary generation failed:', error.message);
+    res.status(500).json(formatError('INTERNAL_ERROR', error.message || 'Failed to generate itinerary'));
   }
 });
 

@@ -9,7 +9,7 @@ const NotificationDropdown = memo(({ unreadCount, onCountChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
-  const { isConnected } = useWebSocket();
+  const { isConnected, on } = useWebSocket();
 
   useEffect(() => {
     if (isOpen && notifications.length === 0) {
@@ -23,6 +23,25 @@ const NotificationDropdown = memo(({ unreadCount, onCountChange }) => {
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const offNew = on('notification:new', (payload) => {
+      const incoming = payload?.notification;
+      if (!incoming) return;
+      setNotifications((prev) => [incoming, ...prev].slice(0, 20));
+      onCountChange?.((unreadCount || 0) + 1);
+    });
+    const offLegacy = on('notification', (payload) => {
+      const incoming = payload?.notification;
+      if (!incoming) return;
+      setNotifications((prev) => [incoming, ...prev].slice(0, 20));
+      onCountChange?.((unreadCount || 0) + 1);
+    });
+    return () => {
+      offNew?.();
+      offLegacy?.();
+    };
+  }, [on, onCountChange, unreadCount]);
 
   const fetchNotifications = async () => {
     try {

@@ -2,10 +2,7 @@ import Stripe from 'stripe';
 import db from '../db.js';
 import dotenv from 'dotenv';
 import logger from './logger.js';
-import { createNotification, getNotificationPreferences } from './notificationService.js';
-import { getChannelsForType, CHANNEL } from './notificationRegistry.js';
-import * as pushService from './pushService.js';
-import * as email from './email.js';
+import { dispatchNotification } from './notificationDispatcher.js';
 
 dotenv.config();
 
@@ -40,21 +37,7 @@ const PLAN_NAMES = {
 
 async function sendBillingNotification(userId, notificationType, title, message, data = null) {
   try {
-    await createNotification(userId, notificationType, title, message, data);
-    
-    const prefs = await getNotificationPreferences(userId);
-    const channels = getChannelsForType(notificationType, prefs);
-    
-    if (channels.includes(CHANNEL.PUSH)) {
-      await pushService.sendPushNotification(userId, { title, body: message, ...data });
-    }
-    
-    if (channels.includes(CHANNEL.EMAIL)) {
-      const user = await db.prepare('SELECT email, name FROM users WHERE id = ?').get(userId);
-      if (user?.email) {
-        await email.sendCustomEmail(user.email, notificationType, { name: user.name, ...data });
-      }
-    }
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}) });
   } catch (err) {
     logger.error(`[BillingNotification] Failed to send ${notificationType}:`, err.message);
   }

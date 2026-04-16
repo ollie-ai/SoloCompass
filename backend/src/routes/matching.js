@@ -3,10 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
-import { createNotification, getNotificationPreferences } from '../services/notificationService.js';
-import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
-import * as pushService from '../services/pushService.js';
-import * as email from '../services/email.js';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 import multer from 'multer';
 import { supabaseStorage } from '../services/supabaseStorage.js';
 
@@ -36,14 +33,7 @@ const handleValidationErrors = (req, res, next) => {
 
 async function sendBuddyNotification(userId, notificationType, title, message, data = null) {
   try {
-    await createNotification(userId, notificationType, title, message, data);
-    
-    const prefs = await getNotificationPreferences(userId);
-    const channels = getChannelsForType(notificationType, prefs);
-    
-    if (channels.includes(CHANNEL.PUSH)) {
-      await pushService.sendPushNotification(userId, { title, body: message, ...data });
-    }
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}) });
   } catch (err) {
     logger.error(`[BuddyNotification] Failed to send ${notificationType}:`, err.message);
   }

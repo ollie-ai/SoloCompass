@@ -216,6 +216,14 @@ router.post('/acknowledge/:token', async (req, res) => {
 
     await createNotification(
       acknowledgement.user_id,
+      'guardian_acknowledged',
+      'Guardian Confirmed',
+      `${acknowledgement.contact_name} has confirmed they are your travel guardian.`,
+      { contactId: acknowledgement.contact_id, tripId: acknowledgement.trip_id }
+    );
+
+    await createNotification(
+      acknowledgement.user_id,
       'sos_acknowledged',
       'SOS Acknowledged',
       `${acknowledgement.contact_name} acknowledged your emergency alert and is responding.`,

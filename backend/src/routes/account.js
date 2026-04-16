@@ -1,13 +1,26 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import logger from '../services/logger.js';
 import { deleteUserAccountCascade, generateUserDataExport } from '../services/dataExport.js';
 
 const router = express.Router();
+const exportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const deleteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 router.use(requireAuth);
 
-router.get('/data-export', async (req, res) => {
+router.get('/data-export', exportLimiter, async (req, res) => {
   try {
     const exportPayload = await generateUserDataExport(req.userId);
     const json = JSON.stringify(exportPayload, null, 2);
@@ -25,7 +38,7 @@ router.get('/data-export', async (req, res) => {
   }
 });
 
-router.delete('/', async (req, res) => {
+router.delete('/', deleteLimiter, async (req, res) => {
   try {
     await deleteUserAccountCascade(req.userId);
     res.clearCookie('token');

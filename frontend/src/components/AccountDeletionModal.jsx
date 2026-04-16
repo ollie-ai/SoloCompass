@@ -15,15 +15,20 @@ export default function AccountDeletionModal({ isOpen, isDeleting, onClose, onCo
             <AlertTriangle size={18} />
             Confirm account deletion
           </h3>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-base-200">
+          <button onClick={onClose} aria-label="Close" className="p-2 rounded-lg hover:bg-base-200">
             <X size={16} />
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-sm text-base-content/80">
+          <p id="account-delete-help" className="text-sm text-base-content/80">
             This permanently deletes your account and associated data. Type <span className="font-black">DELETE</span> to continue.
           </p>
+          <label htmlFor="account-delete-confirm" className="text-xs font-bold text-base-content/60 uppercase tracking-wide">
+            Confirmation text
+          </label>
           <input
+            id="account-delete-confirm"
+            aria-describedby="account-delete-help"
             value={confirmationText}
             onChange={(e) => setConfirmationText(e.target.value)}
             placeholder="Type DELETE to confirm"

@@ -95,7 +95,7 @@ export async function generateUserDataExport(userId) {
     accommodations: await fetchRowsByTrip('accommodations', tripIds),
     bookings: await fetchRowsByTrip('bookings', tripIds),
     trip_documents: await fetchRowsByTrip('trip_documents', tripIds),
-    budgets_items: budgetItems,
+    budget_items: budgetItems,
     buddy_conversations: conversations
   };
 

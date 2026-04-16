@@ -223,6 +223,35 @@ export const NOTIFICATION_TYPES = {
     channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
     controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
   },
+  payment_success: {
+    name: 'Payment Successful',
+    description: 'Payment processed successfully',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+  usage_warning: {
+    name: 'Usage Warning',
+    description: 'Approaching usage limit',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.IN_APP, CHANNEL.PUSH],
+    controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
+    preferenceKey: 'budgetAlerts',
+  },
+  trial_ending: {
+    name: 'Trial Ending Soon',
+    description: 'Free trial ending reminder',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP, CHANNEL.PUSH],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+  trial_expired: {
+    name: 'Trial Expired',
+    description: 'Free trial has expired',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
 };
 
 export const OPS_ALERT_TYPES = {

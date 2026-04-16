@@ -6,6 +6,7 @@ import { createNotification, getNotificationPreferences } from './notificationSe
 import { getChannelsForType, CHANNEL } from './notificationRegistry.js';
 import * as pushService from './pushService.js';
 import * as email from './email.js';
+import { handlePaymentFailure } from './billingService.js';
 
 dotenv.config();
 
@@ -186,13 +187,7 @@ export const handleStripeWebhook = async (sig, body) => {
         
         const failedUser = await db.get('SELECT id FROM users WHERE stripe_customer_id = ?', failedInvoice.customer);
         if (failedUser) {
-          await sendBillingNotification(
-            failedUser.id,
-            'payment_failed',
-            'Payment Failed',
-            'Your payment could not be processed. Please update your payment method.',
-            { invoiceId: failedInvoice.id }
-          );
+          await handlePaymentFailure(failedUser.id, failedInvoice.id);
         }
         break;
         

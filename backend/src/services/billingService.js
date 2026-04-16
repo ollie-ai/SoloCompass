@@ -122,7 +122,7 @@ export async function retryFailedPayments() {
       try {
         const invoice = await stripe.invoices.pay(retry.stripe_invoice_id);
         await db.run('UPDATE payment_retry_log SET status = ? WHERE id = ?', 'succeeded', retry.id);
-        await createNotification(retry.user_id, 'payment_failed', 'Payment Successful', 'Your payment has been successfully processed!', { invoiceId: retry.stripe_invoice_id });
+        await createNotification(retry.user_id, 'payment_success', 'Payment Successful', 'Your payment has been successfully processed!', { invoiceId: retry.stripe_invoice_id });
         results.push({ id: retry.id, status: 'succeeded' });
       } catch (err) {
         await db.run('UPDATE payment_retry_log SET status = ?, error_message = ? WHERE id = ?', 'failed', err.message, retry.id);
@@ -158,9 +158,14 @@ export async function trackUsage(userId, metric) {
       usage = await db.get('SELECT * FROM billing_usage WHERE user_id = ? AND billing_period_start = ?', userId, periodStart.toISOString());
     }
 
-    const column = `${metric}_used`;
-    const validMetrics = ['ai_itineraries', 'checkins', 'buddy_requests', 'ai_chats'];
-    if (!validMetrics.includes(metric)) return { success: false, error: 'Invalid metric' };
+    const METRIC_COLUMNS = {
+      ai_itineraries: 'ai_itineraries_used',
+      checkins: 'checkins_used',
+      buddy_requests: 'buddy_requests_used',
+      ai_chats: 'ai_chats_used',
+    };
+    const column = METRIC_COLUMNS[metric];
+    if (!column) return { success: false, error: 'Invalid metric' };
 
     await db.run(`UPDATE billing_usage SET ${column} = ${column} + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, usage.id);
 
@@ -174,9 +179,9 @@ export async function trackUsage(userId, metric) {
       const pct = (newCount / limit) * 100;
 
       if (pct >= 90 && pct - (100/limit) < 90) {
-        await createNotification(userId, 'budget_alert', 'Usage Warning', `You've used 90% of your ${metric.replace('_', ' ')} limit. Consider upgrading your plan.`, { metric, used: newCount, limit, percentage: 90 });
+        await createNotification(userId, 'usage_warning', 'Usage Warning', `You've used 90% of your ${metric.replace('_', ' ')} limit. Consider upgrading your plan.`, { metric, used: newCount, limit, percentage: 90 });
       } else if (pct >= 80 && pct - (100/limit) < 80) {
-        await createNotification(userId, 'budget_alert', 'Usage Warning', `You've used 80% of your ${metric.replace('_', ' ')} limit.`, { metric, used: newCount, limit, percentage: 80 });
+        await createNotification(userId, 'usage_warning', 'Usage Warning', `You've used 80% of your ${metric.replace('_', ' ')} limit.`, { metric, used: newCount, limit, percentage: 80 });
       }
     }
 

@@ -1,7 +1,33 @@
 import express from 'express';
-import { getEmergencyNumbers, getAllEmergencyNumbers, isAvailable } from '../services/emergencyNumbersService.js';
+import {
+  getEmergencyNumbers,
+  getAllEmergencyNumbers,
+  isAvailable,
+  getEmergencyNumbersRefreshMetadata,
+  refreshEmergencyNumbersDataset,
+} from '../services/emergencyNumbersService.js';
 
 const router = express.Router();
+
+router.get('/refresh-status', (req, res) => {
+  res.json({
+    success: true,
+    data: getEmergencyNumbersRefreshMetadata(),
+  });
+});
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const result = await refreshEmergencyNumbersDataset({ force: true });
+    res.status(result.refreshed ? 200 : 202).json({
+      success: result.refreshed,
+      data: result,
+    });
+  } catch (error) {
+    console.error('[EmergencyNumbers] Refresh Error:', error.message);
+    res.status(500).json({ success: false, error: 'Refresh failed' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {

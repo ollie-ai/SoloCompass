@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { ShieldCheck, X, Cookie, Settings, Check } from 'lucide-react';
 import Button from './Button';
 import { Link } from 'react-router-dom';
+import api from '../lib/api';
+import { useAuthStore } from '../stores/authStore';
 
 const CookieConsent = () => {
   const [show, setShow] = useState(false);
@@ -11,6 +13,21 @@ const CookieConsent = () => {
     analytics: false,
     marketing: false
   });
+  const { isAuthenticated } = useAuthStore();
+
+  const persistConsent = async (status, prefs) => {
+    if (!isAuthenticated) return;
+    try {
+      await api.post('/users/me/consent', {
+        consentType: 'cookies',
+        status,
+        source: 'cookie_banner',
+        preferences: prefs
+      });
+    } catch {
+      // Silent by design to avoid blocking UX
+    }
+  };
 
   useEffect(() => {
     const consent = localStorage.getItem('cookie-consent');
@@ -35,6 +52,7 @@ const CookieConsent = () => {
     setPreferences(fullConsent);
     setShow(false);
     setShowPreferences(false);
+    persistConsent('granted', fullConsent);
   };
 
   const acceptEssential = () => {
@@ -48,6 +66,7 @@ const CookieConsent = () => {
     setPreferences(essentialOnly);
     setShow(false);
     setShowPreferences(false);
+    persistConsent('denied', essentialOnly);
   };
 
   const savePreferences = () => {
@@ -55,6 +74,8 @@ const CookieConsent = () => {
     localStorage.setItem('cookie-preferences', JSON.stringify(preferences));
     setShow(false);
     setShowPreferences(false);
+    const hasOptionalConsent = preferences.analytics || preferences.marketing;
+    persistConsent(hasOptionalConsent ? 'granted' : 'denied', preferences);
   };
 
   const togglePreference = (key) => {

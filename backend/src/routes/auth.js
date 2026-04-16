@@ -111,7 +111,7 @@ router.post('/register', [
   body('name').optional().isLength({ max: 100 }).withMessage('Name must be less than 100 characters'),
 ], handleValidationErrors, async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, dataProcessingConsent = true } = req.body;
 
     const existingUser = await db.get('SELECT id FROM users WHERE email = ?', email);
     if (existingUser) {
@@ -155,6 +155,20 @@ router.post('/register', [
     await db.run(
       'INSERT INTO profiles (user_id) VALUES (?)',
       userId
+    );
+
+    const consentIpAddress = (req.headers['x-forwarded-for']?.split(',')?.[0] || req.ip || '').replace(/^::ffff:/, '');
+    const consentStatus = dataProcessingConsent ? 'granted' : 'denied';
+    await db.run(
+      `INSERT INTO user_consents (user_id, consent_type, consent_status, source, preferences, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`,
+      userId,
+      'data_processing',
+      consentStatus,
+      'registration',
+      JSON.stringify({ legalBasis: 'contract', acceptedAtSignup: Boolean(dataProcessingConsent) }),
+      consentIpAddress,
+      req.headers['user-agent'] || null
     );
 
     const isProd = process.env.NODE_ENV === 'production';

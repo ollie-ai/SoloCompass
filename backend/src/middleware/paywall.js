@@ -133,6 +133,19 @@ const PLAN_ACCESS = {
   ]
 };
 
+const getRequiredPlanForFeature = (feature) => {
+  if ((PLAN_ACCESS[PLAN_TIERS.EXPLORER] || []).includes(feature)) {
+    return PLAN_TIERS.EXPLORER;
+  }
+  if ((PLAN_ACCESS[PLAN_TIERS.GUARDIAN] || []).includes(feature)) {
+    return PLAN_TIERS.GUARDIAN;
+  }
+  if ((PLAN_ACCESS[PLAN_TIERS.NAVIGATOR] || []).includes(feature)) {
+    return PLAN_TIERS.NAVIGATOR;
+  }
+  return PLAN_TIERS.EXPLORER;
+};
+
 /**
  * Get user's plan tier from database
  */
@@ -165,14 +178,16 @@ export const requireFeature = (feature) => {
     try {
       const plan = await getUserPlan(req.userId);
       const hasAccess = await hasFeature(req.userId, feature);
+      const requiredPlan = getRequiredPlanForFeature(feature);
 
       if (!hasAccess) {
         return res.status(403).json({
           success: false,
           error: {
             code: 'FEATURE_NOT_INCLUDED',
-            message: `This feature requires the ${plan === PLAN_TIERS.GUARDIAN ? 'Guardian' : plan === PLAN_TIERS.NAVIGATOR ? 'Navigator' : 'Explorer'} plan.`,
+            message: `This feature requires the ${requiredPlan === PLAN_TIERS.NAVIGATOR ? 'Navigator' : requiredPlan === PLAN_TIERS.GUARDIAN ? 'Guardian' : 'Explorer'} plan.`,
             currentPlan: plan,
+            requiredPlan,
             upgradeUrl: '/settings?tab=billing'
           }
         });
@@ -181,7 +196,13 @@ export const requireFeature = (feature) => {
       next();
     } catch (error) {
       logger.error('Feature check middleware error:', error);
-      next(); // Allow on error to avoid blocking users
+      return res.status(503).json({
+        success: false,
+        error: {
+          code: 'FEATURE_GATE_UNAVAILABLE',
+          message: 'Feature access could not be verified'
+        }
+      });
     }
   };
 };

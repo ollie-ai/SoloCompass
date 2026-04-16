@@ -207,6 +207,7 @@ async function initializeDatabase() {
         password TEXT NOT NULL,
         name TEXT,
         role TEXT DEFAULT 'user' CHECK(role IN ('user', 'viewer', 'admin')),
+        is_2fa_enabled BOOLEAN DEFAULT false,
         is_premium BOOLEAN DEFAULT false,
         subscription_tier TEXT DEFAULT 'free',
         stripe_customer_id TEXT,
@@ -266,6 +267,41 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity);
       CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token);
+
+      -- GDPR consent tracking
+      CREATE TABLE IF NOT EXISTS user_consents (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        consent_type TEXT NOT NULL,
+        consent_status TEXT NOT NULL CHECK(consent_status IN ('granted', 'denied', 'withdrawn')),
+        source TEXT DEFAULT 'web_app',
+        preferences JSONB,
+        ip_address TEXT,
+        user_agent TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        withdrawn_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_consents_user_type_created ON user_consents(user_id, consent_type, created_at DESC);
+
+      -- Support tickets
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        subject TEXT NOT NULL,
+        message TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'escalated', 'resolved', 'closed')),
+        priority TEXT DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        is_emergency BOOLEAN DEFAULT false,
+        sla_due_at TIMESTAMPTZ,
+        assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_status_priority ON support_tickets(status, priority, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_emergency ON support_tickets(is_emergency, created_at DESC);
 
       -- Categories table
       CREATE TABLE IF NOT EXISTS categories (
@@ -2031,6 +2067,52 @@ async function runMigrations() {
       logger.warn('[Migration v027] skipped:', error.message);
     }
     await markMigration('v027_ai_observability');
+  }
+
+  // --- Migration v028: P0 security + consent + support tables ---
+  if (!await hasMigration('v028_p0_security_consent_support')) {
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_2fa_enabled BOOLEAN DEFAULT false`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_consents (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          consent_type TEXT NOT NULL,
+          consent_status TEXT NOT NULL CHECK(consent_status IN ('granted', 'denied', 'withdrawn')),
+          source TEXT DEFAULT 'web_app',
+          preferences JSONB,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          withdrawn_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_consents_user_type_created ON user_consents(user_id, consent_type, created_at DESC)`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS support_tickets (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          subject TEXT NOT NULL,
+          message TEXT NOT NULL,
+          category TEXT DEFAULT 'general',
+          status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'escalated', 'resolved', 'closed')),
+          priority TEXT DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+          is_emergency BOOLEAN DEFAULT false,
+          sla_due_at TIMESTAMPTZ,
+          assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          resolved_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_status_priority ON support_tickets(status, priority, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_emergency ON support_tickets(is_emergency, created_at DESC)`);
+      logger.info('[Migration v028] P0 security/consent/support schema applied');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_p0_security_consent_support');
   }
 
   logger.info('[Migration] All migrations complete');

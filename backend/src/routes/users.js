@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import db from '../db.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 import { sanitizeAll } from '../middleware/validate.js';
 import { stripe } from '../services/stripe.js';
 import logger from '../services/logger.js';
@@ -100,6 +101,88 @@ router.get('/me', requireAuth, async (req, res) => {
     res.status(500).json({
       success: false,
       error: { code: 'INTERNAL_ERROR', message: 'Failed to get user' }
+    });
+  }
+});
+
+router.get('/me/consent', requireAuth, async (req, res) => {
+  try {
+    const rows = await db.all(`
+      SELECT DISTINCT ON (consent_type)
+        consent_type, consent_status, source, preferences, created_at, withdrawn_at
+      FROM user_consents
+      WHERE user_id = ?
+      ORDER BY consent_type, created_at DESC
+    `, req.userId);
+
+    const consent = (rows || []).reduce((acc, row) => {
+      acc[row.consent_type] = {
+        status: row.consent_status,
+        source: row.source,
+        preferences: row.preferences,
+        updatedAt: row.created_at,
+        withdrawnAt: row.withdrawn_at
+      };
+      return acc;
+    }, {});
+
+    res.json({ success: true, data: { consent } });
+  } catch (error) {
+    logger.error(`[Users] Failed to fetch consent: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch consent preferences' }
+    });
+  }
+});
+
+router.post('/me/consent', requireAuth, async (req, res) => {
+  try {
+    const { consentType, status, source = 'web_app', preferences = null } = req.body || {};
+    const allowedTypes = ['data_processing', 'cookies'];
+    const allowedStatuses = ['granted', 'denied', 'withdrawn'];
+
+    if (!allowedTypes.includes(consentType)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CONSENT_TYPE', message: 'Invalid consent type' }
+      });
+    }
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_CONSENT_STATUS', message: 'Invalid consent status' }
+      });
+    }
+
+    const withdrawnAt = status === 'withdrawn' ? new Date().toISOString() : null;
+    const ipAddress = (req.headers['x-forwarded-for']?.split(',')?.[0] || req.ip || '').replace(/^::ffff:/, '');
+
+    const result = await db.run(
+      `INSERT INTO user_consents (user_id, consent_type, consent_status, source, preferences, ip_address, user_agent, withdrawn_at)
+       VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?)`,
+      req.userId,
+      consentType,
+      status,
+      source,
+      preferences ? JSON.stringify(preferences) : null,
+      ipAddress,
+      req.headers['user-agent'] || null,
+      withdrawnAt
+    );
+
+    const latest = await db.get(
+      `SELECT id, consent_type, consent_status, source, preferences, created_at, withdrawn_at
+       FROM user_consents WHERE id = ?`,
+      result.lastInsertRowid
+    );
+
+    res.json({ success: true, data: { consent: latest } });
+  } catch (error) {
+    logger.error(`[Users] Failed to record consent: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to save consent preferences' }
     });
   }
 });
@@ -244,7 +327,7 @@ router.put('/:id', requireAuth, sanitizeAll(['name', 'bio', 'travel_style', 'pho
   }
 });
 
-router.get('/:id/export', requireAuth, async (req, res) => {
+router.get('/:id/export', requireAuth, requireFeature(FEATURES.EXPORT_DATA), async (req, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.userRole === 'admin';
@@ -341,7 +424,7 @@ router.get('/:id/export', requireAuth, async (req, res) => {
   }
 });
 
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, requireFeature(FEATURES.DELETE_DATA), async (req, res) => {
   try {
     const { id } = req.params;
     const { permanent } = req.query; // ?permanent=true for hard delete

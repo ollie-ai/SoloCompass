@@ -41,6 +41,49 @@ const validateSession = async (userId, sessionId) => {
   }
 };
 
+const normalizeIp = (ip = '') => ip.replace(/^::ffff:/, '');
+
+const enforceAdminSessionSecurity = async (req, res) => {
+  const allowlistRaw = process.env.ADMIN_IP_ALLOWLIST || '';
+  const allowlist = allowlistRaw
+    .split(',')
+    .map((entry) => normalizeIp(entry.trim()))
+    .filter(Boolean);
+
+  if (allowlist.length > 0) {
+    const requestIp = normalizeIp(req.ip || req.headers['x-forwarded-for']?.split(',')?.[0] || '');
+    if (!allowlist.includes(requestIp)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_IP_RESTRICTED', message: 'Admin access is not allowed from this IP address' }
+      });
+    }
+  }
+
+  const shouldRequire2FA = process.env.ADMIN_REQUIRE_2FA !== 'false';
+  if (!shouldRequire2FA) {
+    return null;
+  }
+
+  try {
+    const adminUser = await db.get('SELECT is_2fa_enabled FROM users WHERE id = ?', req.userId);
+    if (!adminUser?.is_2fa_enabled) {
+      return res.status(428).json({
+        success: false,
+        error: { code: 'ADMIN_2FA_REQUIRED', message: 'Admin account must enable 2FA before accessing admin routes' }
+      });
+    }
+  } catch (error) {
+    logger.error(`[Auth] Failed admin security check: ${error.message}`);
+    return res.status(503).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Unable to verify admin security requirements' }
+    });
+  }
+
+  return null;
+};
+
 export const authenticate = async (req, res, next) => {
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');
   
@@ -115,9 +158,21 @@ export const requireAdmin = async (req, res, next) => {
         error: { code: 'FORBIDDEN', message: 'Admin access required' }
       });
     }
-    // Grant basic admin access - specific permissions checked separately
-    req.adminLevel = req.user?.admin_level || 'support';
-    next();
+    return Promise.resolve()
+      .then(async () => {
+        const securityRejection = await enforceAdminSessionSecurity(req, res);
+        if (securityRejection) return null;
+        // Grant basic admin access - specific permissions checked separately
+        req.adminLevel = req.user?.admin_level || 'support';
+        return next();
+      })
+      .catch((error) => {
+        logger.error(`[Auth] requireAdmin error: ${error.message}`);
+        return res.status(500).json({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Failed admin authorization' }
+        });
+      });
   });
 };
 

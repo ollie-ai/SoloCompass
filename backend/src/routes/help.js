@@ -2,8 +2,17 @@ import express from 'express';
 import { body, validationResult } from 'express-validator';
 import db from '../db.js';
 import logger from '../services/logger.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
+
+const emergencyKeywords = ['sos', 'emergency', 'urgent', 'unsafe', 'danger'];
+
+const getEmergencyFlag = ({ subject = '', message = '', category = '' }) => {
+  if (String(category).toLowerCase() === 'sos') return true;
+  const text = `${subject} ${message}`.toLowerCase();
+  return emergencyKeywords.some((keyword) => text.includes(keyword));
+};
 
 /**
  * GET /api/help/faqs
@@ -146,6 +155,81 @@ router.post('/contact', [
   } catch (error) {
     logger.error(`[Help] Contact form error: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to submit contact form' });
+  }
+});
+
+/**
+ * POST /api/help/tickets
+ * Create support ticket (emergency tickets are auto-prioritized)
+ */
+router.post('/tickets', requireAuth, [
+  body('subject').trim().isLength({ min: 3 }).withMessage('Subject is required'),
+  body('message').trim().isLength({ min: 10 }).withMessage('Message must be at least 10 characters'),
+  body('category').optional().isString()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { subject, message, category = 'general', metadata = {} } = req.body;
+    const isEmergency = getEmergencyFlag({ subject, message, category });
+    const priority = isEmergency ? 'urgent' : 'normal';
+    const status = isEmergency ? 'escalated' : 'open';
+    const slaDueAt = new Date(Date.now() + (isEmergency ? 15 : 24 * 60) * 60 * 1000).toISOString();
+
+    const ticketResult = await db.run(
+      `INSERT INTO support_tickets (user_id, subject, message, category, status, priority, is_emergency, sla_due_at, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)`,
+      req.userId,
+      subject,
+      message,
+      category,
+      status,
+      priority,
+      isEmergency,
+      slaDueAt,
+      JSON.stringify(metadata || {})
+    );
+
+    const ticket = await db.get('SELECT * FROM support_tickets WHERE id = ?', ticketResult.lastInsertRowid);
+    await db.run(
+      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
+      req.userId,
+      isEmergency ? 'support_ticket_sos_escalated' : 'support_ticket_created',
+      JSON.stringify({ ticketId: ticket?.id, priority, category, status })
+    );
+
+    res.status(201).json({
+      success: true,
+      data: {
+        ticket,
+        emergencyFastTrack: isEmergency
+      }
+    });
+  } catch (error) {
+    logger.error(`[Help] Failed to create support ticket: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to create support ticket' });
+  }
+});
+
+/**
+ * GET /api/help/tickets
+ * List current user's tickets
+ */
+router.get('/tickets', requireAuth, async (req, res) => {
+  try {
+    const tickets = await db.all(
+      `SELECT id, subject, category, status, priority, is_emergency, sla_due_at, created_at, updated_at, resolved_at
+       FROM support_tickets WHERE user_id = ?
+       ORDER BY is_emergency DESC, created_at DESC`,
+      req.userId
+    );
+    res.json({ success: true, data: { tickets: tickets || [] } });
+  } catch (error) {
+    logger.error(`[Help] Failed to list tickets: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch support tickets' });
   }
 });
 

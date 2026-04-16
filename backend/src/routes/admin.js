@@ -2515,32 +2515,42 @@ router.get('/billing/activity', ...adminGuard, async (req, res) => {
 router.get('/support/tickets', ...adminGuard, async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
-    
-    // For now, use events to track support issues
+
     let query = `
-      SELECT * FROM events 
-      WHERE event_name LIKE 'support_%'
+      SELECT st.*, u.email as user_email, u.name as user_name
+      FROM support_tickets st
+      LEFT JOIN users u ON st.user_id = u.id
+      WHERE 1=1
     `;
     const params = [];
-    
+
     if (status && status !== 'all') {
-      // Map status to event names
-      const statusMap = {
-        'open': 'support_ticket_created',
-        'resolved': 'support_ticket_resolved'
-      };
-      if (statusMap[status]) {
-        query += ' AND event_name = ?';
-        params.push(statusMap[status]);
-      }
+      query += ' AND st.status = ?';
+      params.push(status);
     }
-    
-    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+
+    query += `
+      ORDER BY 
+        st.is_emergency DESC,
+        CASE st.priority 
+          WHEN 'urgent' THEN 4
+          WHEN 'high' THEN 3
+          WHEN 'normal' THEN 2
+          ELSE 1
+        END DESC,
+        st.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const tickets = await db.all(query, ...params);
-    const count = await db.get('SELECT COUNT(*) as count FROM events WHERE event_name LIKE \'support_%\'');
-    
+    const countQuery = status && status !== 'all'
+      ? 'SELECT COUNT(*) as count FROM support_tickets WHERE status = ?'
+      : 'SELECT COUNT(*) as count FROM support_tickets';
+    const count = status && status !== 'all'
+      ? await db.get(countQuery, status)
+      : await db.get(countQuery);
+
     res.json({ success: true, data: { tickets: tickets || [], total: count?.count || 0 } });
   } catch (error) {
     res.json({ success: true, data: { tickets: [], total: 0 } });
@@ -2727,9 +2737,14 @@ router.post('/support/reply', ...adminGuard, async (req, res) => {
     let recipientUserId = userId;
     
     if (!recipientEmail && ticketId) {
-      const ticket = await db.get('SELECT * FROM events WHERE id = ?', ticketId);
+      const ticket = await db.get(`
+        SELECT st.id, st.user_id, u.email
+        FROM support_tickets st
+        LEFT JOIN users u ON st.user_id = u.id
+        WHERE st.id = ?
+      `, ticketId);
       if (ticket) {
-        recipientEmail = ticket.event_data?.email;
+        recipientEmail = ticket.email;
         recipientUserId = ticket.user_id;
       }
     }

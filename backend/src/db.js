@@ -244,6 +244,7 @@ async function initializeDatabase() {
         trip_duration INTEGER,
         solo_travel_experience TEXT,
         safety_priority TEXT,
+        gender_identity TEXT CHECK(gender_identity IN ('female', 'male', 'non_binary', 'prefer_not_to_say') OR gender_identity IS NULL),
         visible BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1153,6 +1154,34 @@ async function initializeDatabase() {
         ended_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Buddy meetups
+      CREATE TABLE IF NOT EXISTS buddy_meetups (
+        id SERIAL PRIMARY KEY,
+        organizer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        destination TEXT NOT NULL,
+        location_name TEXT,
+        meetup_date TIMESTAMP NOT NULL,
+        max_attendees INTEGER DEFAULT 10 CHECK(max_attendees BETWEEN 3 AND 50),
+        is_public BOOLEAN DEFAULT true,
+        safety_notes TEXT,
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'full', 'cancelled', 'completed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Buddy meetup RSVPs
+      CREATE TABLE IF NOT EXISTS buddy_meetup_rsvps (
+        id SERIAL PRIMARY KEY,
+        meetup_id INTEGER NOT NULL REFERENCES buddy_meetups(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'going' CHECK(status IN ('going', 'maybe', 'not_going')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(meetup_id, user_id)
+      );
     `);
 
     // Create indexes
@@ -1257,6 +1286,14 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_calls_receiver ON buddy_calls(receiver_id);
       CREATE INDEX IF NOT EXISTS idx_calls_conversation ON buddy_calls(conversation_id);
       CREATE INDEX IF NOT EXISTS idx_calls_status ON buddy_calls(status);
+
+      -- Buddy meetup indexes
+      CREATE INDEX IF NOT EXISTS idx_meetups_organizer ON buddy_meetups(organizer_id);
+      CREATE INDEX IF NOT EXISTS idx_meetups_destination ON buddy_meetups(destination);
+      CREATE INDEX IF NOT EXISTS idx_meetups_date ON buddy_meetups(meetup_date);
+      CREATE INDEX IF NOT EXISTS idx_meetups_status ON buddy_meetups(status);
+      CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_meetup ON buddy_meetup_rsvps(meetup_id);
+      CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_user ON buddy_meetup_rsvps(user_id);
     `);
 
     // Migration for existing tables: Add status and source to destinations
@@ -2055,6 +2092,68 @@ async function runMigrations() {
       logger.warn('[Migration v027] skipped:', error.message);
     }
     await markMigration('v027_ai_observability');
+  }
+
+  // --- Migration v028: Add gender_identity to profiles ---
+  if (!await hasMigration('v028_profiles_gender_identity')) {
+    try {
+      await pool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'gender_identity') THEN
+            ALTER TABLE profiles ADD COLUMN gender_identity TEXT;
+          END IF;
+        END $$;
+      `);
+      logger.info('[Migration v028] profiles.gender_identity added');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_profiles_gender_identity');
+  }
+
+  // --- Migration v029: Add buddy_meetups and buddy_meetup_rsvps tables ---
+  if (!await hasMigration('v029_buddy_meetups')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS buddy_meetups (
+          id SERIAL PRIMARY KEY,
+          organizer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          description TEXT,
+          destination TEXT NOT NULL,
+          location_name TEXT,
+          meetup_date TIMESTAMP NOT NULL,
+          max_attendees INTEGER DEFAULT 10,
+          is_public BOOLEAN DEFAULT true,
+          safety_notes TEXT,
+          status TEXT DEFAULT 'open',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS buddy_meetup_rsvps (
+          id SERIAL PRIMARY KEY,
+          meetup_id INTEGER NOT NULL REFERENCES buddy_meetups(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status TEXT DEFAULT 'going',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(meetup_id, user_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_meetups_organizer ON buddy_meetups(organizer_id);
+        CREATE INDEX IF NOT EXISTS idx_meetups_destination ON buddy_meetups(destination);
+        CREATE INDEX IF NOT EXISTS idx_meetups_date ON buddy_meetups(meetup_date);
+        CREATE INDEX IF NOT EXISTS idx_meetups_status ON buddy_meetups(status);
+        CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_meetup ON buddy_meetup_rsvps(meetup_id);
+        CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_user ON buddy_meetup_rsvps(user_id);
+      `);
+      logger.info('[Migration v029] buddy_meetups and buddy_meetup_rsvps tables created');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_buddy_meetups');
   }
 
   logger.info('[Migration] All migrations complete');

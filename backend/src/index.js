@@ -83,6 +83,7 @@ async function bootstrap() {
     const { default: affiliateRoutes } = await import('./routes/affiliates.js');
     const { default: matchingRoutes } = await import('./routes/matching.js');
     const { default: messagesRoutes } = await import('./routes/messages.js');
+    const { default: meetupsRoutes } = await import('./routes/meetups.js');
     const { default: emergencyContactsRoutes } = await import('./routes/emergencyContacts.js');
     const { default: emergencyNumbersRoutes } = await import('./routes/emergencyNumbers.js');
     const { default: emergencyRoutes } = await import('./routes/emergency.js');
@@ -179,8 +180,10 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/weather', weatherRoutes);
     app.use('/api/matching', matchingRoutes);
     app.use('/api/messages', messagesRoutes);
+    app.use('/api/meetups', meetupsRoutes);
     app.use('/api/v1/buddy', matchingRoutes);
     app.use('/api/v1/buddy/messages', messagesRoutes);
+    app.use('/api/v1/buddy/meetups', meetupsRoutes);
     app.use('/api/reviews', reviewsRoutes);
     app.use('/api/quiz', quizRoutes);
     app.use('/api/places', placesRoutes);

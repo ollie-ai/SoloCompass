@@ -24,7 +24,7 @@ const Messages = () => {
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callingUser, setCallingUser] = useState(null);
   const [callType, setCallType] = useState('audio');
-  const { on } = useWebSocket();
+  const { on, isConnected } = useWebSocket();
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -117,18 +117,77 @@ const Messages = () => {
     }
   };
 
+  // Offline message queue helpers
+  const QUEUE_KEY = 'solo_msg_queue';
+  const getQueue = () => {
+    try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch { return []; }
+  };
+  const saveQueue = (q) => {
+    try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {}
+  };
+  const enqueue = (conversationId, content) => {
+    const q = getQueue();
+    q.push({ id: `tmp_${Date.now()}_${Math.random()}`, conversationId: String(conversationId), content, ts: Date.now() });
+    saveQueue(q);
+  };
+  const dequeue = (tmpId) => {
+    saveQueue(getQueue().filter((item) => item.id !== tmpId));
+  };
+
+  // Drain the offline queue when the component mounts / reconnects
+  const drainQueue = async () => {
+    const q = getQueue();
+    if (q.length === 0) return;
+    for (const item of q) {
+      try {
+        await api.post(`/messages/conversations/${item.conversationId}`, { content: item.content });
+        dequeue(item.id);
+      } catch {
+        // Leave in queue for next attempt
+        break;
+      }
+    }
+  };
+
+  // Drain on mount
+  useEffect(() => {
+    drainQueue();
+  }, []);
+
+  // Drain on WebSocket reconnect
+  useEffect(() => {
+    if (isConnected) {
+      drainQueue();
+    }
+  }, [isConnected]);
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedConversation || sending) return;
 
+    const content = newMessage.trim();
     setSending(true);
+
+    // Optimistic local display
+    const tmpMsg = {
+      id: `tmp_${Date.now()}`,
+      senderId: user?.id,
+      senderName: user?.name,
+      content,
+      messageType: 'text',
+      isRead: false,
+      read: false,
+      createdAt: new Date().toISOString(),
+      _pending: true,
+    };
+    setMessages(prev => [...prev, tmpMsg]);
+    setNewMessage('');
+
     try {
-      const response = await api.post(`/messages/conversations/${selectedConversation.id}`, {
-        content: newMessage.trim()
-      });
+      const response = await api.post(`/messages/conversations/${selectedConversation.id}`, { content });
       
-      setMessages(prev => [...prev, response.data.data]);
-      setNewMessage('');
+      // Replace optimistic msg with confirmed one
+      setMessages(prev => prev.map(m => m.id === tmpMsg.id ? response.data.data : m));
       
       setConversations(prev => prev.map(conv => {
         if (conv.id === selectedConversation.id) {
@@ -144,7 +203,19 @@ const Messages = () => {
       inputRef.current?.focus();
     } catch (error) {
       console.error('Failed to send message:', error);
-      toast.error('Failed to send message');
+      // Check if it's a plan limit error
+      if (error.response?.data?.error?.code === 'MESSAGE_LIMIT_REACHED') {
+        toast.error(error.response.data.error.message || 'Message limit reached. Upgrade to continue.');
+      } else {
+        // Offline – enqueue and show subtle notice
+        enqueue(selectedConversation.id, content);
+        toast('Message queued — will send when back online', { icon: '📬', duration: 4000 });
+      }
+      // Remove pending optimistic msg on hard failure (if limit reached, discard)
+      if (error.response?.data?.error?.code === 'MESSAGE_LIMIT_REACHED') {
+        setMessages(prev => prev.filter(m => m.id !== tmpMsg.id));
+        setNewMessage(content);
+      }
     } finally {
       setSending(false);
     }

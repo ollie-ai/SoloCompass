@@ -600,7 +600,7 @@ const handlePotentialMatches = async (req, res) => {
   try {
     const userId = req.userId;
     const limit = parseInt(req.query.limit) || 20;
-    const { destination, startDate, endDate } = req.query;
+    const { destination, startDate, endDate, genderPref } = req.query;
 
     const blocked = await db.prepare(`
       SELECT blocked_id FROM buddy_blocks WHERE blocker_id = ?
@@ -629,6 +629,14 @@ const handlePotentialMatches = async (req, res) => {
       params.push(endDate);
     }
 
+    // Gender preference filter (optional): match users whose gender_identity equals the requested value
+    const VALID_GENDER_PREFS = ['female', 'male', 'non_binary'];
+    let genderClause = '';
+    if (genderPref && VALID_GENDER_PREFS.includes(genderPref)) {
+      genderClause = `AND p.gender_identity = ?`;
+      params.push(genderPref);
+    }
+
     params.push(limit);
 
     const matches = await db.prepare(`
@@ -636,7 +644,7 @@ const handlePotentialMatches = async (req, res) => {
         tb.id, tb.user_id, tb.destination, tb.start_date, tb.end_date, tb.interests,
         u.name as user_name, u.email as user_email,
         p.avatar_url, p.bio, p.travel_style, p.budget_level, p.pace,
-        p.solo_travel_experience, p.accommodation_type
+        p.solo_travel_experience, p.accommodation_type, p.gender_identity
       FROM travel_buddies tb
       JOIN users u ON tb.user_id = u.id
       LEFT JOIN profiles p ON tb.user_id = p.user_id
@@ -645,6 +653,7 @@ const handlePotentialMatches = async (req, res) => {
       ${blockedClause}
       ${destClause}
       ${dateClause}
+      ${genderClause}
       ORDER BY tb.created_at DESC
       LIMIT ?
     `).all(...params);

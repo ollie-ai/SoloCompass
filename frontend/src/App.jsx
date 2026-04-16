@@ -31,6 +31,7 @@ const Admin = lazy(() => import('./pages/AdminNew'));
 const Advisories = lazy(() => import('./pages/Advisories'));
 const Reviews = lazy(() => import('./pages/Reviews'));
 const Buddies = lazy(() => import('./pages/Buddies'));
+const Meetups = lazy(() => import('./pages/Meetups'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Cookies = lazy(() => import('./pages/Cookies'));
@@ -364,6 +365,11 @@ function App() {
             <Route path="/buddy/discover" element={
               <ProtectedRoute>
                 <Buddies />
+              </ProtectedRoute>
+            } />
+            <Route path="/buddy/meetups" element={
+              <ProtectedRoute>
+                <Meetups />
               </ProtectedRoute>
             } />
             <Route path="/terms" element={<Terms />} />

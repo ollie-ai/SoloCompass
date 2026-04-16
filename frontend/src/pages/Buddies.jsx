@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, Loader2, Globe, MessageCircle, Clock, UserPlus, Shield, Crown, CheckCircle, Search, X, MapPin, 
@@ -17,6 +17,9 @@ import MatchingProfile from '../components/MatchingProfile';
 import MatchingProfileEdit from '../components/MatchingProfileEdit';
 import VerificationModal from '../components/VerificationModal';
 import BlockReportModal from '../components/BlockReportModal';
+import BuddyFilters from '../components/BuddyFilters';
+import BuddyDiscoveryGrid from '../components/BuddyDiscoveryGrid';
+import BuddyConnectionsList from '../components/BuddyConnectionsList';
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -38,42 +41,31 @@ const Buddies = () => {
   const [soloId, setSoloId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [filterDestination, setFilterDestination] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
+  const [filters, setFilters] = useState({ destination: '', startDate: '', endDate: '', interests: [], genderPref: '' });
+  const filterDestination = filters.destination;
   const [activeTab, setActiveTab] = useState('discover');
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [safetyActionLoading, setSafetyActionLoading] = useState(false);
-  const searchRef = useRef(null);
-  const inputRef = useRef(null);
 
   useEffect(() => {
     fetchData();
-  }, [filterDestination]);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (searchRef.current && !searchRef.current.contains(e.target)) {
-        setShowSuggestions(false);
-        setHighlightedSuggestion(-1);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const filteredSuggestions = destinationSuggestions.filter(
-    (d) => d.toLowerCase().includes(filterDestination.toLowerCase()) && filterDestination.length > 0
-  );
+  }, [filters.destination]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const params = new URLSearchParams();
+      if (filters.destination) params.set('destination', filters.destination);
+      if (filters.startDate) params.set('startDate', filters.startDate);
+      if (filters.endDate) params.set('endDate', filters.endDate);
+      if (filters.genderPref) params.set('genderPref', filters.genderPref);
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+
       const [potentialRes, requestsRes, connectionsRes, profileRes, soloIdRes] = await Promise.all([
-        api.get(`/matching/potential${filterDestination ? `?destination=${encodeURIComponent(filterDestination)}` : ''}`),
+        api.get(`/matching/potential${queryString}`),
         api.get('/matching/requests'),
         api.get('/matching/connections'),
         api.get('/matching/profile').catch(err => { console.error('[Buddies] Failed to fetch profile:', err); return { data: { data: null } }; }),
@@ -310,43 +302,6 @@ const Buddies = () => {
     return { percent, label: 'Incomplete' };
   };
 
-  const handleSuggestionKeyDown = (e) => {
-    if (!showSuggestions || filteredSuggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlightedSuggestion(prev => (prev < filteredSuggestions.length - 1 ? prev + 1 : 0));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightedSuggestion(prev => (prev > 0 ? prev - 1 : filteredSuggestions.length - 1));
-    } else if (e.key === 'Enter' && highlightedSuggestion >= 0) {
-      e.preventDefault();
-      selectSuggestion(filteredSuggestions[highlightedSuggestion]);
-    } else if (e.key === 'Escape') {
-      setShowSuggestions(false);
-      setHighlightedSuggestion(-1);
-    }
-  };
-
-  const selectSuggestion = (suggestion) => {
-    setFilterDestination(suggestion);
-    setShowSuggestions(false);
-    setHighlightedSuggestion(-1);
-    fetchData();
-  };
-
-  const highlightMatch = (text, query) => {
-    if (!query) return text;
-    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const parts = text.split(regex);
-    return parts.map((part, i) =>
-      regex.test(part) ? (
-        <span key={`highlight-${part}-${i}`} className="text-brand-vibrant font-bold">{part}</span>
-      ) : (
-        part
-      )
-    );
-  };
-
   const tabs = [
     { id: 'discover', label: 'Discover', icon: Users, count: potentialMatches.length },
     { id: 'requests', label: 'Requests', icon: UserPlus, count: incomingRequests.filter(r => r.status === 'pending').length },
@@ -425,73 +380,12 @@ const Buddies = () => {
           icon={Users}
         />
 
-      <motion.div
-        className="glass-card p-6 mb-10 overflow-visible relative z-30"
-        ref={searchRef}
-      >
-        <div className="flex gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-base-content/40" size={18} />
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Filter by mission destination..."
-              value={filterDestination}
-              onChange={(e) => {
-                setFilterDestination(e.target.value);
-                setShowSuggestions(true);
-                setHighlightedSuggestion(-1);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setShowSuggestions(false);
-                  setHighlightedSuggestion(-1);
-                  fetchData();
-                }
-                handleSuggestionKeyDown(e);
-              }}
-              className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-white/5 text-sm font-bold text-base-content outline-none focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant bg-white/5 placeholder:text-base-content/20 uppercase tracking-wide"
-            />
-            <AnimatePresence>
-              {showSuggestions && filteredSuggestions.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                  className="absolute top-full left-0 right-0 mt-3 glass-card rounded-2xl shadow-2xl overflow-hidden z-50 p-2"
-                >
-                  {filteredSuggestions.map((s, index) => (
-                    <button
-                      key={s}
-                      onClick={() => selectSuggestion(s)}
-                      onMouseEnter={() => setHighlightedSuggestion(index)}
-                      className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${
-                        index === highlightedSuggestion
-                          ? 'bg-brand-vibrant/5 text-brand-vibrant'
-                          : 'text-base-content/80 hover:bg-brand-vibrant/5 hover:text-brand-vibrant'
-                      }`}
-                    >
-                      <Globe size={14} className="text-base-content/30" />
-                      {highlightMatch(s, filterDestination)}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <button
-            onClick={() => {
-              setShowSuggestions(false);
-              setHighlightedSuggestion(-1);
-              fetchData();
-            }}
-            className="px-6 py-2.5 rounded-xl font-bold text-sm bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-emerald-600 transition-colors"
-          >
-            Search
-          </button>
-        </div>
-      </motion.div>
+      <BuddyFilters
+        filters={filters}
+        onChange={setFilters}
+        onSearch={fetchData}
+        suggestions={destinationSuggestions}
+      />
 
       <motion.div variants={itemVariants} className="mb-10">
         <div className="flex glass-card-dark p-1.5 gap-1.5 rounded-2xl">
@@ -559,73 +453,14 @@ const Buddies = () => {
               {potentialMatches.length === 0 ? (
                 emptyStateForDiscover()
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {potentialMatches.map((match, index) => (
-                    <motion.div
-                      key={match.userId}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1], delay: index * 0.05 }}
-                    >
-                      <div className="glass-card rounded-2xl hover:bg-white/[0.02] transition-colors overflow-hidden group border-white/5">
-                        <div className="p-6">
-                          <div className="flex items-start gap-4 mb-5">
-                            <div className="w-14 h-14 rounded-2xl bg-brand-vibrant/10 flex items-center justify-center shrink-0 border border-brand-vibrant/20 group-hover:scale-105 transition-transform duration-500">
-                              <span className="text-xl font-black text-brand-vibrant font-outfit uppercase">
-                                {getInitials(match.name || match.userName)}
-                              </span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-outfit font-black text-lg text-base-content tracking-tight uppercase">{match.name || match.userName || 'Traveler'}</h4>
-                                {match.emailVerified && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-black text-brand-vibrant bg-brand-vibrant/10 border border-brand-vibrant/20 uppercase tracking-widest">
-                                    <CheckCircle size={10} /> Verified
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 text-[11px] font-black text-base-content/30 uppercase tracking-premium">
-                                <MapPin size={12} className="text-brand-vibrant/40" />
-                                {match.location || 'Location hidden'}
-                              </div>
-                            </div>
-                          </div>
-
-                          {match.destination && (
-                            <div className="flex items-center gap-2 text-xs text-base-content/70 font-bold mb-4 px-3 py-1.5 bg-white/5 rounded-xl border border-white/5">
-                              <Globe size={14} className="text-brand-vibrant" />
-                              <span className="uppercase tracking-wide">{match.destination}</span>
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap gap-2 mb-6">
-                            {getMatchReasons(match).map((reason, i) => (
-                              <span key={`reason-${reason.label}-${i}`} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-premium border ${reason.color}`}>
-                                <reason.icon size={12} strokeWidth={2.5} /> {reason.label}
-                              </span>
-                            ))}
-                          </div>
-
-                          <div className="flex gap-3">
-                            <button
-                              onClick={() => handleConnect(match.userId)}
-                              disabled={actionLoading}
-                              className="flex-1 btn-premium text-[11px] py-3 disabled:opacity-50"
-                            >
-                              <UserPlus size={14} strokeWidth={2.5} /> Connect
-                            </button>
-                            <button
-                              onClick={() => handleSkip(match.userId)}
-                              className="px-4 py-3 rounded-xl font-black text-[11px] bg-white/5 text-base-content/40 border border-white/5 hover:bg-white/10 hover:text-base-content/60 transition-all uppercase tracking-premium"
-                            >
-                              Skip
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                <BuddyDiscoveryGrid
+                  matches={potentialMatches}
+                  onConnect={handleConnect}
+                  onSkip={handleSkip}
+                  loading={actionLoading}
+                  getMatchReasons={getMatchReasons}
+                  myProfile={myProfile}
+                />
               )}
             </>
             </PlanGate>
@@ -795,102 +630,16 @@ const Buddies = () => {
                 </motion.div>
               )}
 
-              {connections.length === 0 ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                  className="bg-base-100 rounded-xl border border-base-300/60 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)] p-10 text-center"
-                >
-                  <div className="w-16 h-16 mx-auto mb-5 bg-base-200 rounded-2xl flex items-center justify-center">
-                    <MessageCircle className="w-8 h-8 text-base-content/30" />
-                  </div>
-                  <h3 className="text-lg font-black text-base-content mb-2">No connections yet</h3>
-                  <p className="text-base-content/60 font-medium text-sm mb-6 max-w-sm mx-auto">
-                    Start discovering travellers to build your solo travel network.
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                    <button
-                      onClick={() => setActiveTab('discover')}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-emerald-600 transition-colors"
-                    >
-                      <Users size={16} /> Discover travellers
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('profile')}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm bg-base-100 border border-base-300 text-base-content/80 hover:border-brand-vibrant hover:text-brand-vibrant transition-colors"
-                    >
-                      <UserCheck size={16} /> Update Travel Profile
-                    </button>
-                  </div>
-                </motion.div>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {connections.map((conn, index) => {
-                    const status = getConnectionStatus(conn);
-                    const sharedInfo = getConnectionSharedInfo(conn);
-                    return (
-                      <motion.div
-                        key={conn.id}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1], delay: index * 0.05 }}
-                        className="bg-base-100 rounded-xl border border-base-300/60 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)] p-5 hover:shadow-[0_8px_30px_-6px_rgba(0,0,0,0.10)] transition-shadow cursor-pointer"
-                      >
-                        <div className="flex items-start gap-3 mb-4">
-                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-vibrant/10 to-emerald-500/10 flex items-center justify-center shrink-0">
-                            <span className="text-base font-black text-brand-vibrant">
-                              {getInitials(conn.user?.name)}
-                            </span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className="font-bold text-base-content text-sm truncate">{conn.user?.name || 'Unknown'}</h4>
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${status.color}`}>
-                                {status.label}
-                              </span>
-                            </div>
-                            <p className="text-xs text-base-content/40 font-medium mt-0.5">{conn.user?.location || 'Location unknown'}</p>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedConnection(conn);
-                              setShowSafetyModal(true);
-                            }}
-                            className="p-2 rounded-lg hover:bg-base-200 text-base-content/40 hover:text-error transition-colors"
-                            title="Block or report"
-                          >
-                            <Shield size={14} />
-                          </button>
-                        </div>
-
-                        {sharedInfo.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mb-3">
-                            {sharedInfo.map((info, i) => (
-                              <span key={`shared-${info.label}-${i}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold bg-brand-vibrant/10 text-brand-vibrant">
-                                <info.icon size={10} /> {info.label}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {conn.trip && (
-                          <div className="flex items-center gap-1.5 text-xs text-base-content/60 font-medium mb-3">
-                            <MapPin size={12} className="text-base-content/30" />
-                            {conn.trip.destination}
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-1.5 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
-                          <Calendar size={12} />
-                          Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              )}
+              <BuddyConnectionsList
+                connections={connections}
+                myProfile={myProfile}
+                onSafetyAction={(conn) => {
+                  setSelectedConnection(conn);
+                  setShowSafetyModal(true);
+                }}
+                onDiscoverClick={() => setActiveTab('discover')}
+                onProfileClick={() => setActiveTab('profile')}
+              />
             </>
           )}
 

@@ -211,6 +211,29 @@ router.post('/conversations/:conversationId', async (req, res) => {
       });
     }
 
+    // Guardian plan enforcement: Explorer users are limited to 20 messages per conversation.
+    // Guardian+ users have unlimited messaging.
+    const sender = await db.prepare(`
+      SELECT subscription_tier FROM users WHERE id = ?
+    `).get(userId);
+    const tier = (sender?.subscription_tier || 'explorer').toLowerCase();
+    const EXPLORER_MESSAGE_LIMIT = 20;
+    if (tier === 'explorer') {
+      const msgCount = await db.prepare(`
+        SELECT COUNT(*) AS cnt FROM buddy_messages WHERE conversation_id = ? AND sender_id = ?
+      `).get(conversationId, userId);
+      if (msgCount.cnt >= EXPLORER_MESSAGE_LIMIT) {
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'MESSAGE_LIMIT_REACHED',
+            message: `Explorer plan allows up to ${EXPLORER_MESSAGE_LIMIT} messages per conversation. Upgrade to Guardian or Navigator for unlimited messaging.`,
+            upgradeRequired: true,
+          },
+        });
+      }
+    }
+
     const result = await db.prepare(`
       INSERT INTO buddy_messages (conversation_id, sender_id, content, message_type)
       VALUES (?, ?, ?, ?)
@@ -364,6 +387,79 @@ router.delete('/conversations/:conversationId', async (req, res) => {
       success: false,
       error: { code: 'INTERNAL_ERROR', message: 'Failed to delete conversation' }
     });
+  }
+});
+
+// ------------------------------------------------------------------
+// connectionId-based message routes for /api/v1/buddy/messages/:connectionId
+// These resolve the accepted buddy_request (connection) to its conversation.
+// ------------------------------------------------------------------
+
+async function resolveConversationFromConnection(connectionId, userId) {
+  const connection = await db.prepare(`
+    SELECT id, sender_id, receiver_id
+    FROM buddy_requests
+    WHERE id = ?
+      AND status = 'accepted'
+      AND (sender_id = ? OR receiver_id = ?)
+  `).get(connectionId, userId, userId);
+
+  if (!connection) return null;
+
+  const otherId = connection.sender_id === userId ? connection.receiver_id : connection.sender_id;
+
+  let conversation = await db.prepare(`
+    SELECT id FROM buddy_conversations
+    WHERE (participant_a = ? AND participant_b = ?)
+       OR (participant_a = ? AND participant_b = ?)
+    LIMIT 1
+  `).get(Math.min(userId, otherId), Math.max(userId, otherId),
+         Math.max(userId, otherId), Math.min(userId, otherId));
+
+  if (!conversation) {
+    const result = await db.prepare(`
+      INSERT INTO buddy_conversations (participant_a, participant_b)
+      VALUES (?, ?)
+    `).run(Math.min(userId, otherId), Math.max(userId, otherId));
+    conversation = { id: result.lastInsertRowid };
+  }
+
+  return conversation.id;
+}
+
+router.get('/connection/:connectionId', async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const userId = req.userId;
+
+    const conversationId = await resolveConversationFromConnection(parseInt(connectionId, 10), userId);
+    if (!conversationId) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Connection not found' } });
+    }
+
+    req.params.conversationId = String(conversationId);
+    return router.handle(Object.assign(req, { url: `/conversations/${conversationId}`, path: `/conversations/${conversationId}` }), res);
+  } catch (error) {
+    logger.error(`[Messages] connectionId GET failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to get messages' } });
+  }
+});
+
+router.post('/connection/:connectionId', async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const userId = req.userId;
+
+    const conversationId = await resolveConversationFromConnection(parseInt(connectionId, 10), userId);
+    if (!conversationId) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Connection not found' } });
+    }
+
+    req.params.conversationId = String(conversationId);
+    return router.handle(Object.assign(req, { url: `/conversations/${conversationId}`, path: `/conversations/${conversationId}` }), res);
+  } catch (error) {
+    logger.error(`[Messages] connectionId POST failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to send message' } });
   }
 });
 

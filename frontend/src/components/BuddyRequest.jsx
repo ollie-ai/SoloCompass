@@ -1,13 +1,75 @@
 import { useState } from 'react';
-import { Loader2, Send, Check, X, UserMinus, MapPin, Calendar } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle, Loader2, MapPin, Calendar, Send, Shield, UserMinus, X } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 
+const SAFETY_TIPS = [
+  'Always meet in public places first.',
+  'Share your plans with a trusted friend or family member.',
+  'Trust your instincts — it\'s okay to say no.',
+  'Keep initial contact on the SoloCompass platform.',
+  'Your personal contact info is never shared automatically.',
+];
+
+const SAFETY_ACKNOWLEDGED_KEY = 'solo_buddy_safety_ack';
+
+const SafetyGuidelinesStep = ({ onAgree, onCancel }) => (
+  <div className="space-y-4">
+    <div className="flex items-start gap-3 p-4 bg-gradient-to-r from-brand-vibrant/5 to-emerald-500/5 rounded-xl border border-brand-vibrant/10">
+      <div className="w-10 h-10 rounded-xl bg-brand-vibrant/10 flex items-center justify-center shrink-0">
+        <Shield size={18} className="text-brand-vibrant" />
+      </div>
+      <div>
+        <h4 className="font-black text-base-content text-sm mb-0.5">Safety-first guidelines</h4>
+        <p className="text-xs text-base-content/60">Please review before connecting with fellow solo travelers.</p>
+      </div>
+    </div>
+
+    <ul className="space-y-2.5">
+      {SAFETY_TIPS.map((tip) => (
+        <li key={tip} className="flex items-start gap-2.5 text-sm text-base-content/70">
+          <CheckCircle size={14} className="text-brand-vibrant mt-0.5 shrink-0" />
+          {tip}
+        </li>
+      ))}
+    </ul>
+
+    <div className="flex gap-2 pt-2">
+      <button
+        onClick={onCancel}
+        className="flex-1 px-4 py-2 border border-base-300 text-base-content/80 rounded-xl font-medium hover:bg-base-200 transition-colors text-sm"
+      >
+        Cancel
+      </button>
+      <button
+        onClick={onAgree}
+        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-brand-vibrant text-white rounded-xl font-medium hover:bg-brand-vibrant/90 transition-colors text-sm"
+      >
+        <Check size={14} /> I understand, continue
+      </button>
+    </div>
+  </div>
+);
+
 const BuddyRequest = ({ buddy, onSuccess, onCancel, isRequestList = false, request = null }) => {
+  const alreadyAcknowledged = () => {
+    try {
+      return localStorage.getItem(SAFETY_ACKNOWLEDGED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  };
+
+  const [step, setStep] = useState(isRequestList ? 'form' : (alreadyAcknowledged() ? 'form' : 'safety'));
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [requests, setRequests] = useState([]);
   const [loadingRequests, setLoadingRequests] = useState(false);
+
+  const handleSafetyAgree = () => {
+    try { localStorage.setItem(SAFETY_ACKNOWLEDGED_KEY, '1'); } catch {}
+    setStep('form');
+  };
 
   const handleSend = async () => {
     if (isRequestList) {
@@ -147,6 +209,10 @@ const BuddyRequest = ({ buddy, onSuccess, onCancel, isRequestList = false, reque
 
   return (
     <div className="space-y-4">
+      {step === 'safety' && (
+        <SafetyGuidelinesStep onAgree={handleSafetyAgree} onCancel={onCancel} />
+      )}
+      {step === 'form' && (<>
       <div className="flex items-center gap-3 p-4 bg-base-200 rounded-xl">
         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-brand-vibrant to-brand-deep flex items-center justify-center text-white font-bold">
           {getInitials(buddy?.firstName)}
@@ -207,6 +273,7 @@ const BuddyRequest = ({ buddy, onSuccess, onCancel, isRequestList = false, reque
           Send Request
         </button>
       </div>
+      </>)}
     </div>
   );
 };

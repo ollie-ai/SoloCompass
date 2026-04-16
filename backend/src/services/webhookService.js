@@ -82,6 +82,12 @@ export async function triggerWebhook(eventType, data) {
     return { success: false, error: 'Invalid event type' };
   }
 
+  // Generate idempotency key from event type + data hash
+  const idempotencyKey = crypto
+    .createHash('sha256')
+    .update(`${eventType}:${JSON.stringify(data)}:${Date.now()}`)
+    .digest('hex');
+
   const subscriptions = await db.prepare(`
     SELECT * FROM webhook_subscriptions
     WHERE active = true AND events LIKE ?
@@ -90,6 +96,21 @@ export async function triggerWebhook(eventType, data) {
   const results = [];
 
   for (const subscription of subscriptions) {
+    // Dedup check — skip if this exact delivery was already logged
+    const subKey = `${idempotencyKey}:${subscription.id}`;
+    try {
+      const existing = await db.get(
+        'SELECT id FROM webhook_delivery_logs WHERE idempotency_key = $1',
+        subKey
+      );
+      if (existing) {
+        results.push({ subscriptionId: subscription.id, url: subscription.url, success: true, deduplicated: true });
+        continue;
+      }
+    } catch {
+      // Column may not exist yet; proceed without dedup
+    }
+
     const payload = {
       event: eventType,
       timestamp: new Date().toISOString(),
@@ -104,20 +125,39 @@ export async function triggerWebhook(eventType, data) {
     );
 
     const now = new Date().toISOString();
-    db.prepare(`
-      INSERT INTO webhook_delivery_logs 
-      (subscription_id, event_type, url, status, status_code, attempts, response_error, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      subscription.id,
-      eventType,
-      subscription.url,
-      result.success ? 'success' : 'failed',
-      result.statusCode || null,
-      result.attempt || result.attempts,
-      result.error || null,
-      now
-    );
+    try {
+      db.prepare(`
+        INSERT INTO webhook_delivery_logs 
+        (subscription_id, event_type, url, status, status_code, attempts, response_error, idempotency_key, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        subscription.id,
+        eventType,
+        subscription.url,
+        result.success ? 'success' : 'failed',
+        result.statusCode || null,
+        result.attempt || result.attempts,
+        result.error || null,
+        subKey,
+        now
+      );
+    } catch {
+      // Fallback without idempotency_key column
+      db.prepare(`
+        INSERT INTO webhook_delivery_logs 
+        (subscription_id, event_type, url, status, status_code, attempts, response_error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        subscription.id,
+        eventType,
+        subscription.url,
+        result.success ? 'success' : 'failed',
+        result.statusCode || null,
+        result.attempt || result.attempts,
+        result.error || null,
+        now
+      );
+    }
 
     results.push({
       subscriptionId: subscription.id,

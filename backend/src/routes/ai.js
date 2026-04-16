@@ -2,7 +2,7 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
-import { callAzureOpenAI, getFallbackResponse, getFallbackItinerary } from '../services/aiService.js';
+import { callAI, callAzureOpenAI, getFallbackResponse, getFallbackItinerary, getAIUsageStats } from '../services/aiService.js';
 import { requireFeature, checkAILimits, FEATURES } from '../middleware/paywall.js';
 
 const router = express.Router();
@@ -47,12 +47,11 @@ router.post('/chat', authenticate, requireFeature(FEATURES.AI_CHAT), checkAILimi
     let response;
     let source = 'azure_openai';
     
-    // Try Azure OpenAI first
-    if (process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_API_KEY) {
-      try {
-        const systemPrompt = {
-          role: 'system',
-          content: `You are SoloCompass AI, a knowledgeable and friendly travel advisor specializing in solo travel. 
+    // Use AI orchestrator with automatic fallback chain
+    try {
+      const systemPrompt = {
+        role: 'system',
+        content: `You are SoloCompass AI, a knowledgeable and friendly travel advisor specializing in solo travel. 
 
 Your expertise includes:
 - Solo travel planning and itinerary creation
@@ -70,21 +69,19 @@ Guidelines:
 - Suggest specific actions when possible
 - Be honest about limitations (e.g., "I recommend checking the FCDO website for the latest advisories")
 - If asked about health/medical issues, recommend consulting professionals`
-        };
+      };
 
-        const conversationHistory = (context || []).slice(-6).map(msg => ({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.content
-        }));
+      const conversationHistory = (context || []).slice(-6).map(msg => ({
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        content: msg.content
+      }));
 
-        const messages = [systemPrompt, ...conversationHistory, { role: 'user', content: message }];
-        response = await callAzureOpenAI(messages);
-      } catch (error) {
-        logger.warn(`[AI] Azure OpenAI failed: ${error.message}`);
-        response = getFallbackResponse(message);
-        source = 'fallback';
-      }
-    } else {
+      const messages = [systemPrompt, ...conversationHistory, { role: 'user', content: message }];
+      const result = await callAI(messages);
+      response = result.content;
+      source = result.source;
+    } catch (error) {
+      logger.warn(`[AI] All providers failed: ${error.message}`);
       response = getFallbackResponse(message);
       source = 'fallback';
     }
@@ -160,12 +157,11 @@ router.post('/generate-itinerary', authenticate, checkAILimits, async (req, res)
 
     let response;
     let source = 'azure_openai';
-    
-    if (process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_API_KEY) {
-      try {
-        const systemPrompt = {
-          role: 'system',
-          content: `You are SoloCompass AI, an expert solo travel planner. Generate a detailed day-by-day itinerary for solo travelers.
+
+    try {
+      const systemPrompt = {
+        role: 'system',
+        content: `You are SoloCompass AI, an expert solo travel planner. Generate a detailed day-by-day itinerary for solo travelers.
 
 Output format: JSON object with a "days" array, each day having:
 - day: number
@@ -179,9 +175,9 @@ Consider:
 - Mix of activities and relaxation
 - Local culture and authentic experiences
 - Practical logistics (travel times between locations)`
-        };
+      };
 
-        const userPrompt = `Generate a ${days}-day solo travel itinerary for ${destination}.
+      const userPrompt = `Generate a ${days}-day solo travel itinerary for ${destination}.
 
 Preferences:
 ${interests ? `- Interests: ${interests.join(', ')}` : ''}
@@ -195,9 +191,12 @@ Return ONLY valid JSON in this exact format:
 
 Do not include any text outside the JSON.`;
 
-        response = await callAzureOpenAI([systemPrompt, { role: 'user', content: userPrompt }], { json: true, max_tokens: 4000 });
-        
-        // 2. Save to Cache if successful
+      const result = await callAI([systemPrompt, { role: 'user', content: userPrompt }], { json: true, max_tokens: 4000 });
+      response = result.content;
+      source = result.source;
+
+      // Save to Cache if successful from a live provider
+      if (source !== 'fallback') {
         try {
           await db.prepare(`
             INSERT INTO ai_itinerary_cache (destination, days, pace, solo_vibe, travel_style, itinerary_json)
@@ -207,12 +206,9 @@ Do not include any text outside the JSON.`;
         } catch (saveError) {
           logger.warn(`[AI] Failed to save itinerary to cache: ${saveError.message}`);
         }
-      } catch (error) {
-        logger.warn(`[AI] Itinerary generation failed: ${error.message}`);
-        response = JSON.stringify(getFallbackItinerary(destination, days));
-        source = 'fallback';
       }
-    } else {
+    } catch (error) {
+      logger.warn(`[AI] Itinerary generation failed: ${error.message}`);
       response = JSON.stringify(getFallbackItinerary(destination, days));
       source = 'fallback';
     }
@@ -263,12 +259,11 @@ router.post('/safety-advice', authenticate, requireFeature(FEATURES.AI_SAFETY_AD
 
     let response;
     let source = 'azure_openai';
-    
-    if (process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_API_KEY) {
-      try {
-        const systemPrompt = {
-          role: 'system',
-          content: `You are SoloCompass AI, a safety expert for solo travelers. Provide practical, actionable safety advice.
+
+    try {
+      const systemPrompt = {
+        role: 'system',
+        content: `You are SoloCompass AI, a safety expert for solo travelers. Provide practical, actionable safety advice.
 
 Include:
 - General safety tips for the destination
@@ -278,19 +273,17 @@ Include:
 - Cultural considerations that affect safety
 
 Be specific and helpful, not alarmist.`
-        };
+      };
 
-        let userPrompt = `Provide safety advice for a solo traveler visiting ${destination}.`;
-        if (activity) userPrompt += `\n\nSpecifically regarding: ${activity}`;
-        if (hour) userPrompt += `\n\nTime of day: ${hour}:00`;
+      let userPrompt = `Provide safety advice for a solo traveler visiting ${destination}.`;
+      if (activity) userPrompt += `\n\nSpecifically regarding: ${activity}`;
+      if (hour) userPrompt += `\n\nTime of day: ${hour}:00`;
 
-        response = await callAzureOpenAI([systemPrompt, { role: 'user', content: userPrompt }]);
-      } catch (error) {
-        logger.warn(`[AI] Safety advice failed: ${error.message}`);
-        response = getFallbackResponse('safety');
-        source = 'fallback';
-      }
-    } else {
+      const result = await callAI([systemPrompt, { role: 'user', content: userPrompt }]);
+      response = result.content;
+      source = result.source;
+    } catch (error) {
+      logger.warn(`[AI] Safety advice failed: ${error.message}`);
       response = getFallbackResponse('safety');
       source = 'fallback';
     }
@@ -310,6 +303,35 @@ Be specific and helpful, not alarmist.`
       success: false, 
       error: 'Failed to get safety advice' 
     });
+  }
+});
+
+/**
+ * GET /api/ai/usage
+ * Get current user's AI usage stats for the billing period
+ */
+router.get('/usage', authenticate, async (req, res) => {
+  try {
+    const usage = await getAIUsageStats(db, req.userId);
+
+    // Determine limits based on plan
+    const user = await db.get('SELECT subscription_tier, is_premium FROM users WHERE id = $1', req.userId);
+    const plan = user?.subscription_tier || 'explorer';
+    const limits = plan === 'navigator' || plan === 'guardian' || user?.is_premium
+      ? { chat: Infinity, itinerary: Infinity }
+      : { chat: 5, itinerary: 1 };
+
+    res.json({
+      success: true,
+      data: {
+        ...usage,
+        limits,
+        plan
+      }
+    });
+  } catch (error) {
+    logger.error(`[AI] Usage stats failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch AI usage' });
   }
 });
 

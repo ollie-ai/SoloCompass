@@ -1,10 +1,18 @@
 import express from 'express';
 import { authenticate, optionalAuth } from '../middleware/auth.js';
+import { requireAdmin } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import { searchPlaces, getPlaceDetails } from '../services/placesService.js';
 import { getDirections } from '../services/directionsService.js';
 import { fetchFCDOAdvisories } from '../services/fcdoService.js';
+import { searchNearby } from '../services/hospitalsService.js';
+import {
+  createFunnel, trackFunnelStep, getFunnelStats,
+  createExperiment, startExperiment, pauseExperiment, completeExperiment,
+  getAssignment, recordExposure, getExperimentResults,
+  getEngagementMetrics
+} from '../services/experimentService.js';
 
 const router = express.Router();
 
@@ -167,6 +175,194 @@ router.post('/offline/phrases/:destination', authenticate, async (req, res) => {
   const phrases = Array.isArray(req.body?.phrases) ? req.body.phrases : [];
   OFFLINE_PHRASES.set(`${key}:${locale}`, phrases);
   res.json({ success: true, data: phrases, count: phrases.length, locale });
+});
+
+// ── Hospitals ────────────────────────────────────────────────────
+
+router.get('/hospitals/nearby', authenticate, async (req, res) => {
+  try {
+    const { lat, lng, radius, english_only } = req.query;
+    if (!lat || !lng) return res.status(400).json({ success: false, error: 'lat and lng are required' });
+
+    const results = await searchNearby(
+      parseFloat(lat),
+      parseFloat(lng),
+      radius ? parseFloat(radius) : 10,
+      { englishOnly: english_only === 'true' }
+    );
+    res.json({ success: true, data: results, count: results.length });
+  } catch (error) {
+    logger.error(`[v1] Hospital search failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Hospital search failed' });
+  }
+});
+
+// ── Review Votes (idempotent upsert) ─────────────────────────────
+
+router.post('/reviews/:id/vote', authenticate, async (req, res) => {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    const { vote_type } = req.body;
+    if (!['helpful', 'unhelpful', 'flag'].includes(vote_type)) {
+      return res.status(400).json({ success: false, error: 'vote_type must be helpful, unhelpful, or flag' });
+    }
+
+    const review = await db.get('SELECT id FROM reviews WHERE id = $1', reviewId);
+    if (!review) return res.status(404).json({ success: false, error: 'Review not found' });
+
+    // Idempotent upsert
+    await db.run(`
+      INSERT INTO review_votes (review_id, user_id, vote_type)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (review_id, user_id, vote_type) DO NOTHING
+    `, reviewId, req.userId, vote_type);
+
+    // Update helpful_count on the reviews table
+    if (vote_type === 'helpful') {
+      const count = await db.get('SELECT COUNT(*) as cnt FROM review_votes WHERE review_id = $1 AND vote_type = $2', reviewId, 'helpful');
+      await db.run('UPDATE reviews SET helpful_count = $1 WHERE id = $2', count?.cnt || 0, reviewId);
+    }
+
+    res.json({ success: true, message: 'Vote recorded' });
+  } catch (error) {
+    logger.error(`[v1] Review vote failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Vote failed' });
+  }
+});
+
+router.delete('/reviews/:id/vote', authenticate, async (req, res) => {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    const { vote_type } = req.body;
+    if (!['helpful', 'unhelpful', 'flag'].includes(vote_type)) {
+      return res.status(400).json({ success: false, error: 'vote_type must be helpful, unhelpful, or flag' });
+    }
+
+    await db.run(
+      'DELETE FROM review_votes WHERE review_id = $1 AND user_id = $2 AND vote_type = $3',
+      reviewId, req.userId, vote_type
+    );
+
+    if (vote_type === 'helpful') {
+      const count = await db.get('SELECT COUNT(*) as cnt FROM review_votes WHERE review_id = $1 AND vote_type = $2', reviewId, 'helpful');
+      await db.run('UPDATE reviews SET helpful_count = $1 WHERE id = $2', count?.cnt || 0, reviewId);
+    }
+
+    res.json({ success: true, message: 'Vote removed' });
+  } catch (error) {
+    logger.error(`[v1] Vote removal failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Vote removal failed' });
+  }
+});
+
+// ── Analytics Funnels ────────────────────────────────────────────
+
+router.post('/analytics/funnel', requireAdmin, async (req, res) => {
+  try {
+    const { name, steps } = req.body;
+    if (!name || !Array.isArray(steps)) return res.status(400).json({ success: false, error: 'name and steps[] required' });
+    const funnel = await createFunnel(name, steps);
+    res.status(201).json({ success: true, data: funnel });
+  } catch (error) {
+    logger.error(`[v1] Create funnel failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Create funnel failed' });
+  }
+});
+
+router.post('/analytics/funnel/:name/track', authenticate, async (req, res) => {
+  try {
+    const { step, sessionId, metadata } = req.body;
+    if (!step) return res.status(400).json({ success: false, error: 'step is required' });
+    const result = await trackFunnelStep(req.params.name, req.userId, step, sessionId, metadata);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[v1] Track funnel step failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Track funnel failed' });
+  }
+});
+
+router.get('/analytics/funnel/:name', requireAdmin, async (req, res) => {
+  try {
+    const stats = await getFunnelStats(req.params.name, req.query.since);
+    if (!stats) return res.status(404).json({ success: false, error: 'Funnel not found' });
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    logger.error(`[v1] Funnel stats failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Funnel stats failed' });
+  }
+});
+
+router.get('/analytics/engagement', requireAdmin, async (req, res) => {
+  try {
+    const metrics = await getEngagementMetrics(req.query.period);
+    if (!metrics) return res.status(500).json({ success: false, error: 'Failed to compute metrics' });
+    res.json({ success: true, data: metrics });
+  } catch (error) {
+    logger.error(`[v1] Engagement metrics failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Engagement metrics failed' });
+  }
+});
+
+// ── A/B Experiments ──────────────────────────────────────────────
+
+router.post('/experiments', requireAdmin, async (req, res) => {
+  try {
+    const { name, description, variants, trafficPct } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+    const exp = await createExperiment(name, description, variants, trafficPct);
+    res.status(201).json({ success: true, data: exp });
+  } catch (error) {
+    logger.error(`[v1] Create experiment failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Create experiment failed' });
+  }
+});
+
+router.post('/experiments/:id/start', requireAdmin, async (req, res) => {
+  try { await startExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/experiments/:id/pause', requireAdmin, async (req, res) => {
+  try { await pauseExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/experiments/:id/complete', requireAdmin, async (req, res) => {
+  try { await completeExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.get('/experiments/:id/assign', authenticate, async (req, res) => {
+  try {
+    const variant = await getAssignment(parseInt(req.params.id, 10), req.userId);
+    res.json({ success: true, data: { variant } });
+  } catch (error) {
+    logger.error(`[v1] Assignment failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Assignment failed' });
+  }
+});
+
+router.post('/experiments/:id/expose', authenticate, async (req, res) => {
+  try {
+    const { eventName, metadata } = req.body;
+    if (!eventName) return res.status(400).json({ success: false, error: 'eventName required' });
+    const result = await recordExposure(parseInt(req.params.id, 10), req.userId, eventName, metadata);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[v1] Exposure recording failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Exposure recording failed' });
+  }
+});
+
+router.get('/experiments/:id/results', requireAdmin, async (req, res) => {
+  try {
+    const results = await getExperimentResults(parseInt(req.params.id, 10));
+    if (!results) return res.status(404).json({ success: false, error: 'Experiment not found' });
+    res.json({ success: true, data: results });
+  } catch (error) {
+    logger.error(`[v1] Experiment results failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Experiment results failed' });
+  }
 });
 
 export default router;

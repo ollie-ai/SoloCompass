@@ -1332,7 +1332,7 @@ router.get('/:id/time-weather', requireAuth, async (req, res) => {
 });
 
 // Duplicate a trip
-router.post('/:id/duplicate', requireAuth, tripMutateLimiter, async (req, res) => {
+router.post('/:id/duplicate', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1360,7 +1360,7 @@ router.post('/:id/duplicate', requireAuth, tripMutateLimiter, async (req, res) =
 });
 
 // Generate a shareable link for a trip
-router.post('/:id/share', requireAuth, tripMutateLimiter, async (req, res) => {
+router.post('/:id/share', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     

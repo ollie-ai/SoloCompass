@@ -41,11 +41,11 @@ const JOURNAL_TEMPLATES = {
   }
 };
 
-router.get('/templates', authenticate, journalReadLimiter, async (_req, res) => {
+router.get('/templates', journalReadLimiter, authenticate, async (_req, res) => {
   res.json({ success: true, data: Object.values(JOURNAL_TEMPLATES) });
 });
 
-router.post('/:tripId/entries', authenticate, journalWriteLimiter, async (req, res) => {
+router.post('/:tripId/entries', journalWriteLimiter, authenticate, async (req, res) => {
   try {
     const { tripId } = req.params;
     const { title, content, templateType = 'daily_log', locationName, latitude, longitude, weatherSummary } = req.body;
@@ -67,7 +67,7 @@ router.post('/:tripId/entries', authenticate, journalWriteLimiter, async (req, r
   }
 });
 
-router.get('/:tripId/entries', authenticate, journalReadLimiter, async (req, res) => {
+router.get('/:tripId/entries', journalReadLimiter, authenticate, async (req, res) => {
   try {
     const { tripId } = req.params;
     const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(tripId, req.userId);
@@ -81,7 +81,7 @@ router.get('/:tripId/entries', authenticate, journalReadLimiter, async (req, res
   }
 });
 
-router.post('/entries/:entryId/share', authenticate, journalWriteLimiter, async (req, res) => {
+router.post('/entries/:entryId/share', journalWriteLimiter, authenticate, async (req, res) => {
   try {
     const { entryId } = req.params;
     const entry = await db.prepare('SELECT id, user_id FROM journal_entries WHERE id = ?').get(entryId);
@@ -127,7 +127,7 @@ router.get('/public/:shareId', async (req, res) => {
   }
 });
 
-router.get('/entries/:entryId/export', authenticate, journalReadLimiter, async (req, res) => {
+router.get('/entries/:entryId/export', journalReadLimiter, authenticate, async (req, res) => {
   res.json({
     success: true,
     data: { status: 'stub', message: 'TODO: Implement PDF memoir/photo-book rendering export pipeline.' }

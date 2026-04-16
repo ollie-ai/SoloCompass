@@ -246,23 +246,71 @@ export async function sendTestNotification(contact, user) {
   }
 }
 
+/**
+ * Check if notification should be suppressed due to Do Not Disturb hours
+ */
+async function shouldSuppressForDND(userId, priority) {
+  // Never suppress P0 (Emergency) notifications
+  if (priority === 'P0') return false;
+  
+  try {
+    const prefs = await db.get(
+      'SELECT quiet_hours_start, quiet_hours_end, quiet_hours_timezone FROM notification_preferences WHERE user_id = ?',
+      userId
+    );
+    
+    if (!prefs?.quiet_hours_start || !prefs?.quiet_hours_end) return false;
+    
+    // Get current time in user's timezone
+    const now = new Date();
+    const userTz = prefs.quiet_hours_timezone || 'UTC';
+    const userTime = new Date(now.toLocaleString('en-US', { timeZone: userTz }));
+    const currentMinutes = userTime.getHours() * 60 + userTime.getMinutes();
+    
+    // Parse quiet hours (stored as TIME in HH:MM:SS format)
+    const [startH, startM] = prefs.quiet_hours_start.split(':').map(Number);
+    const [endH, endM] = prefs.quiet_hours_end.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    // Handle overnight DND (e.g., 22:00 - 07:00)
+    if (startMinutes > endMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+    
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  } catch {
+    return false;
+  }
+}
+
 // ... the rest of the db methods stay same ...
 export async function createNotification(userId, type, title, message, data = null, relatedId = null) {
   try {
+    const notificationData = data ? { ...data } : {};
+
+    // Check DND — still save to DB but suppress real-time broadcast
+    const isDND = await shouldSuppressForDND(userId, notificationData.priority);
+    if (isDND) {
+      notificationData.suppressed_by_dnd = true;
+    }
+
     const result = await db.prepare(`
       INSERT INTO notifications (user_id, type, title, message, data, is_read, related_id)
       VALUES (?, ?, ?, ?, ?, false, ?)
-    `).run(userId, type, title, message, data ? JSON.stringify(data) : null, relatedId || null);
+    `).run(userId, type, title, message, JSON.stringify(notificationData), relatedId || null);
     
-    // Real-time broadcast
-    broadcastToUser(userId, {
-      type: 'notification',
-      notification: {
-        userId, type, title, message, data, relatedId,
-        id: result.lastInsertRowid,
-        created_at: new Date().toISOString()
-      }
-    });
+    // Real-time broadcast (skip if DND is active)
+    if (!isDND) {
+      broadcastToUser(userId, {
+        type: 'notification',
+        notification: {
+          userId, type, title, message, data: notificationData, relatedId,
+          id: result.lastInsertRowid,
+          created_at: new Date().toISOString()
+        }
+      });
+    }
 
     return result;
   } catch (err) {

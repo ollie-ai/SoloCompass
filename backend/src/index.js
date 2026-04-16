@@ -171,6 +171,22 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/emergency-numbers', emergencyNumbersRoutes);
     app.use('/api/emergency', emergencyRoutes);
     app.use('/api/billing', billingRoutes);
+    app.use('/api/v1/billing', billingRoutes);
+
+    // Dedicated Stripe webhook endpoint with raw body parsing
+    app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+      const sig = req.headers['stripe-signature'];
+      if (!sig) return res.status(400).json({ error: 'Missing Stripe-Signature header' });
+      try {
+        const { handleStripeWebhook } = await import('./services/stripe.js');
+        const result = await handleStripeWebhook(req.body, sig);
+        if (result.alreadyHandled) return res.json({ received: true, status: 'already_processed' });
+        res.json({ received: true, status: 'processed', eventId: result.eventId });
+      } catch (error) {
+        logger.error('[Webhook] Stripe error:', error.message);
+        res.status(400).json({ error: error.message });
+      }
+    });
     app.use('/api/admin', adminRoutes);
     app.use('/api/analytics', analyticsRoutes);
     app.use('/api/notifications', notificationRoutes);

@@ -137,15 +137,29 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // Check contact limit (max 10 contacts)
-    const existingCount = await db.prepare(`
-      SELECT COUNT(*) as count FROM emergency_contacts WHERE user_id = ?
-    `).get(req.userId);
+    // Check tier-based contact limits
+    const userRecord = await db.prepare('SELECT subscription_tier, is_premium FROM users WHERE id = ?').get(req.userId);
+    const tier = userRecord?.subscription_tier || 'explorer';
 
-    if (existingCount.count >= 10) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Maximum of 10 emergency contacts allowed' 
+    const contactLimits = { explorer: 1, guardian: 3, navigator: null };
+    const limit = contactLimits[tier];
+
+    const existingCount = await db.prepare(
+      'SELECT COUNT(*) as count FROM emergency_contacts WHERE user_id = ?'
+    ).get(req.userId);
+
+    if (limit !== null && existingCount.count >= limit) {
+      const upgradeTarget = tier === 'explorer' ? 'Guardian (3 contacts)' : 'Navigator (unlimited)';
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'CONTACT_LIMIT_REACHED',
+          message: `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan allows ${limit} emergency contact${limit === 1 ? '' : 's'}. Upgrade to ${upgradeTarget} for more.`,
+          currentPlan: tier,
+          limit,
+          used: existingCount.count,
+          upgradeUrl: '/settings?tab=billing',
+        },
       });
     }
 

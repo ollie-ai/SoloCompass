@@ -2033,6 +2033,43 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
+  // --- Migration v028: Billing improvements (idempotent webhooks, billing columns, usage counters) ---
+  if (!await hasMigration('v028_billing_improvements')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS stripe_processed_events (
+          id SERIAL PRIMARY KEY,
+          stripe_event_id TEXT UNIQUE NOT NULL,
+          event_type TEXT NOT NULL,
+          processed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_stripe_events_id ON stripe_processed_events(stripe_event_id)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'inactive'`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_cancel_at_period_end BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_interval TEXT DEFAULT 'month'`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS usage_counters (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          counter_type TEXT NOT NULL,
+          period TEXT NOT NULL,
+          count INTEGER DEFAULT 0,
+          last_reset_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, counter_type, period)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_usage_counters_user ON usage_counters(user_id, counter_type)`);
+      logger.info('[Migration v028] billing improvements applied');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_billing_improvements');
+  }
+
   logger.info('[Migration] All migrations complete');
 }
 

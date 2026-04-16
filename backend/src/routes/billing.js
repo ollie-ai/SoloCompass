@@ -11,10 +11,18 @@ import { requireAuth } from '../middleware/auth.js';
 import { createNotification, getNotificationPreferences } from '../services/notificationService.js';
 import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
 import * as pushService from '../services/pushService.js';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const invoicesLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Public endpoint - no auth required
 router.get('/plans', (req, res) => {
@@ -219,7 +227,7 @@ router.get('/subscription-status', requireAuth, async (req, res) => {
  * GET /api/billing/invoices
  * Retrieve billing history (invoices) from Stripe
  */
-router.get('/invoices', requireAuth, async (req, res) => {
+router.get('/invoices', invoicesLimiter, requireAuth, async (req, res) => {
   try {
     const userId = req.userId;
     const user = await db.prepare('SELECT stripe_customer_id, subscription_tier, is_premium FROM users WHERE id = ?').get(userId);

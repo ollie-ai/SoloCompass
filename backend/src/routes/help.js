@@ -13,6 +13,12 @@ const supportTicketLimiter = rateLimit({
   legacyHeaders: false
 });
 const requireSupportLimiter = supportTicketLimiter;
+const featureRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const emergencyKeywords = ['sos', 'emergency', 'urgent', 'unsafe', 'danger'];
 
@@ -342,7 +348,7 @@ router.get('/articles', async (req, res) => {
  * POST /api/help/feature-requests
  * Submit a feature request (P3)
  */
-router.post('/feature-requests', requireAuth, [
+router.post('/feature-requests', featureRequestLimiter, requireAuth, [
   body('title').trim().isLength({ min: 5, max: 200 }).withMessage('Title must be 5-200 characters'),
   body('description').optional().isLength({ max: 2000 }),
 ], async (req, res) => {

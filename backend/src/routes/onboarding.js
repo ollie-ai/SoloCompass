@@ -1,5 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -8,11 +9,18 @@ const router = express.Router();
 
 const ONBOARDING_STEPS = ['profile', 'quiz', 'first_trip', 'safety_setup', 'emergency_contacts', 'tour_complete'];
 
+const onboardingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * GET /api/onboarding/status
  * Return completed steps and overall progress for the authenticated user
  */
-router.get('/status', requireAuth, async (req, res) => {
+router.get('/status', onboardingLimiter, requireAuth, async (req, res) => {
   try {
     const rows = await db.all(
       'SELECT step, completed_at, metadata FROM onboarding_progress WHERE user_id = ? ORDER BY completed_at ASC',
@@ -51,7 +59,7 @@ router.get('/status', requireAuth, async (req, res) => {
  * POST /api/onboarding/complete
  * Mark an onboarding step as completed
  */
-router.post('/complete', requireAuth, [
+router.post('/complete', onboardingLimiter, requireAuth, [
   body('step').isIn(ONBOARDING_STEPS).withMessage(`Step must be one of: ${ONBOARDING_STEPS.join(', ')}`),
   body('metadata').optional().isObject(),
 ], async (req, res) => {

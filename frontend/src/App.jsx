@@ -20,6 +20,7 @@ const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Quiz = lazy(() => import('./pages/Quiz'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Destinations = lazy(() => import('./pages/Destinations'));
 const DestinationDetail = lazy(() => import('./pages/DestinationDetail'));
 const CountryHub = lazy(() => import('./pages/CountryHub'));
@@ -44,6 +45,8 @@ const Contact = lazy(() => import('./pages/Contact'));
 const About = lazy(() => import('./pages/About'));
 const Docs = lazy(() => import('./pages/Docs'));
 const Features = lazy(() => import('./pages/Features'));
+const FAQ = lazy(() => import('./pages/FAQ'));
+const Blog = lazy(() => import('./pages/Blog'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const SafetyInfo = lazy(() => import('./pages/SafetyInfo'));
 const EmergencyPhrases = lazy(() => import('./pages/EmergencyPhrases'));
@@ -151,6 +154,8 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/features" element={<Features />} />
             <Route path="/pricing" element={<Pricing />} />
+            <Route path="/faq" element={<FAQ />} />
+            <Route path="/blog" element={<Blog />} />
             <Route path="/safety-info" element={<SafetyInfo />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -200,6 +205,14 @@ function App() {
             <Route
               path="/quiz"
               element={<Quiz />}
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <Onboarding />
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/destinations"

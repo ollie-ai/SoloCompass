@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import { ShieldCheck, X, Cookie, Settings, Check } from 'lucide-react';
 import Button from './Button';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import api from '../lib/api';
 
 const CookieConsent = () => {
+  const { t } = useTranslation();
   const [show, setShow] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
   const [preferences, setPreferences] = useState({
@@ -24,6 +27,16 @@ const CookieConsent = () => {
     }
   }, []);
 
+  const persistConsent = async (nextPreferences) => {
+    try {
+      await api.post('/v1/consents', { consentType: 'cookie_analytics', granted: !!nextPreferences.analytics, source: 'cookie_banner' });
+      await api.post('/v1/consents', { consentType: 'cookie_marketing', granted: !!nextPreferences.marketing, source: 'cookie_banner' });
+      await api.post('/v1/consents', { consentType: 'data_processing', granted: true, source: 'cookie_banner' });
+    } catch {
+      // no-op for guests / unauthenticated flows
+    }
+  };
+
   const acceptAll = () => {
     const fullConsent = {
       essential: true,
@@ -33,6 +46,7 @@ const CookieConsent = () => {
     localStorage.setItem('cookie-consent', 'all');
     localStorage.setItem('cookie-preferences', JSON.stringify(fullConsent));
     setPreferences(fullConsent);
+    persistConsent(fullConsent);
     setShow(false);
     setShowPreferences(false);
   };
@@ -46,6 +60,7 @@ const CookieConsent = () => {
     localStorage.setItem('cookie-consent', 'essential');
     localStorage.setItem('cookie-preferences', JSON.stringify(essentialOnly));
     setPreferences(essentialOnly);
+    persistConsent(essentialOnly);
     setShow(false);
     setShowPreferences(false);
   };
@@ -53,6 +68,7 @@ const CookieConsent = () => {
   const savePreferences = () => {
     localStorage.setItem('cookie-consent', 'custom');
     localStorage.setItem('cookie-preferences', JSON.stringify(preferences));
+    persistConsent(preferences);
     setShow(false);
     setShowPreferences(false);
   };
@@ -81,7 +97,7 @@ const CookieConsent = () => {
                 <Settings size={24} />
               </div>
               <div>
-                <h3 className="text-xl font-black text-white uppercase tracking-widest">Cookie Preferences</h3>
+                <h3 className="text-xl font-black text-white uppercase tracking-widest">{t('cookie.title')}</h3>
                 <p className="text-white/50 text-sm">Customise your privacy settings</p>
               </div>
             </div>
@@ -130,10 +146,10 @@ const CookieConsent = () => {
 
           <div className="p-6 border-t border-white/10 flex flex-col sm:flex-row gap-3">
             <Button onClick={acceptEssential} variant="outline" className="px-6 rounded-xl font-[900] py-3 flex-1 border-2 border-slate-700 text-white/50 hover:border-slate-600 hover:bg-slate-800 uppercase tracking-wider text-xs">
-              Reject All
+               {t('cookie.essentialOnly')}
             </Button>
             <Button onClick={savePreferences} className="bg-brand-vibrant hover:bg-emerald-600 text-white px-8 rounded-xl font-[900] py-3 flex-1 uppercase tracking-wider text-xs shadow-lg shadow-brand-vibrant/20">
-              Save Preferences
+               {t('cookie.savePreferences')}
             </Button>
           </div>
         </div>
@@ -149,23 +165,23 @@ const CookieConsent = () => {
         </div>
         
         <div className="flex-1 text-center md:text-left">
-            <h4 className="text-lg font-[900] text-white underline decoration-brand-vibrant decoration-4 underline-offset-8 mb-4 uppercase tracking-widest">Privacy & Intel Shield</h4>
+            <h4 className="text-lg font-[900] text-white underline decoration-brand-vibrant decoration-4 underline-offset-8 mb-4 uppercase tracking-widest">{t('cookie.title')}</h4>
             <p className="text-sm text-white/50 font-medium leading-relaxed">
-               SoloCompass requires essential cookies to manage your secure travel DNA and session data. We never sell your location history. By using the platform, you agree to our <Link to="/cookies" className="text-brand-vibrant hover:text-white transition-colors underline font-[900]">Cookie Policy</Link>.
+               {t('cookie.description')} <Link to="/cookies" className="text-brand-vibrant hover:text-white transition-colors underline font-[900]">Cookie Policy</Link>.
             </p>
           </div>
           
         <div className="flex flex-col gap-3 w-full md:w-auto">
             <div className="flex gap-3">
               <Button onClick={openPreferences} variant="outline" className="px-4 rounded-xl font-[900] py-3 flex-1 border-2 border-slate-800 text-white/50 hover:border-slate-700 hover:bg-slate-900 uppercase tracking-wider text-xs flex items-center justify-center gap-2">
-                <Cookie size={14} /> Customize
+                <Cookie size={14} /> {t('cookie.customize')}
               </Button>
               <Button onClick={acceptEssential} variant="outline" className="px-4 rounded-xl font-[900] py-3 flex-1 border-2 border-slate-800 text-white/50 hover:border-slate-700 hover:bg-slate-900 uppercase tracking-wider text-xs">
-                 Essential Only
+                 {t('cookie.essentialOnly')}
               </Button>
             </div>
             <Button onClick={acceptAll} className="bg-brand-vibrant hover:bg-emerald-600 text-white px-8 rounded-xl font-[900] py-3 uppercase tracking-wider text-xs shadow-lg shadow-brand-vibrant/20 w-full">
-               Accept All
+               {t('cookie.acceptAll')}
             </Button>
           </div>
       </div>

@@ -4,18 +4,21 @@ import PropTypes from 'prop-types';
 import { useAuthStore } from '../stores/authStore';
 import UserDropdown from './UserDropdown';
 import NotificationDropdown from './NotificationDropdown';
+import LanguageSelector from './LanguageSelector';
 import api from '../lib/api';
 import { trackEvent } from '../lib/telemetry';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Menu, X, Compass, LayoutDashboard, Shield, ShieldAlert, 
   Calendar, Users, ChevronRight as CaretRight, MapPin, Plus,
-  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle
+  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle, Book
 } from 'lucide-react';
 
 const PUBLIC_LINKS = [
   { name: 'Home', path: '/', label: 'home', icon: Home },
   { name: 'Features', path: '/features', label: 'features', icon: Sparkles },
+  { name: 'FAQ', path: '/faq', label: 'faq', icon: HelpCircle },
+  { name: 'Blog', path: '/blog', label: 'blog', icon: Book },
   { name: 'Safety', path: '/safety-info', label: 'safety', icon: Shield },
   { name: 'Help', path: '/help', label: 'help', icon: HelpCircle },
 ];
@@ -268,6 +271,7 @@ const Navbar = () => {
             </div>
 
             <div className="flex items-center gap-6">
+              <LanguageSelector />
               {isAuthenticated && isAppPage && (
                 <NotificationDropdown
                   unreadCount={notificationCount}

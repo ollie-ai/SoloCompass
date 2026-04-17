@@ -1,6 +1,6 @@
 import express from 'express';
 import { previewEmail, sendCustomEmail, getEmailTemplates, sendTestEmail } from '../services/email.js';
-import { requireAuth, requireAdmin, requireSuperAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireSuperAdmin, requireAdminSessionSecurity } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import researchService from '../services/researchService.js';
@@ -15,7 +15,7 @@ import {
 } from '../services/notificationTemplateService.js';
 
 // Chain auth + admin check for all admin routes
-const adminGuard = [requireAuth, requireAdmin];
+const adminGuard = [requireAuth, requireAdmin, requireAdminSessionSecurity];
 
 const router = express.Router();
 
@@ -4198,6 +4198,73 @@ router.post('/check-action-approval', ...adminGuard, async (req, res) => {
   } catch (error) {
     logger.error(`[Admin] Check action approval failed: ${error.message}`);
     res.status(500).json({ error: 'Failed to check action requirements' });
+  }
+});
+
+// GET /admin/reports - moderation queue for user/content reports
+router.get('/reports', ...adminGuard, async (req, res) => {
+  try {
+    const status = req.query.status || 'open';
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    const offset = parseInt(req.query.offset || '0', 10);
+
+    const reports = await db.all(
+      `SELECT r.*, reporter.email as reporter_email, reviewer.email as reviewer_email
+       FROM reports r
+       LEFT JOIN users reporter ON reporter.id = r.reporter_id
+       LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+       WHERE (? = 'all' OR r.status = ?)
+       ORDER BY r.created_at DESC
+       LIMIT ? OFFSET ?`,
+      status, status, limit, offset
+    );
+
+    const totalRow = await db.get(
+      `SELECT COUNT(*)::int as count FROM reports
+       WHERE (? = 'all' OR status = ?)`,
+      status, status
+    );
+
+    res.json({
+      success: true,
+      data: { reports: reports || [], total: totalRow?.count || 0, limit, offset, status }
+    });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list reports: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch reports' });
+  }
+});
+
+// PATCH /admin/reports/:id - update report moderation status
+router.patch('/reports/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const validStatuses = ['open', 'under_review', 'actioned', 'dismissed'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    const updated = await db.run(
+      'UPDATE reports SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      status, req.userId, id
+    );
+
+    if (!updated?.changes) {
+      return res.status(404).json({ success: false, error: 'Report not found' });
+    }
+
+    await db.run(
+      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
+      req.userId,
+      'admin_report_moderated',
+      JSON.stringify({ reportId: Number(id), status })
+    );
+
+    res.json({ success: true, data: { id: Number(id), status } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to moderate report: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to moderate report' });
   }
 });
 

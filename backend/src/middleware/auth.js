@@ -152,6 +152,63 @@ export const requireAdmin = async (req, res, next) => {
   });
 };
 
+const parseClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  const candidate = Array.isArray(forwarded) ? forwarded[0] : (forwarded?.split(',')[0] || req.ip || req.connection?.remoteAddress || '');
+  return String(candidate).trim().replace('::ffff:', '');
+};
+
+const parseAllowlist = (value) => {
+  if (!value || typeof value !== 'string') return [];
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+};
+
+export const requireAdminSessionSecurity = async (req, res, next) => {
+  try {
+    if (req.userRole !== 'admin') {
+      return next();
+    }
+
+    const user = await db.get('SELECT id, two_factor_enabled FROM users WHERE id = ?', req.userId);
+    const twoFactorRequired = process.env.ADMIN_2FA_REQUIRED !== 'false';
+    if (twoFactorRequired && !user?.two_factor_enabled) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_2FA_REQUIRED', message: 'Admin account requires 2FA before admin access is allowed.' }
+      });
+    }
+
+    const envAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
+    let activeAllowlist = envAllowlist;
+    if (!activeAllowlist.length) {
+      const config = await db.get('SELECT config_value FROM system_config WHERE config_key = ?', 'admin_ip_allowlist');
+      activeAllowlist = parseAllowlist(config?.config_value);
+    }
+
+    const ip = parseClientIp(req);
+    if (activeAllowlist.length && !activeAllowlist.includes(ip)) {
+      logger.warn(`[Auth] Blocked admin IP ${ip} for user ${req.userId}`);
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_IP_NOT_ALLOWED', message: 'Your IP is not in the admin allowlist.' }
+      });
+    }
+
+    await db.run(
+      'UPDATE users SET admin_last_login_ip = ?, admin_last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ip, req.userId
+    );
+
+    next();
+  } catch (error) {
+    logger.error(`[Auth] Admin session security check failed: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'ADMIN_SECURITY_CHECK_FAILED', message: 'Failed to validate admin session security' }
+    });
+  }
+};
+
 // Super admin only - can access sensitive operations
 export const requireSuperAdmin = async (req, res, next) => {
   await authenticate(req, res, () => {

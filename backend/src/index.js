@@ -116,8 +116,7 @@ async function bootstrap() {
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
-    const { default: journalRoutes } = await import('./routes/journal.js');
-    const { default: transportRoutes } = await import('./routes/transport.js');
+    const { default: v1Routes } = await import('./routes/v1.js');
 
     const app = express();
     const server = createServer(app);
@@ -236,10 +235,9 @@ async function bootstrap() {
     app.use('/api/calls', callsRoutes);
     app.use('/api/esim', esimRoutes);
     app.use('/api/translate', translateRoutes);
-     app.use('/api/countries', countriesRoutes);
-     app.use('/api/cities', citiesRoutes);
-     app.use('/api/account', accountRoutes);
-     app.use('/api/v1/account', accountRoutes);
+    app.use('/api/countries', countriesRoutes);
+    app.use('/api/cities', citiesRoutes);
+    app.use('/api/v1', v1Routes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {

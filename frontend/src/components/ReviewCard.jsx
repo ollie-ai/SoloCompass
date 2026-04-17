@@ -2,6 +2,7 @@ import { useState, useEffect, memo } from 'react';
 import PropTypes from 'prop-types';
 import { Star, ThumbsUp, MapPin } from 'lucide-react';
 import api from '../lib/api';
+import ReportButton from './ReportButton';
 
 const ReviewCard = memo(function ReviewCard({ review, onHelpful }) {
   const [isHelpful, setIsHelpful] = useState(false);
@@ -113,17 +114,20 @@ const ReviewCard = memo(function ReviewCard({ review, onHelpful }) {
       )}
 
       {/* Helpful */}
-      <button
-        onClick={handleHelpful}
-        className={`flex items-center gap-2 text-sm transition-colors ${
-          isHelpful 
-            ? 'text-primary' 
-            : 'text-base-content/50 hover:text-primary'
-        }`}
-      >
-        <ThumbsUp size={16} className={isHelpful ? 'fill-current' : ''} />
-        <span>Helpful ({helpfulCount})</span>
-      </button>
+      <div className="flex items-center justify-between gap-3">
+        <button
+          onClick={handleHelpful}
+          className={`flex items-center gap-2 text-sm transition-colors ${
+            isHelpful 
+              ? 'text-primary' 
+              : 'text-base-content/50 hover:text-primary'
+          }`}
+        >
+          <ThumbsUp size={16} className={isHelpful ? 'fill-current' : ''} />
+          <span>Helpful ({helpfulCount})</span>
+        </button>
+        <ReportButton compact reportedEntityType="review" entityId={review.id} />
+      </div>
     </div>
   );
 });

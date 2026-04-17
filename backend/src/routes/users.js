@@ -6,6 +6,7 @@ import multer from 'multer';
 import db from '../db.js';
 import { requireAuth, requireAdmin, authenticate } from '../middleware/auth.js';
 import { sanitizeAll } from '../middleware/validate.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 import { stripe } from '../services/stripe.js';
 import { supabaseStorage } from '../services/supabaseStorage.js';
 import logger from '../services/logger.js';
@@ -354,7 +355,7 @@ router.put('/:id', requireAuth, sanitizeAll(['name', 'bio', 'travel_style', 'pho
   }
 });
 
-router.get('/:id/export', requireAuth, async (req, res) => {
+router.get('/:id/export', requireAuth, requireFeature(FEATURES.EXPORT_DATA), async (req, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.userRole === 'admin';
@@ -478,60 +479,7 @@ router.get('/:id/export', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/users/me/export — dedicated /me export endpoint (GDPR)
-router.post('/me/export', uploadLimiter, authenticate, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    // Create a data_export_requests record
-    await db.run(
-      'INSERT INTO data_export_requests (user_id, status, expires_at) VALUES (?, ?, ?)',
-      userId, 'processing', new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-    );
-
-    // For now, perform synchronous export and return immediately
-    // Future: queue async job and poll via GET /api/users/me/export/status
-    const userData = {};
-
-    userData.account = await db.get(
-      `SELECT u.id, u.email, u.name, u.role, u.created_at,
-              p.avatar_url, p.bio, p.phone, p.travel_style, p.home_city, p.pronouns
-       FROM users u LEFT JOIN profiles p ON u.id = p.user_id WHERE u.id = ?`,
-      userId
-    );
-
-    const trips = await db.all('SELECT id, name, destination, start_date, end_date, budget, status, notes, created_at FROM trips WHERE user_id = ?', userId);
-    userData.trips = trips;
-
-    userData.quiz_responses = await db.all('SELECT id, answers, result, created_at FROM quiz_responses WHERE user_id = ?', userId);
-    userData.emergency_contacts = await db.all('SELECT id, name, phone, email, relationship FROM emergency_contacts WHERE user_id = ?', userId);
-
-    try {
-      userData.notifications = await db.all('SELECT id, type, title, message, read, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 200', userId);
-    } catch { userData.notifications = []; }
-
-    try {
-      userData.login_history = await db.all('SELECT ip_address, success, created_at FROM login_attempts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', userId);
-    } catch { userData.login_history = []; }
-
-    // Mark as ready
-    await db.run('UPDATE data_export_requests SET status = ? WHERE user_id = ? AND status = ?', 'ready', userId, 'processing');
-
-    res.json({
-      success: true,
-      data: {
-        export_date: new Date().toISOString(),
-        user_id: userId,
-        archive: userData,
-      }
-    });
-  } catch (error) {
-    logger.error(`[Users] Me export failed: ${error.message}`);
-    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to generate data export' } });
-  }
-});
-
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, requireFeature(FEATURES.DELETE_DATA), async (req, res) => {
   try {
     const { id } = req.params;
     const { permanent } = req.query; // ?permanent=true for hard delete

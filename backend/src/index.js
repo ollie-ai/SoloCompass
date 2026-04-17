@@ -56,6 +56,10 @@ async function bootstrap() {
     const { startScheduledCheckInMonitor } = await import('./services/checkinMonitor.js');
     const { startCriticalEventQueue } = await import('./services/criticalEventQueue.js');
     const { generateSitemap } = await import('./services/sitemapService.js');
+    const { startTripAutoStatusService } = await import('./services/tripAutoStatus.js');
+    const { startFlightStatusPoller } = await import('./services/flightStatusPoller.js');
+    const { startSafetyDataRefresh } = await import('./services/safetyDataRefresh.js');
+    const { startUsageResetService } = await import('./services/usageReset.js');
 
     // route imports
     const { default: authRoutes } = await import('./routes/auth.js');
@@ -86,7 +90,7 @@ async function bootstrap() {
     const { default: affiliateRoutes } = await import('./routes/affiliates.js');
     const { default: matchingRoutes } = await import('./routes/matching.js');
     const { default: messagesRoutes } = await import('./routes/messages.js');
-    const { default: meetupsRoutes } = await import('./routes/meetups.js');
+    const { default: buddyConnectionsRoutes } = await import('./routes/buddyConnections.js');
     const { default: emergencyContactsRoutes } = await import('./routes/emergencyContacts.js');
     const { default: emergencyNumbersRoutes } = await import('./routes/emergencyNumbers.js');
     const { default: emergencyRoutes } = await import('./routes/emergency.js');
@@ -207,10 +211,7 @@ async function bootstrap() {
     app.use('/api/weather', weatherRoutes);
     app.use('/api/matching', matchingRoutes);
     app.use('/api/messages', messagesRoutes);
-    app.use('/api/meetups', meetupsRoutes);
-    app.use('/api/v1/buddy', matchingRoutes);
-    app.use('/api/v1/buddy/messages', messagesRoutes);
-    app.use('/api/v1/buddy/meetups', meetupsRoutes);
+    app.use('/api/v1/buddy/connections', buddyConnectionsRoutes);
     app.use('/api/reviews', reviewsRoutes);
     app.use('/api/quiz', quizRoutes);
     app.use('/api/places', placesRoutes);
@@ -302,7 +303,10 @@ async function bootstrap() {
         console.log(`\x1b[32m SoloCompass Core Online :: Listening on Port ${PORT} \x1b[0m`);
         initWebSocketServer(server);
         startScheduledCheckInMonitor();
-        startCriticalEventQueue();
+        startTripAutoStatusService();
+        startFlightStatusPoller();
+        startSafetyDataRefresh();
+        startUsageResetService();
         generateSitemap().catch(err => logger.error(`[SEO] Sitemap fail: ${err.message}`));
         
         // Automated Production Seeding (Phase 5) - Development only

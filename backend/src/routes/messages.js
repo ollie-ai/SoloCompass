@@ -2,12 +2,23 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
-import { broadcastToUser } from '../services/websocket.js';
 import { createNotification } from '../services/notificationService.js';
 import * as pushService from '../services/pushService.js';
+import { broadcastToUser } from '../services/websocket.js';
 
 const router = express.Router();
 router.use(authenticate);
+
+const isBlockedBetweenUsers = async (userA, userB) => {
+  const blocked = await db.prepare(`
+    SELECT id
+    FROM buddy_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+    LIMIT 1
+  `).get(userA, userB, userB, userA);
+  return !!blocked;
+};
 
 router.get('/conversations', async (req, res) => {
   try {
@@ -140,6 +151,13 @@ router.post('/conversations', async (req, res) => {
       });
     }
 
+    if (await isBlockedBetweenUsers(userId, participantId)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Messaging is disabled for blocked users' }
+      });
+    }
+
     const existingConv = await db.prepare(`
       SELECT id FROM buddy_conversations
       WHERE (
@@ -211,27 +229,12 @@ router.post('/conversations/:conversationId', async (req, res) => {
       });
     }
 
-    // Guardian plan enforcement: Explorer users are limited to 20 messages per conversation.
-    // Guardian+ users have unlimited messaging.
-    const sender = await db.prepare(`
-      SELECT subscription_tier FROM users WHERE id = ?
-    `).get(userId);
-    const tier = (sender?.subscription_tier || 'explorer').toLowerCase();
-    const EXPLORER_MESSAGE_LIMIT = 20;
-    if (tier === 'explorer') {
-      const msgCount = await db.prepare(`
-        SELECT COUNT(*) AS cnt FROM buddy_messages WHERE conversation_id = ? AND sender_id = ?
-      `).get(conversationId, userId);
-      if (msgCount.cnt >= EXPLORER_MESSAGE_LIMIT) {
-        return res.status(403).json({
-          success: false,
-          error: {
-            code: 'MESSAGE_LIMIT_REACHED',
-            message: `Explorer plan allows up to ${EXPLORER_MESSAGE_LIMIT} messages per conversation. Upgrade to Guardian or Navigator for unlimited messaging.`,
-            upgradeRequired: true,
-          },
-        });
-      }
+    const otherUserId = conversation.participant_a === userId ? conversation.participant_b : conversation.participant_a;
+    if (await isBlockedBetweenUsers(userId, otherUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Messaging is disabled for blocked users' }
+      });
     }
 
     const result = await db.prepare(`
@@ -294,6 +297,32 @@ router.post('/conversations/:conversationId', async (req, res) => {
     });
 
     res.json({ success: true, data: message });
+
+    // Push notification to the other participant
+    try {
+      const sender = await db.prepare('SELECT name FROM users WHERE id = ?').get(userId);
+      const senderName = sender?.name || 'Someone';
+
+      await createNotification(
+        otherUserId,
+        'new_message',
+        `New message from ${senderName}`,
+        content.trim().slice(0, 120),
+        { conversationId, senderId: userId, senderName }
+      );
+      await pushService.sendPushNotification(otherUserId, {
+        title: `💬 ${senderName}`,
+        body: content.trim().slice(0, 120),
+        data: { conversationId, type: 'new_message' }
+      });
+      broadcastToUser(otherUserId, {
+        type: 'message:received',
+        conversationId,
+        message
+      });
+    } catch (notifyErr) {
+      logger.warn(`[Messages] Push notification failed: ${notifyErr.message}`);
+    }
   } catch (error) {
     logger.error(`[Messages] Failed to send message: ${error.message}`);
     res.status(500).json({
@@ -387,79 +416,6 @@ router.delete('/conversations/:conversationId', async (req, res) => {
       success: false,
       error: { code: 'INTERNAL_ERROR', message: 'Failed to delete conversation' }
     });
-  }
-});
-
-// ------------------------------------------------------------------
-// connectionId-based message routes for /api/v1/buddy/messages/:connectionId
-// These resolve the accepted buddy_request (connection) to its conversation.
-// ------------------------------------------------------------------
-
-async function resolveConversationFromConnection(connectionId, userId) {
-  const connection = await db.prepare(`
-    SELECT id, sender_id, receiver_id
-    FROM buddy_requests
-    WHERE id = ?
-      AND status = 'accepted'
-      AND (sender_id = ? OR receiver_id = ?)
-  `).get(connectionId, userId, userId);
-
-  if (!connection) return null;
-
-  const otherId = connection.sender_id === userId ? connection.receiver_id : connection.sender_id;
-
-  let conversation = await db.prepare(`
-    SELECT id FROM buddy_conversations
-    WHERE (participant_a = ? AND participant_b = ?)
-       OR (participant_a = ? AND participant_b = ?)
-    LIMIT 1
-  `).get(Math.min(userId, otherId), Math.max(userId, otherId),
-         Math.max(userId, otherId), Math.min(userId, otherId));
-
-  if (!conversation) {
-    const result = await db.prepare(`
-      INSERT INTO buddy_conversations (participant_a, participant_b)
-      VALUES (?, ?)
-    `).run(Math.min(userId, otherId), Math.max(userId, otherId));
-    conversation = { id: result.lastInsertRowid };
-  }
-
-  return conversation.id;
-}
-
-router.get('/connection/:connectionId', async (req, res) => {
-  try {
-    const { connectionId } = req.params;
-    const userId = req.userId;
-
-    const conversationId = await resolveConversationFromConnection(parseInt(connectionId, 10), userId);
-    if (!conversationId) {
-      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Connection not found' } });
-    }
-
-    req.params.conversationId = String(conversationId);
-    return router.handle(Object.assign(req, { url: `/conversations/${conversationId}`, path: `/conversations/${conversationId}` }), res);
-  } catch (error) {
-    logger.error(`[Messages] connectionId GET failed: ${error.message}`);
-    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to get messages' } });
-  }
-});
-
-router.post('/connection/:connectionId', async (req, res) => {
-  try {
-    const { connectionId } = req.params;
-    const userId = req.userId;
-
-    const conversationId = await resolveConversationFromConnection(parseInt(connectionId, 10), userId);
-    if (!conversationId) {
-      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Connection not found' } });
-    }
-
-    req.params.conversationId = String(conversationId);
-    return router.handle(Object.assign(req, { url: `/conversations/${conversationId}`, path: `/conversations/${conversationId}` }), res);
-  } catch (error) {
-    logger.error(`[Messages] connectionId POST failed: ${error.message}`);
-    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to send message' } });
   }
 });
 

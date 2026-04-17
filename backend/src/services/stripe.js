@@ -344,6 +344,24 @@ export const handleStripeWebhook = async (rawBody, sig) => {
       case 'customer.subscription.deleted':
         await handleSubscriptionDeleted(event.data.object);
         break;
+        
+      case 'invoice.payment_succeeded':
+        // Reset AI daily usage counters on successful billing period renewal
+        try {
+          const paidInvoice = event.data.object;
+          if (paidInvoice.billing_reason === 'subscription_cycle') {
+            const renewedUser = await db.get('SELECT id FROM users WHERE stripe_customer_id = ?', paidInvoice.customer);
+            if (renewedUser) {
+              const { resetUserAICounters } = await import('./usageReset.js');
+              await resetUserAICounters(renewedUser.id);
+              logger.info(`[STRIPE] Reset AI usage counters for user ${renewedUser.id} on subscription renewal`);
+            }
+          }
+        } catch (resetErr) {
+          logger.warn(`[STRIPE] Usage reset on renewal failed: ${resetErr.message}`);
+        }
+        break;
+        
       case 'invoice.payment_failed':
         await handleInvoicePaymentFailed(event.data.object);
         break;

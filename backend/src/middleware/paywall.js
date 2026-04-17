@@ -267,85 +267,88 @@ export const enforceTripLimits = async (req, res, next) => {
 };
 
 /**
+ * Per-tier daily AI query limits.
+ * Explorer: 10/day, Guardian: 50/day, Navigator: unlimited
+ */
+const AI_DAILY_LIMITS = {
+  [PLAN_TIERS.EXPLORER]: 10,
+  [PLAN_TIERS.GUARDIAN]: 50,
+  [PLAN_TIERS.NAVIGATOR]: Infinity,
+};
+
+/**
+ * Increment the daily AI usage counter for a user.
+ * Uses ai_usage_daily table (migration v029).
+ */
+async function incrementAIDailyUsage(userId) {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  try {
+    await db.prepare(`
+      INSERT INTO ai_usage_daily (user_id, usage_date, count)
+      VALUES (?, ?, 1)
+      ON CONFLICT (user_id, usage_date) DO UPDATE SET count = count + 1
+    `).run(userId, today);
+  } catch (err) {
+    logger.error(`[AI Limits] Failed to increment daily usage: ${err.message}`);
+  }
+}
+
+/**
  * Middleware to check AI usage limits
  */
 export const checkAILimits = async (req, res, next) => {
   try {
     const user = await db.prepare('SELECT subscription_tier, is_premium FROM users WHERE id = ?').get(req.userId);
     const plan = user?.subscription_tier || PLAN_TIERS.EXPLORER;
-    
-    // Navigator has unlimited
-    if (plan === PLAN_TIERS.NAVIGATOR) {
+
+    const dailyLimit = AI_DAILY_LIMITS[plan] ?? AI_DAILY_LIMITS[PLAN_TIERS.EXPLORER];
+
+    // Unlimited tiers — just track and pass through
+    if (dailyLimit === Infinity) {
+      await incrementAIDailyUsage(req.userId);
       return next();
     }
 
-    // Guardian has unlimited
-    if (plan === PLAN_TIERS.GUARDIAN || user?.is_premium) {
+    const today = new Date().toISOString().slice(0, 10);
+    let usageRow;
+    try {
+      usageRow = await db.prepare(
+        'SELECT count FROM ai_usage_daily WHERE user_id = ? AND usage_date = ?'
+      ).get(req.userId, today);
+    } catch (err) {
+      // Table may not exist yet in older envs — allow through
+      logger.warn('[AI Limits] ai_usage_daily table missing, skipping limit check');
       return next();
     }
 
-    // Explorer - check limits: 1 itinerary/month, 10 chat messages/day
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const currentDay   = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const usedToday = usageRow?.count || 0;
 
-    // Determine what type of AI request this is based on route
-    const isChatRequest = req.path === '/chat';
-    const isItineraryRequest = req.path === '/generate-itinerary';
-
-    if (isItineraryRequest) {
-      const itineraryUsage = await db.prepare(
-        'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
-      ).get(req.userId, currentMonth, 'itinerary');
-
-      if (itineraryUsage?.count >= 1) {
-        return res.status(429).json({
-          success: false,
-          error: {
-            code: 'AI_LIMIT_REACHED',
-            message: 'Explorer plan includes 1 AI itinerary per month. Your limit resets next month.',
-            upgradeUrl: '/settings?tab=billing',
-            nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
-          }
-        });
-      }
+    if (usedToday >= dailyLimit) {
+      const tierName = plan === PLAN_TIERS.GUARDIAN ? 'Guardian' : 'Explorer';
+      return res.status(429).json({
+        success: false,
+        upgradeRequired: true,
+        error: {
+          code: 'AI_LIMIT_REACHED',
+          message: `You've reached your ${tierName} plan limit of ${dailyLimit} AI queries per day. Upgrade to unlock more.`,
+          currentTier: plan,
+          limit: dailyLimit,
+          used: usedToday,
+          upgradeUrl: '/settings?tab=billing',
+          nextReset: new Date(Date.UTC(
+            new Date().getUTCFullYear(),
+            new Date().getUTCMonth(),
+            new Date().getUTCDate() + 1
+          )).toISOString()
+        }
+      });
     }
 
-    if (isChatRequest) {
-      // Spec: 10 messages per day for Explorer plan
-      const chatUsage = await db.prepare(
-        'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND day = ? AND type = ?'
-      ).get(req.userId, currentDay, 'chat');
-
-      if (chatUsage?.count >= 10) {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(0, 0, 0, 0);
-        return res.status(429).json({
-          success: false,
-          error: {
-            code: 'AI_LIMIT_REACHED',
-            message: 'Explorer plan includes 10 AI chat messages per day. Your limit resets tomorrow.',
-            upgradeUrl: '/settings?tab=billing',
-            nextReset: tomorrow.toISOString()
-          }
-        });
-      }
-    }
-
-    // Track usage — insert or increment, keyed by both month and day
-    const usageType = isChatRequest ? 'chat' : (isItineraryRequest ? 'itinerary' : 'other');
-    if (usageType !== 'other') {
-      await db.prepare(
-        `INSERT INTO ai_usage (user_id, month, day, type, count)
-         VALUES (?, ?, ?, ?, 1)
-         ON CONFLICT(user_id, month, type) DO UPDATE SET count = count + 1, day = excluded.day`
-      ).run(req.userId, currentMonth, currentDay, usageType);
-    }
-
+    await incrementAIDailyUsage(req.userId);
     next();
   } catch (error) {
     logger.error('AI limits middleware error:', error);
-    next(); // Allow on error
+    next(); // Allow on error to avoid blocking users
   }
 };
 

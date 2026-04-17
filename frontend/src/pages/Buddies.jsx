@@ -17,9 +17,6 @@ import MatchingProfile from '../components/MatchingProfile';
 import MatchingProfileEdit from '../components/MatchingProfileEdit';
 import VerificationModal from '../components/VerificationModal';
 import BlockReportModal from '../components/BlockReportModal';
-import BuddyFilters from '../components/BuddyFilters';
-import BuddyDiscoveryGrid from '../components/BuddyDiscoveryGrid';
-import BuddyConnectionsList from '../components/BuddyConnectionsList';
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -46,9 +43,11 @@ const Buddies = () => {
   const [activeTab, setActiveTab] = useState('discover');
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
-  const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
+  const [showBlockReportModal, setShowBlockReportModal] = useState(false);
   const [safetyActionLoading, setSafetyActionLoading] = useState(false);
+  const searchRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     fetchData();
@@ -156,28 +155,40 @@ const Buddies = () => {
     }
   };
 
-  const handleSafetySubmit = async ({ action, reason, details, category }) => {
+  const openConnectionSafetyModal = (connection) => {
+    setSelectedConnection(connection);
+    setShowBlockReportModal(true);
+  };
+
+  const closeConnectionSafetyModal = () => {
+    setShowBlockReportModal(false);
+    setSelectedConnection(null);
+  };
+
+  const handleReportConnection = async ({ reason, details }) => {
     if (!selectedConnection?.id) return;
     setSafetyActionLoading(true);
     try {
-      if (action === 'block') {
-        await api.post(`/matching/connections/${selectedConnection.id}/block`, {
-          reason: reason || 'Blocked by user',
-        });
-        toast.success('User blocked');
-      } else {
-        await api.post(`/matching/connections/${selectedConnection.id}/report`, {
-          reason,
-          details,
-          category,
-        });
-        toast.success('Report submitted');
-      }
-      setShowSafetyModal(false);
-      setSelectedConnection(null);
-      fetchData();
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/report`, { reason, details });
+      toast.success('Report submitted');
+      closeConnectionSafetyModal();
     } catch (error) {
-      toast.error(error.response?.data?.error || 'Safety action failed');
+      toast.error(error.response?.data?.error?.message || 'Failed to submit report');
+    } finally {
+      setSafetyActionLoading(false);
+    }
+  };
+
+  const handleBlockConnection = async () => {
+    if (!selectedConnection?.id) return;
+    setSafetyActionLoading(true);
+    try {
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/block`);
+      toast.success('User blocked');
+      setConnections(prev => (prev || []).filter(c => c.id !== selectedConnection.id));
+      closeConnectionSafetyModal();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Failed to block user');
     } finally {
       setSafetyActionLoading(false);
     }
@@ -630,16 +641,102 @@ const Buddies = () => {
                 </motion.div>
               )}
 
-              <BuddyConnectionsList
-                connections={connections}
-                myProfile={myProfile}
-                onSafetyAction={(conn) => {
-                  setSelectedConnection(conn);
-                  setShowSafetyModal(true);
-                }}
-                onDiscoverClick={() => setActiveTab('discover')}
-                onProfileClick={() => setActiveTab('profile')}
-              />
+              {connections.length === 0 ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                  className="bg-base-100 rounded-xl border border-base-300/60 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)] p-10 text-center"
+                >
+                  <div className="w-16 h-16 mx-auto mb-5 bg-base-200 rounded-2xl flex items-center justify-center">
+                    <MessageCircle className="w-8 h-8 text-base-content/30" />
+                  </div>
+                  <h3 className="text-lg font-black text-base-content mb-2">No connections yet</h3>
+                  <p className="text-base-content/60 font-medium text-sm mb-6 max-w-sm mx-auto">
+                    Start discovering travellers to build your solo travel network.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button
+                      onClick={() => setActiveTab('discover')}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-emerald-600 transition-colors"
+                    >
+                      <Users size={16} /> Discover travellers
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('profile')}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm bg-base-100 border border-base-300 text-base-content/80 hover:border-brand-vibrant hover:text-brand-vibrant transition-colors"
+                    >
+                      <UserCheck size={16} /> Update Travel Profile
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {connections.map((conn, index) => {
+                    const status = getConnectionStatus(conn);
+                    const sharedInfo = getConnectionSharedInfo(conn);
+                    return (
+                      <motion.div
+                        key={conn.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1], delay: index * 0.05 }}
+                        className="bg-base-100 rounded-xl border border-base-300/60 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)] p-5 hover:shadow-[0_8px_30px_-6px_rgba(0,0,0,0.10)] transition-shadow cursor-pointer"
+                      >
+                        <div className="flex items-start gap-3 mb-4">
+                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-vibrant/10 to-emerald-500/10 flex items-center justify-center shrink-0">
+                            <span className="text-base font-black text-brand-vibrant">
+                              {getInitials(conn.user?.name)}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-bold text-base-content text-sm truncate">{conn.user?.name || 'Unknown'}</h4>
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${status.color}`}>
+                                {status.label}
+                              </span>
+                            </div>
+                            <p className="text-xs text-base-content/40 font-medium mt-0.5">{conn.user?.location || 'Location unknown'}</p>
+                          </div>
+                        </div>
+
+                        {sharedInfo.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {sharedInfo.map((info, i) => (
+                              <span key={`shared-${info.label}-${i}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold bg-brand-vibrant/10 text-brand-vibrant">
+                                <info.icon size={10} /> {info.label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {conn.trip && (
+                          <div className="flex items-center gap-1.5 text-xs text-base-content/60 font-medium mb-3">
+                            <MapPin size={12} className="text-base-content/30" />
+                            {conn.trip.destination}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between gap-2 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Calendar size={12} />
+                            Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openConnectionSafetyModal(conn);
+                            }}
+                            className="px-2 py-1 rounded-lg border border-base-300 text-base-content/60 hover:text-error hover:border-error/40"
+                          >
+                            Safety
+                          </button>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
 
@@ -736,14 +833,12 @@ const Buddies = () => {
         onClose={() => setShowVerificationModal(false)} 
       />
       <BlockReportModal
-        isOpen={showSafetyModal}
-        onClose={() => {
-          setShowSafetyModal(false);
-          setSelectedConnection(null);
-        }}
-        targetName={selectedConnection?.user?.name}
+        open={showBlockReportModal}
         loading={safetyActionLoading}
-        onSubmit={handleSafetySubmit}
+        userName={selectedConnection?.user?.name || selectedConnection?.buddy_name}
+        onClose={closeConnectionSafetyModal}
+        onReport={handleReportConnection}
+        onBlock={handleBlockConnection}
       />
       </div>
     </DashboardShell>

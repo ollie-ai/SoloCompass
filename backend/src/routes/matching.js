@@ -61,6 +61,17 @@ async function getConnectionForUser(connectionId, userId) {
 
 router.use(requireAuth);
 
+const isBlockedBetweenUsers = async (userA, userB) => {
+  const row = await db.prepare(`
+    SELECT id
+    FROM buddy_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+    LIMIT 1
+  `).get(userA, userB, userB, userA);
+  return !!row;
+};
+
 router.get('/trips', async (req, res) => {
   try {
     const { destination, startDate, endDate } = req.query;
@@ -77,9 +88,14 @@ router.get('/trips', async (req, res) => {
     }
 
     const blocked = await db.prepare(`
-      SELECT blocked_id FROM buddy_blocks WHERE blocker_id = ?
-    `).all(userId);
-    const blockedUsers = blocked.map(b => b.blocked_id);
+      SELECT CASE
+        WHEN blocker_id = ? THEN blocked_id
+        ELSE blocker_id
+      END AS blocked_user_id
+      FROM buddy_blocks
+      WHERE blocker_id = ? OR blocked_id = ?
+    `).all(userId, userId, userId);
+    const blockedUsers = blocked.map(b => b.blocked_user_id);
 
     const placeholders = userTripIds.map(() => '?').join(',');
     const blockedPlaceholders = blockedUsers.length > 0 ? blockedUsers.map(() => '?').join(',') : null;
@@ -159,10 +175,16 @@ router.get('/discovery', async (req, res) => {
       LEFT JOIN profiles p ON tb.user_id = p.user_id
       WHERE LOWER(tb.destination) LIKE LOWER(?)
       AND tb.user_id != ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM buddy_blocks bb
+        WHERE (bb.blocker_id = ? AND bb.blocked_id = tb.user_id)
+           OR (bb.blocker_id = tb.user_id AND bb.blocked_id = ?)
+      )
       AND tb.status IN ('searching', 'matched')
       ORDER BY tb.start_date ASC
       LIMIT 10
-    `).all(`%${destination}%`, userId);
+    `).all(`%${destination}%`, userId, userId, userId);
 
     res.json({ 
       success: true, 
@@ -210,9 +232,14 @@ router.post('/buddies', [
       return res.status(400).json({ error: 'Cannot send request to yourself' });
     }
 
+    if (await isBlockedBetweenUsers(senderId, receiverId)) {
+      return res.status(403).json({ error: 'Cannot send request to this user' });
+    }
+
     const existingRequest = await db.prepare(`
       SELECT id FROM buddy_requests 
       WHERE sender_id = ? AND receiver_id = ? AND trip_id = ? AND status IN ('pending', 'accepted')
+      AND archived_at IS NULL
     `).get(senderId, receiverId, tripId);
 
     if (existingRequest) {
@@ -272,6 +299,7 @@ router.get('/requests', async (req, res) => {
       LEFT JOIN profiles p ON br.sender_id = p.user_id
       LEFT JOIN trips t ON br.trip_id = t.id
       WHERE br.receiver_id = ?
+      AND br.archived_at IS NULL
       ORDER BY br.created_at DESC
     `).all(userId);
 
@@ -298,6 +326,7 @@ router.get('/requests', async (req, res) => {
       LEFT JOIN profiles p ON br.receiver_id = p.user_id
       LEFT JOIN trips t ON br.trip_id = t.id
       WHERE br.sender_id = ?
+      AND br.archived_at IS NULL
       ORDER BY br.created_at DESC
     `).all(userId);
 
@@ -357,7 +386,7 @@ router.put('/requests/:id', [
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {
@@ -438,6 +467,7 @@ router.get('/connections', async (req, res) => {
       LEFT JOIN profiles p ON br.receiver_id = p.user_id
       JOIN trips t ON br.trip_id = t.id
       WHERE br.sender_id = ? AND br.status = 'accepted'
+      AND br.archived_at IS NULL
     `).all(userId);
 
     const receivedConnections = await db.prepare(`
@@ -459,6 +489,7 @@ router.get('/connections', async (req, res) => {
       LEFT JOIN profiles p ON br.sender_id = p.user_id
       JOIN trips t ON br.trip_id = t.id
       WHERE br.receiver_id = ? AND br.status = 'accepted'
+      AND br.archived_at IS NULL
     `).all(userId);
 
     const connections = [...sentConnections, ...receivedConnections].map(conn => ({
@@ -610,9 +641,14 @@ const handlePotentialMatches = async (req, res) => {
       : null;
 
     const blocked = await db.prepare(`
-      SELECT blocked_id FROM buddy_blocks WHERE blocker_id = ?
-    `).all(userId);
-    const blockedUsers = blocked.map(b => b.blocked_id);
+      SELECT CASE
+        WHEN blocker_id = ? THEN blocked_id
+        ELSE blocker_id
+      END AS blocked_user_id
+      FROM buddy_blocks
+      WHERE blocker_id = ? OR blocked_id = ?
+    `).all(userId, userId, userId);
+    const blockedUsers = blocked.map(b => b.blocked_user_id);
 
     const blockedClause = blockedUsers.length > 0
       ? `AND tb.user_id NOT IN (${blockedUsers.map(() => '?').join(',')})`
@@ -970,17 +1006,25 @@ router.post('/request', [
       return res.status(400).json({ error: 'Cannot send request to yourself' });
     }
 
+    if (await isBlockedBetweenUsers(senderId, recipientId)) {
+      return res.status(403).json({ error: 'Cannot send request to this user' });
+    }
+
     const existingRequest = await db.prepare(`
       SELECT id FROM buddy_requests 
-      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+      WHERE (
+        (sender_id = ? AND receiver_id = ?)
+        OR (sender_id = ? AND receiver_id = ?)
+      )
       AND status IN ('pending', 'accepted')
+      AND archived_at IS NULL
     `).get(senderId, recipientId, recipientId, senderId);
 
     if (existingRequest) {
       return res.status(400).json({ error: 'Request already exists' });
     }
 
-    await db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO buddy_requests (sender_id, receiver_id, trip_id, message, status)
       VALUES (?, ?, NULL, NULL, 'pending')
     `).run(senderId, recipientId);
@@ -1009,7 +1053,7 @@ router.post('/request/:id/accept', async (req, res) => {
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {
@@ -1048,7 +1092,7 @@ router.post('/request/:id/decline', async (req, res) => {
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {

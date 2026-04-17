@@ -208,6 +208,7 @@ async function initializeDatabase() {
         name TEXT,
         role TEXT DEFAULT 'user' CHECK(role IN ('user', 'viewer', 'admin')),
         is_premium BOOLEAN DEFAULT false,
+        is_flagged BOOLEAN DEFAULT false,
         subscription_tier TEXT DEFAULT 'free',
         stripe_customer_id TEXT,
         premium_expires_at TIMESTAMP,
@@ -1036,8 +1037,22 @@ async function initializeDatabase() {
         trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
         message TEXT,
         status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'declined', 'blocked')),
+        archived_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Buddy reports
+      CREATE TABLE IF NOT EXISTS buddy_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        details TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TIMESTAMP,
+        reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       );
 
       -- AI usage tracking
@@ -1348,9 +1363,9 @@ async function initializeDatabase() {
       
       -- Buddy block indexes
       CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocker ON buddy_blocks(blocker_id);
-      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter ON buddy_reports(reporter_id);
-      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported ON buddy_reports(reported_user_id);
-      CREATE INDEX IF NOT EXISTS idx_buddy_reports_status ON buddy_reports(status);
+      CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocked ON buddy_blocks(blocked_id);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported_status ON buddy_reports(reported_id, status);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter_created ON buddy_reports(reporter_id, created_at DESC);
 
       -- Buddy messages indexes
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON buddy_messages(conversation_id, created_at DESC);
@@ -2279,66 +2294,92 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
-  // --- Migration v028: Add gender_identity to profiles ---
-  if (!await hasMigration('v028_profiles_gender_identity')) {
+  // --- Migration v028: Buddy safety reports and connection archival ---
+  if (!await hasMigration('v028_buddy_safety')) {
     try {
       await pool.query(`
-        DO $$
-        BEGIN
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'gender_identity') THEN
-            ALTER TABLE profiles ADD COLUMN gender_identity TEXT;
-          END IF;
-        END $$;
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN DEFAULT false
       `);
-      logger.info('[Migration v028] profiles.gender_identity added');
+
+      await pool.query(`
+        ALTER TABLE buddy_requests
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS buddy_reports (
+          id SERIAL PRIMARY KEY,
+          reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          reason TEXT NOT NULL,
+          details TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          reviewed_at TIMESTAMP,
+          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+        )
+      `);
+
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported_status ON buddy_reports(reported_id, status)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter_created ON buddy_reports(reporter_id, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocked ON buddy_blocks(blocked_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_buddy_requests_archived_at ON buddy_requests(archived_at)`);
+
+      logger.info('[Migration v028] buddy safety schema applied');
     } catch (error) {
       logger.warn('[Migration v028] skipped:', error.message);
     }
-    await markMigration('v028_profiles_gender_identity');
+    await markMigration('v028_buddy_safety');
   }
 
-  // --- Migration v029: Add buddy_meetups and buddy_meetup_rsvps tables ---
-  if (!await hasMigration('v029_buddy_meetups')) {
+  // --- Migration v029: AI daily usage tracking + flight_status_cache + trip fields ---
+  if (!await hasMigration('v029_ai_daily_usage_and_flights')) {
     try {
+      // Per-day AI usage table for tier-based daily limits
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS buddy_meetups (
+        CREATE TABLE IF NOT EXISTS ai_usage_daily (
           id SERIAL PRIMARY KEY,
-          organizer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          title TEXT NOT NULL,
-          description TEXT,
-          destination TEXT NOT NULL,
-          location_name TEXT,
-          meetup_date TIMESTAMP NOT NULL,
-          max_attendees INTEGER DEFAULT 10,
-          is_public BOOLEAN DEFAULT true,
-          safety_notes TEXT,
-          status TEXT DEFAULT 'open',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS buddy_meetup_rsvps (
-          id SERIAL PRIMARY KEY,
-          meetup_id INTEGER NOT NULL REFERENCES buddy_meetups(id) ON DELETE CASCADE,
           user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          status TEXT DEFAULT 'going',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(meetup_id, user_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_meetups_organizer ON buddy_meetups(organizer_id);
-        CREATE INDEX IF NOT EXISTS idx_meetups_destination ON buddy_meetups(destination);
-        CREATE INDEX IF NOT EXISTS idx_meetups_date ON buddy_meetups(meetup_date);
-        CREATE INDEX IF NOT EXISTS idx_meetups_status ON buddy_meetups(status);
-        CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_meetup ON buddy_meetup_rsvps(meetup_id);
-        CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_user ON buddy_meetup_rsvps(user_id);
+          usage_date TEXT NOT NULL,
+          count INTEGER DEFAULT 0,
+          UNIQUE(user_id, usage_date)
+        )
       `);
-      logger.info('[Migration v029] buddy_meetups and buddy_meetup_rsvps tables created');
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_user_date ON ai_usage_daily(user_id, usage_date)`);
+
+      // Flight status cache table for poller (15-min TTL)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS flight_status_cache (
+          id SERIAL PRIMARY KEY,
+          flight_number TEXT NOT NULL,
+          flight_date TEXT NOT NULL,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+          status TEXT,
+          gate TEXT,
+          delay_minutes INTEGER DEFAULT 0,
+          terminal TEXT,
+          raw_data JSONB,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(flight_number, flight_date)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_flight_cache_number_date ON flight_status_cache(flight_number, flight_date)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_flight_cache_user ON flight_status_cache(user_id)`);
+
+      // Trip fields for auto-status and notifications
+      await pool.query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS reminder_24h_sent BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS safety_refreshed_at TIMESTAMP`);
+
+      // safety_refreshed_at on destinations for safety data refresh service
+      await pool.query(`ALTER TABLE destinations ADD COLUMN IF NOT EXISTS safety_refreshed_at TIMESTAMP`);
+
+      logger.info('[Migration v029] AI daily usage, flight cache, trip fields applied');
     } catch (error) {
       logger.warn('[Migration v029] skipped:', error.message);
     }
-    await markMigration('v029_buddy_meetups');
+    await markMigration('v029_ai_daily_usage_and_flights');
   }
 
   logger.info('[Migration] All migrations complete');

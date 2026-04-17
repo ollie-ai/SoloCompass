@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { sanitizeAll } from '../middleware/validate.js';
@@ -9,13 +10,27 @@ import logger from '../services/logger.js';
 
 const router = express.Router();
 
+const userReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const userWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Whitelist of allowed profile fields
 const ALLOWED_PROFILE_FIELDS = [
   'name', 'travel_style', 'bio', 'avatar_url', 'phone', 'home_city', 
   'interests', 'budget_level', 'pace', 'accommodation_type'
 ];
 
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', userReadLimiter, requireAuth, async (req, res) => {
   try {
     const { search, role, limit = 50, offset = 0, include_deleted } = req.query;
     const isAdmin = req.userRole === 'admin';
@@ -77,7 +92,7 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/me', requireAuth, async (req, res) => {
+router.get('/me', userReadLimiter, requireAuth, async (req, res) => {
   try {
     const user = await db.prepare(`
       SELECT u.id, u.email, u.name, u.role, u.created_at, u.updated_at, u.tour_seen,
@@ -104,7 +119,7 @@ router.get('/me', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/tour-seen', requireAuth, async (req, res) => {
+router.put('/tour-seen', userWriteLimiter, requireAuth, async (req, res) => {
   try {
     await db.prepare('UPDATE users SET tour_seen = true WHERE id = ?').run(req.userId);
     res.json({ success: true });
@@ -114,7 +129,7 @@ router.put('/tour-seen', requireAuth, async (req, res) => {
   }
 });
 
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', userReadLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.userRole === 'admin';
@@ -151,7 +166,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/:id', requireAuth, sanitizeAll(['name', 'bio', 'travel_style', 'phone', 'home_city']), async (req, res) => {
+router.put('/:id', userWriteLimiter, requireAuth, sanitizeAll(['name', 'bio', 'travel_style', 'phone', 'home_city']), async (req, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.userRole === 'admin';
@@ -254,7 +269,7 @@ router.put('/:id', requireAuth, sanitizeAll(['name', 'bio', 'travel_style', 'pho
   }
 });
 
-router.get('/:id/export', requireAuth, async (req, res) => {
+router.get('/:id/export', userReadLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const isAdmin = req.userRole === 'admin';
@@ -351,7 +366,7 @@ router.get('/:id/export', requireAuth, async (req, res) => {
   }
 });
 
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', userWriteLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { permanent } = req.query; // ?permanent=true for hard delete

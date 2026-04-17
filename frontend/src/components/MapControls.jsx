@@ -1,5 +1,6 @@
 import { Layers, LocateFixed, Plus, Minus } from 'lucide-react';
 import { useMap } from 'react-leaflet';
+import toast from 'react-hot-toast';
 
 const LAYERS = [
   { id: 'street', label: 'Street' },
@@ -14,10 +15,18 @@ export default function MapControls({ activeLayer = 'street', onLayerChange }) {
   const zoomOut = () => map.zoomOut();
 
   const locateMe = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition((position) => {
-      map.setView([position.coords.latitude, position.coords.longitude], Math.max(map.getZoom(), 13));
-    });
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported on this device.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        map.setView([position.coords.latitude, position.coords.longitude], Math.max(map.getZoom(), 13));
+      },
+      () => {
+        toast.error('Unable to access your location.');
+      }
+    );
   };
 
   return (

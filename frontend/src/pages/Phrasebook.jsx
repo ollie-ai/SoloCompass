@@ -29,7 +29,14 @@ export default function Phrasebook() {
   const loadPhrases = async (languageCode) => {
     try {
       const res = await api.get(`/emergency/phrases?language=${languageCode}`);
-      if (res.data?.success) setPhrases(res.data.data.phrases || {});
+      if (res.data?.success) {
+        const rawPhrases = res.data.data.phrases || {};
+        const normalized = Object.entries(rawPhrases).reduce((acc, [key, value]) => {
+          acc[String(key).trim().toLowerCase().replace(/\s+/g, '_')] = value;
+          return acc;
+        }, {});
+        setPhrases(normalized);
+      }
     } catch {
       setPhrases({});
     }
@@ -55,7 +62,7 @@ export default function Phrasebook() {
     }
   };
 
-  const rows = PHRASE_KEYS.map(({ key, label }) => ({ key, label, text: phrases?.[key] || phrases?.[label.toLowerCase()] || '...' }));
+  const rows = PHRASE_KEYS.map(({ key, label }) => ({ key, label, text: phrases?.[key] || '...' }));
 
   return (
     <div className="min-h-screen bg-base-100 pt-20 pb-12">

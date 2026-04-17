@@ -158,10 +158,15 @@ export default function TranslationTool() {
           <label className="block text-xs font-bold text-base-content/60 mb-3 uppercase">Recent</label>
           <div className="space-y-2">
             {history.map((item, i) => (
-              <div key={`${item.original}-${i}`} onClick={() => { setText(item.original); setTranslatedText(item.translated); setSourceLang(item.source); setTargetLang(item.target); }} className="p-3 bg-base-200 hover:bg-base-300 rounded-lg cursor-pointer transition-colors">
+              <button
+                type="button"
+                key={`${item.original}-${i}`}
+                onClick={() => { setText(item.original); setTranslatedText(item.translated); setSourceLang(item.source); setTargetLang(item.target); }}
+                className="w-full p-3 bg-base-200 hover:bg-base-300 rounded-lg cursor-pointer transition-colors text-left"
+              >
                 <p className="text-xs text-base-content/60">{item.original}</p>
                 <p className="text-sm font-medium text-base-content">{item.translated}</p>
-              </div>
+              </button>
             ))}
           </div>
         </div>

@@ -67,7 +67,14 @@ export default function BudgetChart({ data = [], currency = 'GBP', formatCurrenc
 
       {mode === 'pie' ? (
         <div className="flex flex-col sm:flex-row items-center gap-4">
-          <svg viewBox="0 0 120 120" className="w-40 h-40">
+          <svg
+            viewBox="0 0 120 120"
+            className="w-40 h-40"
+            role="img"
+            aria-label="Pie chart showing spending by category"
+          >
+            <title>Budget spending by category</title>
+            <desc>Distribution of total spending across budget categories.</desc>
             {pieArcs.map((slice) => (
               <path key={slice.key} d={arcPath(slice.start, slice.end)} fill={slice.color} />
             ))}
@@ -100,7 +107,16 @@ export default function BudgetChart({ data = [], currency = 'GBP', formatCurrenc
                 </span>
               </div>
               <div className="h-2 rounded-full bg-base-300 overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${Math.max(item.percent, 2)}%`, backgroundColor: item.color }} />
+                <div
+                  className="h-full rounded-full"
+                  role="progressbar"
+                  aria-label={`${item.label} spending`}
+                  aria-valuemin={0}
+                  aria-valuenow={Math.round(item.percent)}
+                  aria-valuemax={100}
+                  title={`${item.label}: ${item.percent.toFixed(1)}%`}
+                  style={{ width: `${Math.max(item.percent, 2)}%`, backgroundColor: item.color }}
+                />
               </div>
             </div>
           ))}

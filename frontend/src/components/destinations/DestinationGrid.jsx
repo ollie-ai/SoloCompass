@@ -5,10 +5,18 @@ export default function DestinationGrid({
 }) {
   if (!destinations.length) return null;
 
+  const getDestinationKey = (destination, index) => {
+    if (destination?.id) return `id-${destination.id}`;
+    if (destination?.slug) return `slug-${destination.slug}`;
+    if (destination?.name && destination?.country) return `${destination.name}-${destination.country}`;
+    if (destination?.name) return `name-${destination.name}`;
+    return `destination-${index}`;
+  };
+
   return (
     <div className={className}>
       {destinations.map((destination, index) => (
-        <div key={destination?.id || destination?.slug || `${destination?.name || 'destination'}-${index}`}>
+        <div key={getDestinationKey(destination, index)}>
           {renderCard ? renderCard(destination, index) : null}
         </div>
       ))}

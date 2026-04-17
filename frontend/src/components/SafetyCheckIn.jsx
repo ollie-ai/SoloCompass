@@ -198,7 +198,6 @@ export default function SafetyCheckIn({ tripId, onClose }) {
         : await api.post(endpoint, contactForm);
 
       if (response.data.success) {
-        triggerHaptic(checkInType === 'emergency' ? [200, 120, 200] : [45]);
         setSuccess(editingContact ? 'Contact updated!' : 'Contact added!');
         setShowContactForm(false);
         setEditingContact(null);
@@ -222,7 +221,6 @@ export default function SafetyCheckIn({ tripId, onClose }) {
     try {
       const response = await api.delete(`/emergency-contacts/${id}`);
       if (response.data.success) {
-        triggerHaptic(checkInType === 'emergency' ? [200, 120, 200] : [45]);
         setSuccess('Contact deleted');
         fetchData();
         setTimeout(() => setSuccess(null), 3000);
@@ -316,7 +314,6 @@ export default function SafetyCheckIn({ tripId, onClose }) {
       });
 
       if (response.data.success) {
-        triggerHaptic(checkInType === 'emergency' ? [200, 120, 200] : [45]);
         setSuccess('Scheduled check-in created!');
         setShowScheduledForm(false);
         setScheduledForm({
@@ -344,7 +341,6 @@ export default function SafetyCheckIn({ tripId, onClose }) {
     try {
       const response = await api.delete(`/checkin/scheduled/${id}`);
       if (response.data.success) {
-        triggerHaptic(checkInType === 'emergency' ? [200, 120, 200] : [45]);
         setSuccess('Scheduled check-in cancelled');
         fetchData();
         setTimeout(() => setSuccess(null), 3000);

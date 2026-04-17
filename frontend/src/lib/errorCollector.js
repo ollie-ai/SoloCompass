@@ -96,7 +96,7 @@ function enqueueError(error, type) {
   if (isDuplicate(normalized)) return;
 
   errorQueue.push(normalized);
-  trackFrontendError(new Error(normalized.message), normalized).catch?.(() => {});
+  trackFrontendError(new Error(normalized.message), normalized).catch(() => {});
 
   if (errorQueue.length >= BATCH_THRESHOLD) {
     flushQueue();
@@ -129,7 +129,7 @@ export function reportError(error, context = {}) {
   if (isDuplicate(normalized)) return;
 
   errorQueue.push(normalized);
-  trackFrontendError(new Error(normalized.message), normalized).catch?.(() => {});
+  trackFrontendError(new Error(normalized.message), normalized).catch(() => {});
 
   if (errorQueue.length >= BATCH_THRESHOLD) {
     flushQueue();

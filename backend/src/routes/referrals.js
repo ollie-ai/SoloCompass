@@ -1,11 +1,18 @@
 import express from 'express';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 
 const router = express.Router();
+const referralsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
-router.get('/me', requireAuth, async (req, res) => {
+router.get('/me', referralsLimiter, requireAuth, async (req, res) => {
   const referral = await db.prepare('SELECT code, invites, reward_points, updated_at FROM referrals WHERE user_id = ?').get(req.userId);
 
   if (!referral) {
@@ -25,7 +32,7 @@ router.get('/me', requireAuth, async (req, res) => {
   });
 });
 
-router.post('/claim', requireAuth, async (req, res) => {
+router.post('/claim', referralsLimiter, requireAuth, async (req, res) => {
   const { code } = req.body || {};
   if (!code) {
     return res.status(400).json({ success: false, error: 'Referral code is required' });

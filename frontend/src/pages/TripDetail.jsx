@@ -1,13 +1,11 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import api, { 
   getTripAccommodation, 
   createTripAccommodation, 
-  updateTripAccommodation, 
   deleteTripAccommodation,
   getTripBookings, 
   createTripBooking, 
-  updateTripBooking, 
   deleteTripBooking,
   getTripDocuments, 
   createTripDocument, 
@@ -17,41 +15,29 @@ import api, {
   updateTripPlace, 
   deleteTripPlace,
   exportTripPDF,
-  downloadTripDocument
+  downloadTripDocument,
+  shareTrip,
+  duplicateTrip
 } from '../lib/api';
 import toast from 'react-hot-toast';
 import { getErrorMessage } from '../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Button from '../components/Button';
-import Loading from '../components/Loading';
-import Skeleton from '../components/Skeleton';
 import { useAuthStore } from '../stores/authStore';
 import { trackEvent } from '../lib/telemetry';
 import { 
-  ArrowLeft, 
   MapPin, 
-  Calendar, 
-  PoundSterling, 
-  Clock, 
   Trash2, 
   Sparkles, 
-  Info, 
-  ChevronRight,
   Navigation,
   Utensils,
   Camera,
   Moon,
   Zap,
   Coffee,
-  CheckCircle2,
-  Printer,
   Download,
-  ExternalLink,
   ShieldCheck,
-  Package,
-  Wallet,
   Plus,
-  Edit2,
   Edit3,
   Loader2,
   X,
@@ -67,9 +53,10 @@ import {
   Home,
   Bed,
   File,
-  CreditCard,
   Armchair,
-  Users
+  Users,
+  ArrowLeft,
+  CheckCircle2
 } from 'lucide-react';
 import PackingList from '../components/PackingList';
 import BudgetTracker from '../components/BudgetTracker';
@@ -78,10 +65,11 @@ import FeatureGate from '../components/FeatureGate';
 import WeatherWidget from '../components/WeatherWidget';
 import CurrencyConverter from '../components/CurrencyConverter';
 import PlacesSearch from '../components/PlacesSearch';
-import TransitDirections from '../components/TransitDirections';
+import DirectionsPanel from '../components/DirectionsPanel';
 import AffiliateLinks from '../components/AffiliateLinks';
 import SafetyCheckIn from '../components/SafetyCheckIn';
 import SoloSafetyHub from '../components/SoloSafetyHub';
+import PlaceCard from '../components/PlaceCard';
 import { FEATURES } from '../config/features';
 // import TripItinerary from '../components/trip/TripItinerary';
 // import TripSidebar from '../components/trip/TripSidebar';
@@ -111,6 +99,11 @@ function TripDetail() {
   const [showVersions, setShowVersions] = useState(false);
   const [versions, setVersions] = useState([]);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
+  const [showShareTrip, setShowShareTrip] = useState(false);
+  const [shareLink, setShareLink] = useState(null);
+  const [sharing, setSharing] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const [editTripForm, setEditTripForm] = useState({
     name: '',
@@ -158,8 +151,8 @@ function TripDetail() {
     name: '',
     address: '',
     category: 'restaurant',
+    status: 'want_to_visit',
     notes: '',
-    visited: false
   });
   
   const [accommodations, setAccommodations] = useState([]);
@@ -167,6 +160,19 @@ function TripDetail() {
   const [documents, setDocuments] = useState([]);
   const [savedPlaces, setSavedPlaces] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
+
+  useEffect(() => {
+    if (!navigator?.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { maximumAge: 600000, timeout: 5000 }
+    );
+  }, []);
+
+  // ConfirmDialog state — action: 'delete_activity' | 'delete_accommodation' | 'delete_booking' | 'delete_document' | 'delete_place' | 'regenerate'
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, targetId: null });
 
   const handleExportPDF = async () => {
     setExporting(true);
@@ -191,6 +197,61 @@ function TripDetail() {
   const handleSafetyCheckIn = () => {
     setShowCheckIn(true);
   };
+
+  const handleShareTrip = async () => {
+    setSharing(true);
+    try {
+      const response = await shareTrip(id);
+      if (response.data?.shareUrl) {
+        const fullUrl = `${window.location.origin}${response.data.shareUrl}`;
+        setShareLink(fullUrl);
+        setShowShareTrip(true);
+        await navigator.clipboard.writeText(fullUrl);
+        toast.success('Share link copied to clipboard!');
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to create share link'));
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleDuplicateTrip = async () => {
+    setDuplicating(true);
+    try {
+      const response = await duplicateTrip(id);
+      if (response.data?.id) {
+        toast.success('Trip duplicated! Redirecting...');
+        navigate(`/trips/${response.data.id}`);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to duplicate trip'));
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  // Escape key to close all modals
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowPackingList(false);
+        setShowBudget(false);
+        setShowCheckIn(false);
+        setShowAccommodation(false);
+        setShowBookings(false);
+        setShowDocuments(false);
+        setShowPlaces(false);
+        setShowEditTrip(false);
+        setShowRegenerate(false);
+        setShowVersions(false);
+        setShowJournal(false);
+        setShowShareTrip(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     fetchTrip();
@@ -311,8 +372,11 @@ function TripDetail() {
 
   const handleRegenerateSubmit = async (e) => {
     e.preventDefault();
-    if (!confirm('This will replace your current itinerary. Are you sure?')) return;
-    
+    setConfirmDialog({ open: true, action: 'regenerate', targetId: null });
+  };
+
+  const executeRegenerate = async () => {
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
       setIsRegenerating(true);
       await api.post(`/trips/${id}/generate`, regenerateForm);
@@ -322,7 +386,7 @@ function TripDetail() {
       startPolling(id);
     } catch (error) {
       setIsRegenerating(false);
-      toast.success('Failed to start regeneration');
+      toast.error('Failed to start regeneration');
     }
   };
 
@@ -444,8 +508,13 @@ function TripDetail() {
     }
   };
 
-  const deleteActivity = async (activityId) => {
-    if (!confirm('Remove this activity from your plan?')) return;
+  const deleteActivity = (activityId) => {
+    setConfirmDialog({ open: true, action: 'delete_activity', targetId: activityId });
+  };
+
+  const executeDeleteActivity = async () => {
+    const activityId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
       await api.delete(`/trips/activities/${activityId}`);
       toast.success('Activity removed');
@@ -579,40 +648,55 @@ function TripDetail() {
         setSavedPlaces([...savedPlaces, response.data]);
         toast.success('Place saved');
       }
-      setPlaceForm({ name: '', address: '', category: 'restaurant', notes: '', visited: false });
+      setPlaceForm({ name: '', address: '', category: 'restaurant', status: 'want_to_visit', notes: '' });
       setShowPlaces(false);
     } catch (error) {
       toast.error('Failed to save place');
     }
   };
 
-  const deleteAccommodation = async (id) => {
-    if (!confirm('Remove this accommodation?')) return;
+  const deleteAccommodation = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_accommodation', targetId: id });
+  };
+
+  const executeDeleteAccommodation = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripAccommodation(id);
-      setAccommodations(accommodations.filter(a => a.id !== id));
+      await deleteTripAccommodation(targetId);
+      setAccommodations(accommodations.filter(a => a.id !== targetId));
       toast.success('Accommodation removed');
     } catch (error) {
       toast.error('Failed to delete accommodation');
     }
   };
 
-  const deleteBooking = async (id) => {
-    if (!confirm('Remove this booking?')) return;
+  const deleteBooking = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_booking', targetId: id });
+  };
+
+  const executeDeleteBooking = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripBooking(id);
-      setBookings(bookings.filter(b => b.id !== id));
+      await deleteTripBooking(targetId);
+      setBookings(bookings.filter(b => b.id !== targetId));
       toast.success('Booking removed');
     } catch (error) {
       toast.error('Failed to delete booking');
     }
   };
 
-  const deleteDocument = async (id) => {
-    if (!confirm('Remove this document?')) return;
+  const deleteDocument = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_document', targetId: id });
+  };
+
+  const executeDeleteDocument = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripDocument(id);
-      setDocuments(documents.filter(d => d.id !== id));
+      await deleteTripDocument(targetId);
+      setDocuments(documents.filter(d => d.id !== targetId));
       toast.success('Document removed');
     } catch (error) {
       toast.error('Failed to delete document');
@@ -641,23 +725,29 @@ function TripDetail() {
     }
   };
 
-  const deletePlace = async (id) => {
-    if (!confirm('Remove this place?')) return;
+  const deletePlace = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_place', targetId: id });
+  };
+
+  const executeDeletePlace = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripPlace(id);
-      setSavedPlaces(savedPlaces.filter(p => p.id !== id));
+      await deleteTripPlace(targetId);
+      setSavedPlaces(savedPlaces.filter(p => p.id !== targetId));
       toast.success('Place removed');
     } catch (error) {
       toast.error('Failed to delete place');
     }
   };
 
-  const togglePlaceVisited = async (id) => {
-    const place = savedPlaces.find(p => p.id === id);
+  const togglePlaceVisited = async (placeId) => {
+    const place = savedPlaces.find(p => p.id === placeId);
     if (!place) return;
+    const newStatus = place.status === 'visited' ? 'want_to_visit' : 'visited';
     try {
-      await updateTripPlace(id, { visited: !place.visited });
-      setSavedPlaces(savedPlaces.map(p => p.id === id ? { ...p, visited: !p.visited } : p));
+      await updateTripPlace(placeId, { status: newStatus });
+      setSavedPlaces(savedPlaces.map(p => p.id === placeId ? { ...p, status: newStatus } : p));
     } catch (error) {
       toast.error('Failed to update place');
     }
@@ -712,32 +802,41 @@ function TripDetail() {
     }
   };
 
-  const getStatusStyle = (status) => {
-    switch (status) {
-      case 'completed': return 'bg-success/20 text-success border-success/30';
-      case 'confirmed': return 'bg-sky-100 text-info border-info/30';
-      case 'cancelled': return 'bg-red-100 text-error border-error/30';
-      default: return 'bg-warning/20 text-warning border-warning/30';
-    }
-  };
-
-  const getActivityIcon = (type) => {
-    switch (type) {
-      case 'Sightseeing': return <Camera size={18} />;
-      case 'Food & Dining': return <Utensils size={18} />;
-      case 'Transport': return <Navigation size={18} />;
-      case 'Adventure': return <Zap size={18} />;
-      case 'Cultural': return <Info size={18} />;
-      case 'Relaxation': return <Coffee size={18} />;
-      case 'Nightlife': return <Moon size={18} />;
-      default: return <MapPin size={18} />;
-    }
-  };
-
   const totalActivities = trip?.itinerary?.reduce((sum, day) => sum + (day.activities?.length || 0), 0) || 0;
   const totalCost = trip?.itinerary?.reduce((sum, day) => 
     sum + (day.activities?.reduce((daySum, act) => daySum + Number(act.cost || 0), 0) || 0), 0
   ) || 0;
+
+  // Trip countdown
+  const getCountdown = () => {
+    if (!trip?.start_date) return null;
+    const start = new Date(trip.start_date);
+    const now = new Date();
+    const end = trip?.end_date ? new Date(trip.end_date) : null;
+    if (end && now > end) return { label: 'Completed', days: 0, past: true };
+    if (now >= start && end && now <= end) return { label: 'Travelling now!', days: 0, active: true };
+    const diff = Math.ceil((start - now) / (1000 * 60 * 60 * 24));
+    if (diff < 0) return { label: 'Completed', days: 0, past: true };
+    if (diff === 0) return { label: 'Departs today!', days: 0, today: true };
+    return { label: `${diff} day${diff !== 1 ? 's' : ''} to go`, days: diff };
+  };
+
+  // Planning completeness
+  const getPlanningProgress = () => {
+    if (!trip) return 0;
+    let score = 0;
+    let total = 6;
+    if (trip.name) score++;
+    if (trip.destination) score++;
+    if (trip.start_date && trip.end_date) score++;
+    if (trip.budget) score++;
+    if (trip.itinerary?.length > 0) score++;
+    if (trip.notes) score++;
+    return Math.round((score / total) * 100);
+  };
+
+  const countdown = getCountdown();
+  const planningProgress = getPlanningProgress();
 
   const handleAddFlightToTrip = async (flight) => {
     try {
@@ -782,102 +881,122 @@ function TripDetail() {
     );
   }
 
+  // Central dispatcher for confirmed destructive actions
+  const handleConfirmAction = () => {
+    switch (confirmDialog.action) {
+      case 'regenerate': return executeRegenerate();
+      case 'delete_activity': return executeDeleteActivity();
+      case 'delete_accommodation': return executeDeleteAccommodation();
+      case 'delete_booking': return executeDeleteBooking();
+      case 'delete_document': return executeDeleteDocument();
+      case 'delete_place': return executeDeletePlace();
+      default: setConfirmDialog({ open: false, action: null, targetId: null });
+    }
+  };
+
+  const CONFIRM_CONFIGS = {
+    regenerate: {
+      title: 'Regenerate Itinerary?',
+      description: 'This will replace your current itinerary with a new AI-generated one. This cannot be undone.',
+      confirmLabel: 'Yes, Regenerate',
+      variant: 'warning',
+    },
+    delete_activity: {
+      title: 'Remove Activity?',
+      description: 'This activity will be permanently removed from your itinerary.',
+      confirmLabel: 'Remove Activity',
+      variant: 'danger',
+    },
+    delete_accommodation: {
+      title: 'Remove Accommodation?',
+      description: 'This accommodation entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_booking: {
+      title: 'Remove Booking?',
+      description: 'This booking entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_document: {
+      title: 'Remove Document?',
+      description: 'This document entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_place: {
+      title: 'Remove Saved Place?',
+      description: 'This place will be removed from your saved places.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+  };
+
+  const activeConfirmConfig = confirmDialog.action ? CONFIRM_CONFIGS[confirmDialog.action] : null;
+
   return (
+    <>
+    <ConfirmDialog
+      open={confirmDialog.open}
+      onConfirm={handleConfirmAction}
+      onCancel={() => setConfirmDialog({ open: false, action: null, targetId: null })}
+      title={activeConfirmConfig?.title}
+      description={activeConfirmConfig?.description}
+      confirmLabel={activeConfirmConfig?.confirmLabel}
+      variant={activeConfirmConfig?.variant || 'danger'}
+    />
     <div className="max-w-6xl mx-auto px-4 py-12 animate-fade-in pb-32">
-      {/* Breadcrumbs & Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
-        <div className="space-y-4">
-          <Link to="/trips" className="group flex items-center gap-2 text-base-content/40 hover:text-base-content font-bold transition-colors">
-            <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" /> Back to Trips
-          </Link>
-          
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-4">
-              <h1 className="text-4xl font-black text-base-content tracking-tight">{trip?.name}</h1>
-              <button 
-                onClick={() => setShowEditTrip(true)}
-                className="p-2 text-base-content/20 hover:text-brand-vibrant hover:bg-brand-vibrant/5 rounded-xl transition-all"
-                title="Edit Trip Details"
-              >
-                <Edit3 size={20} />
-              </button>
-            </div>
-            
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 px-3 py-1 bg-base-100 border border-base-content/10 rounded-full shadow-sm">
-                <MapPin size={14} className="text-brand-vibrant" />
-                <span className="text-sm font-bold text-base-content/60">{trip?.destination}</span>
-              </div>
-              
-              <div className="flex items-center gap-2 px-3 py-1 bg-base-100 border border-base-content/10 rounded-full shadow-sm">
-                <Calendar size={14} className="text-indigo-500" />
-                <span className="text-sm font-bold text-base-content/60">
-                  {trip?.start_date ? new Date(trip.start_date).toLocaleDateString() : 'TBD'} - {trip?.end_date ? new Date(trip.end_date).toLocaleDateString() : 'TBD'}
-                </span>
-              </div>
-
-              <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border shadow-sm ${getStatusStyle(trip?.status)}`}>
-                {trip?.status}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button 
-            onClick={() => setShowRegenerate(true)}
-            variant="outline" 
-            className="rounded-xl font-bold border-brand-vibrant/30 text-brand-vibrant hover:bg-brand-vibrant/5 shadow-sm"
-          >
-            <Zap size={18} className="mr-2" /> Regenerate
-          </Button>
-          {trip?.itinerary?.length > 0 && (
-            <Button 
-              onClick={() => setShowVersions(true)}
-              variant="outline" 
-              className="rounded-xl font-bold border-base-content/10 shadow-sm text-base-content/60"
-            >
-              <Loader2 size={18} className="mr-2" /> Versions
-            </Button>
-          )}
-          <Button 
-            onClick={handleExportPDF}
-            disabled={exporting}
-            variant="outline" 
-            className="rounded-xl font-bold border-base-content/10 shadow-sm text-base-content/60"
-          >
-            {exporting ? <Loader2 size={18} className="animate-spin mr-2" /> : <Download size={18} className="mr-2" />} Export PDF
-          </Button>
-          <Button 
-            onClick={handleSafetyCheckIn}
-            className="rounded-xl font-black bg-brand-vibrant hover:bg-brand-vibrant/90 shadow-xl shadow-brand-vibrant/20"
-          >
-            <ShieldCheck size={18} className="mr-2" /> Safety Check-in
-          </Button>
-        </div>
-      </div>
+      <TripHeader
+        trip={trip}
+        exporting={exporting}
+        onExportPDF={handleExportPDF}
+        onSafetyCheckIn={handleSafetyCheckIn}
+        onShowRegenerate={() => setShowRegenerate(true)}
+        onShowVersions={() => setShowVersions(true)}
+        onShowEditTrip={() => setShowEditTrip(true)}
+      />
 
       <style>{`
         @page { size: A4 portrait; margin: 20mm; }
         @media print {
-          .no-print, nav, header, footer, aside, .glass-card button, .btn-premium { display: none !important; }
+          .no-print, nav, header, footer, aside, .glass-card button, .btn-premium, [class*="BottomNav"], [class*="fixed"] { display: none !important; }
           .max-w-6xl { max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
           body { background: white !important; font-size: 11pt; padding: 0 !important; }
-          .glass-card { border: 1px solid #ddd !important; box-shadow: none !important; break-inside: avoid; }
+          .glass-card { border: 1px solid #ddd !important; box-shadow: none !important; break-inside: avoid; page-break-inside: avoid; }
+          .grid { display: block !important; }
+          .lg\\:col-span-2 { width: 100% !important; }
           h1, h2, h3, h4 { color: black !important; }
           .text-brand-vibrant { color: #10b981 !important; }
           .text-base-content { color: #0f172a !important; }
+          .space-y-12 > * + * { page-break-before: auto; }
+          a[href]:after { content: none !important; }
         }
       `}</style>
 
       <div className="grid lg:grid-cols-3 gap-10">
-        {/* Sidebar Info */}
-        <div className="space-y-8 no-print">
-          <SoloSafetyHub 
-            trip={trip} 
-            contacts={contacts} 
-            onOpenContacts={() => setShowDocuments(true)} // Assuming contacts are managed in documents or separate modal
-            onOpenTimer={() => setShowCheckIn(true)}
+        <div className="no-print">
+          <TripSidebar
+            trip={trip}
+            loading={loading}
+            generating={generating}
+            totalCost={totalCost}
+            totalActivities={totalActivities}
+            accommodations={accommodations}
+            bookings={bookings}
+            documents={documents}
+            savedPlaces={savedPlaces}
+            contacts={contacts}
+            tripId={id}
+            onGenerateItinerary={generateItinerary}
+            onAddFlightToTrip={handleAddFlightToTrip}
+            setShowPackingList={setShowPackingList}
+            setShowBudget={setShowBudget}
+            setShowAccommodation={setShowAccommodation}
+            setShowBookings={setShowBookings}
+            setShowDocuments={setShowDocuments}
+            setShowPlaces={setShowPlaces}
+            setShowCheckIn={setShowCheckIn}
           />
           {trip?.destination && <WeatherWidget city={trip.destination} />}
           <div className="glass-card p-8 rounded-xl shadow-xl">
@@ -1055,10 +1174,10 @@ function TripDetail() {
              <PlacesSearch destination={trip?.destination} />
            </div>
 
-           {/* Transit Directions */}
-           <div className="mt-6">
-             <TransitDirections destination={trip?.destination} />
-           </div>
+            {/* Transit Directions */}
+            <div className="mt-6">
+              <DirectionsPanel destination={trip?.destination} />
+            </div>
 
            {/* Affiliate Links */}
            <div className="mt-6">
@@ -1068,20 +1187,20 @@ function TripDetail() {
 
         <AnimatePresence>
           {generating && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[100] bg-brand-deep/80 backdrop-blur-xl flex items-center justify-center p-6"
             >
-              <motion.div 
+              <motion.div
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 className="max-w-md w-full bg-base-100 p-10 rounded-xl shadow-2xl text-center relative overflow-hidden border border-base-content/10"
               >
                 <div className="absolute top-0 left-0 w-full h-1.5 bg-base-300">
-                  <motion.div 
-                    className="h-full bg-brand-vibrant" 
+                  <motion.div
+                    className="h-full bg-brand-vibrant"
                     initial={{ width: "0%" }}
                     animate={{ width: "100%" }}
                     transition={{ duration: 30, ease: "linear" }}
@@ -1109,220 +1228,53 @@ function TripDetail() {
                 </div>
 
                 <div className="mt-10 flex flex-col gap-3">
-{steps.map((step, i) => (
-                      <div key={`step-${step.title}`} className="flex items-center gap-3">
-                        <div className={`w-2 h-2 rounded-full ${i <= genStep ? 'bg-brand-vibrant shadow-lg shadow-brand-vibrant/50' : 'bg-base-300'}`} />
-                        <span className={`text-xs font-bold ${i <= genStep ? 'text-base-content' : 'text-base-content/20'}`}>{step.title}</span>
-                        {i === genStep && <span className="ml-auto text-[10px] font-black text-brand-vibrant animate-pulse">Processing...</span>}
-                     </div>
-                   ))}
+                  {steps.map((step, i) => (
+                    <div key={`step-${step.title}`} className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${i <= genStep ? 'bg-brand-vibrant shadow-lg shadow-brand-vibrant/50' : 'bg-base-300'}`} />
+                      <span className={`text-xs font-bold ${i <= genStep ? 'text-base-content' : 'text-base-content/20'}`}>{step.title}</span>
+                      {i === genStep && <span className="ml-auto text-[10px] font-black text-brand-vibrant animate-pulse">Processing...</span>}
+                    </div>
+                  ))}
                 </div>
-                
+
                 <p className="mt-8 text-[10px] font-black uppercase tracking-widest text-base-content/40">Solo Mission Blueprinting v2.4</p>
               </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Itinerary Timeline */}
-        <div className="lg:col-span-2">
-          {loading ? (
-            <div className="space-y-12">
-{[1,2,3].map(i => (
-                  <div key={`skeleton-${i}`} className="relative pl-8 border-l-2 border-base-content/10 pb-4">
-                    <div className="absolute -left-3 top-0 w-6 h-6 rounded-full bg-base-300 border-2 border-base-100"></div>
-                    <Skeleton className="h-10 w-48 mb-8" />
-                    <div className="space-y-4">
-                       <Skeleton className="h-40 w-full rounded-xl" />
-                       <Skeleton className="h-40 w-full rounded-xl" />
-                    </div>
-                 </div>
-               ))}
-            </div>
-          ) : trip.itinerary && trip.itinerary.length > 0 ? (
-            <div className="space-y-12">
-              <div className="flex items-center justify-between px-2">
-                <h2 className="text-2xl font-black text-base-content">Daily Roadmap</h2>
-                <div className="flex items-center gap-2 text-sm font-bold text-base-content/40">
-                  <CheckCircle2 size={16} className="text-emerald-500" /> Generated by AI
-                </div>
-              </div>
-
-              {trip.itinerary.map((day, dIdx) => (
-                <div key={day.id} className="relative pl-8 border-l-2 border-base-content/10 pb-4">
-                  {/* Day Marker */}
-                  <div className="absolute -left-3 top-0 w-6 h-6 rounded-full bg-base-100 border-2 border-brand-vibrant z-10 flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-brand-vibrant"></div>
-                  </div>
-                  
-                  <div className="mb-8">
-                     <h3 className="text-2xl font-black text-base-content flex items-baseline gap-3">
-                       Day {day.day_number}
-                      {day.date && <span className="text-sm font-bold text-base-content/40">— {new Date(day.date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</span>}
-                     </h3>
-                     <div className="flex items-center gap-4 mt-2">
-                        {day.notes && <p className="text-brand-accent font-bold text-sm italic">{day.notes}</p>}
-                        <button 
-                           onClick={() => openAddActivity(day.id)}
-                           className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-base-200 text-base-content/60 hover:bg-brand-vibrant hover:text-white text-[10px] font-black uppercase tracking-widest transition-all"
-                        >
-                           <Plus size={12} /> Add Activity
-                        </button>
-                     </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {day.activities?.length > 0 ? (
-                      day.activities.map((activity, aIdx) => (
-                        <div key={activity.id} className="group relative glass-card p-6 rounded-xl border border-base-content/5 hover:border-brand-vibrant/20 hover:shadow-xl hover:shadow-brand-vibrant/5 transition-all">
-                          <div className="flex flex-col md:flex-row gap-6">
-                             <div className="w-12 h-12 rounded-xl bg-base-200 flex items-center justify-center text-base-content group-hover:bg-brand-vibrant group-hover:text-white transition-colors flex-shrink-0">
-                                {getActivityIcon(activity.type)}
-                             </div>
-                             
-                             <div className="flex-1 space-y-2">
-                                <div className="flex justify-between items-start">
-                                   <div>
-                                      <div className="flex items-center gap-3">
-                                         <h4 className="text-xl font-extrabold text-base-content leading-none">{activity.name}</h4>
-                                         <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-base-200 text-base-content/60">{activity.type}</span>
-                                      </div>
-                                      <p className="text-sm font-bold text-base-content/40 mt-1 flex items-center gap-1">
-                                        <MapPin size={14} /> {activity.location}
-                                      </p>
-                                   </div>
-                                   <div className="text-right flex-shrink-0">
-                                      <p className="text-sm font-black text-base-content">{activity.time || 'Flexible'}</p>
-                                      {activity.duration_hours && <p className="text-xs font-bold text-base-content/40">{activity.duration_hours}h duration</p>}
-                                   </div>
-                                </div>
-                                
-                                {activity.description && (
-                                  <p className="text-sm text-base-content/70 font-medium leading-relaxed">{activity.description}</p>
-                                )}
-                                
-                                <div className="flex flex-wrap items-center gap-4 pt-2">
-                                   {activity.cost > 0 && (
-                                     <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-success/10 text-success text-xs font-black">
-                                       <PoundSterling size={12} /> {activity.cost}
-                                     </div>
-                                   )}
-                                   <a 
-                                      href={`https://www.google.com/maps/search/${encodeURIComponent(activity.name + ' ' + activity.location)}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-xs font-black text-brand-vibrant hover:underline flex items-center gap-1"
-                                    >
-                                      <MapPin size={12} /> View
-                                    </a>
-                                    <a 
-                                       href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activity.name + ' ' + (activity.location || ''))}`}
-                                       target="_blank"
-                                       rel="noreferrer"
-                                       className="text-xs font-black text-blue-500 hover:underline flex items-center gap-1"
-                                     >
-                                       <Navigation size={12} /> Directions
-                                     </a>
-                                    {(activity.type === 'Food & Dining' || activity.type === 'Accommodation') && (
-                                      <a 
-                                        href={`https://www.booking.com/search.html?ss=${encodeURIComponent(activity.name + ' ' + (activity.location || trip.destination))}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-xs font-black text-blue-600 hover:underline flex items-center gap-1"
-                                      >
-                                        <ExternalLink size={12} /> Book Stay
-                                      </a>
-                                    )}
-                                    {activity.type !== 'Transport' && activity.type !== 'Food & Dining' && (
-                                      <a 
-                                        href={`https://www.viator.com/search?q=${encodeURIComponent(activity.name)}&location=${encodeURIComponent(trip.destination)}&pid=${import.meta.env.VITE_VIATOR_PID || ''}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-xs font-black text-[#ff5900] hover:underline flex items-center gap-1"
-                                      >
-                                        <ExternalLink size={12} /> Book Tour on Viator
-                                      </a>
-                                    )}
-                                   {activity.bookingInfo && (
-                                      <div className="text-xs font-bold text-base-content/40 flex items-center gap-1">
-                                        <Clock size={12} /> {activity.bookingInfo}
-                                      </div>
-                                   )}
-                                </div>
-                             </div>
-
-                             <div className="flex md:flex-col items-center justify-end gap-2 pr-2">
-                                <button 
-                                  onClick={() => openEditActivity(activity)}
-                                  className="p-2 text-base-content/20 hover:text-brand-vibrant hover:bg-base-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                  title="Edit Activity"
-                                >
-                                   <Edit2 size={18} />
-                                </button>
-                                <button 
-                                  onClick={() => deleteActivity(activity.id)}
-                                  className="p-2 text-base-content/20 hover:text-error hover:bg-base-100 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                  title="Remove Activity"
-                                >
-                                   <Trash2 size={18} />
-                                </button>
-                             </div>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="p-10 border-2 border-dashed border-base-content/5 rounded-xl flex flex-col items-center justify-center text-center">
-                         <MapPin size={32} className="text-base-content/10 mb-4" />
-                         <p className="text-base-content/40 font-bold">No activities fixed for this day yet.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="h-full min-h-[500px] flex flex-col items-center justify-center glass-card rounded-xl p-12 text-center">
-               <div className="w-20 h-20 bg-base-200 rounded-xl flex items-center justify-center mb-8 border border-base-content/10">
-                 <Zap size={40} className="text-base-content/20" />
-               </div>
-               <h3 className="text-2xl font-black text-base-content mb-2">Roadmap is Empty</h3>
-               <p className="text-base-content/60 font-medium max-w-sm mx-auto mb-10 text-lg">
-                 Your itinerary hasn't been designed. Use the AI engine in the sidebar to create your perfect solo trip.
-               </p>
-               <Button 
-                onClick={generateItinerary} 
-                disabled={generating}
-                variant="primary" 
-                className="rounded-xl px-12 py-4 font-black btn-premium shadow-2xl"
-               >
-                 {generating ? 'Processing DNA...' : 'Start AI Generation'}
-               </Button>
-            </div>
-          )}
-        </div>
+        <TripMainContent
+          trip={trip}
+          loading={loading}
+          generating={generating}
+          onEditActivity={openEditActivity}
+          onDeleteActivity={deleteActivity}
+          onAddActivity={openAddActivity}
+          onGenerate={generateItinerary}
+        />
       </div>
 
       {/* Add/Edit Activity Modal */}
       {(editingActivity || showAddActivity) && (
         <div className="fixed inset-0 z-[110] bg-brand-deep/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="w-full max-w-xl bg-base-100 rounded-xl shadow-2xl overflow-hidden border border-base-content/10"
           >
             <div className="p-8 border-b border-base-content/5 flex items-center justify-between bg-base-200/50">
-               <div>
-                 <h3 className="text-2xl font-black text-base-content">
-                   {editingActivity ? 'Edit Activity' : 'Add Activity'}
-                 </h3>
-                 <p className="text-sm text-base-content/40 font-medium italic">Refine your solo mission blueprint</p>
-               </div>
-               <button 
-                 onClick={() => { setEditingActivity(null); setShowAddActivity(false); }}
-                 className="w-10 h-10 rounded-xl bg-base-100 shadow-sm border border-base-content/10 flex items-center justify-center text-base-content/40 hover:text-base-content transition-all"
-               >
-                 <X size={20} />
-               </button>
+              <div>
+                <h3 className="text-2xl font-black text-base-content">
+                  {editingActivity ? 'Edit Activity' : 'Add Activity'}
+                </h3>
+                <p className="text-sm text-base-content/40 font-medium italic">Refine your solo mission blueprint</p>
+              </div>
+              <button
+                onClick={() => { setEditingActivity(null); setShowAddActivity(false); }}
+                className="w-10 h-10 rounded-xl bg-base-100 shadow-sm border border-base-content/10 flex items-center justify-center text-base-content/40 hover:text-base-content transition-all"
+              >
+                <X size={20} />
+              </button>
             </div>
 
             <form onSubmit={handleActivitySubmit} className="p-8 space-y-6">
@@ -1919,44 +1871,21 @@ function TripDetail() {
               </button>
             </div>
             <div className="p-8 space-y-6">
+              {savedPlaces.length > 0 && (
+                <div className="mb-6">
+                  <PlaceMap places={savedPlaces} />
+                </div>
+              )}
               {savedPlaces.length > 0 ? (
                 <div className="space-y-4">
                   {savedPlaces.map(place => (
-                    <div key={place.id} className="glass-card p-6 rounded-xl border border-base-content/5 hover:shadow-lg transition-all">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-4">
-                          <button 
-                            onClick={() => togglePlaceVisited(place.id)}
-                            className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${place.visited ? 'bg-success/20 text-success' : 'bg-violet-50 text-violet-600 hover:bg-violet-100'}`}
-                          >
-                            {place.visited ? <CheckCircle2 size={24} /> : getPlaceIcon(place.category)}
-                          </button>
-                          <div>
-                            <h4 className={`text-lg font-black ${place.visited ? 'text-base-content/40 line-through' : 'text-base-content'}`}>{place.name}</h4>
-                            {place.address && (
-                              <p className="text-sm text-base-content/40 font-medium flex items-center gap-1 mt-1">
-                                <MapPin size={14} /> {place.address}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-violet-100 text-violet-700">{place.category}</span>
-                              {place.visited && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-success/20 text-success">Visited</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => deletePlace(place.id)}
-                          className="p-2 text-base-content/20 hover:text-error hover:bg-error/10 rounded-lg transition-all"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                      {place.notes && (
-                        <div className="mt-4 pt-4 border-t border-base-content/5">
-                          <p className="text-sm text-base-content/60 font-medium">{place.notes}</p>
-                        </div>
-                      )}
-                    </div>
+                    <PlaceCard
+                      key={place.id}
+                      place={place}
+                      userLocation={userLocation}
+                      onToggleVisited={() => togglePlaceVisited(place.id)}
+                      onDelete={() => deletePlace(place.id)}
+                    />
                   ))}
                 </div>
               ) : (
@@ -2000,6 +1929,19 @@ function TripDetail() {
                       <option value="bar">Bar</option>
                       <option value="shop">Shop</option>
                       <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-base-content/40 mb-2">Status</label>
+                    <select
+                      value={placeForm.status || 'want_to_visit'}
+                      onChange={e => setPlaceForm({...placeForm, status: e.target.value})}
+                      className="w-full px-4 py-3 rounded-xl border border-base-content/10 bg-base-100 focus:ring-2 focus:ring-violet-500 outline-none font-bold text-base-content"
+                    >
+                      <option value="want_to_visit">Want to Visit</option>
+                      <option value="planned">Planned</option>
+                      <option value="visited">Visited</option>
+                      <option value="skipped">Skipped</option>
                     </select>
                   </div>
                   <div className="md:col-span-2">
@@ -2265,7 +2207,55 @@ function TripDetail() {
           </div>
         </div>
       )}
+
+      {/* Journal Modal */}
+      {showJournal && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-base-100 rounded-3xl shadow-2xl overflow-hidden relative">
+            <TripJournal tripId={id} tripName={trip?.name} onClose={() => setShowJournal(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Share Trip Modal */}
+      {showShareTrip && shareLink && (
+        <div className="fixed inset-0 z-[200] bg-brand-deep/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShowShareTrip(false)}>
+          <div className="w-full max-w-md bg-base-100 rounded-3xl shadow-2xl overflow-hidden relative border border-base-content/10 p-8 animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-brand-vibrant/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Share2 className="text-brand-vibrant" size={32} />
+              </div>
+              <h2 className="text-2xl font-black text-base-content mb-2">Share Your Trip</h2>
+              <p className="text-sm text-base-content/60 font-medium">Anyone with this link can view your itinerary (expires in 7 days)</p>
+            </div>
+            <div className="flex items-center gap-2 p-3 bg-base-200 rounded-xl border border-base-content/10">
+              <input
+                type="text"
+                value={shareLink}
+                readOnly
+                className="flex-1 bg-transparent text-sm font-bold text-base-content outline-none truncate"
+              />
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(shareLink);
+                  toast.success('Link copied!');
+                }}
+                className="p-2 text-brand-vibrant hover:bg-brand-vibrant/10 rounded-lg transition-colors flex-shrink-0"
+              >
+                <CopyIcon size={18} />
+              </button>
+            </div>
+            <button
+              onClick={() => setShowShareTrip(false)}
+              className="w-full mt-6 py-3 rounded-xl font-bold text-base-content/60 hover:bg-base-200 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   );
 }
 

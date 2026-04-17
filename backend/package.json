@@ -7,7 +7,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --coverage"
+    "test:coverage": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --coverage",
+    "seed": "node seed.js"
   },
   "dependencies": {
     "@infisical/sdk": "^5.0.0",
@@ -33,8 +34,11 @@
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "pg-pool": "^3.13.0",
+    "qrcode": "^1.5.4",
     "resend": "^6.9.4",
     "sanitize-html": "^2.13.0",
+    "sharp": "^0.34.1",
+    "speakeasy": "^2.0.0",
     "stripe": "^21.0.1",
     "twilio": "^5.13.1",
     "uuid": "^13.0.0",

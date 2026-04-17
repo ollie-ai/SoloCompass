@@ -405,6 +405,116 @@ const DEFAULT_TEMPLATES = [
     subject: '',
     body: '✅ {{travelerName}} has checked in safely from {{destination}}. Location: {{location}}. All clear!',
     variables: ['travelerName', 'destination', 'location']
+  },
+  {
+    type: 'email',
+    notification_type: 'booking_confirmation',
+    subject: 'Booking Confirmed: {{bookingType}} for {{tripName}}',
+    body: `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>SoloCompass</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; padding: 20px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <tr><td style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SoloCompass</h1>
+          <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">Your AI Solo Travel Companion</p>
+        </td></tr>
+        <tr><td style="padding: 32px 24px;">
+          <h2 style="color: #1e293b; margin: 0 0 16px 0; font-size: 24px;">Booking Confirmed ✅</h2>
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hi {{name}}, your <strong>{{bookingType}}</strong> booking for <strong>{{tripName}}</strong> has been added.</p>
+          <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px; margin: 0 0 24px 0;">
+            <p style="color: #1e293b; font-size: 14px; font-weight: 600; margin: 0 0 12px 0;">Booking Details</p>
+            <p style="color: #64748b; font-size: 14px; margin: 0;"><strong>Type:</strong> {{bookingType}}</p>
+            <p style="color: #64748b; font-size: 14px; margin: 6px 0 0 0;"><strong>Provider:</strong> {{provider}}</p>
+            <p style="color: #64748b; font-size: 14px; margin: 6px 0 0 0;"><strong>From:</strong> {{departureLocation}}</p>
+            <p style="color: #64748b; font-size: 14px; margin: 6px 0 0 0;"><strong>To:</strong> {{arrivalLocation}}</p>
+            <p style="color: #64748b; font-size: 14px; margin: 6px 0 0 0;"><strong>Departure:</strong> {{departureDate}}</p>
+            {{#if confirmationNumber}}<p style="color: #64748b; font-size: 14px; margin: 6px 0 0 0;"><strong>Reference:</strong> {{confirmationNumber}}</p>{{/if}}
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding: 20px 0;">
+            <a href="{{tripUrl}}" style="background-color: #10b981; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block;">View Booking in App</a>
+          </td></tr></table>
+          <p style="color: #94a3b8; font-size: 13px; margin: 24px 0 0 0;">Keep your confirmation number safe — you may need it when travelling.</p>
+        </td></tr>
+        <tr><td style="background-color: #f1f5f9; padding: 24px; text-align: center;">
+          <p style="margin: 0; font-size: 12px; color: #94a3b8;">© {{year}} SoloCompass. All rights reserved.</p>
+          <p style="margin: 8px 0 0 0; font-size: 12px; color: #94a3b8;"><a href="{{unsubscribeUrl}}" style="color: #94a3b8; text-decoration: underline;">Unsubscribe</a> from emails</p>
+        </td></tr>
+      </table></td></tr>
+  </table>
+</body>
+</html>`,
+    variables: ['name', 'tripName', 'bookingType', 'provider', 'departureLocation', 'arrivalLocation', 'departureDate', 'confirmationNumber', 'tripUrl', 'year', 'unsubscribeUrl']
+  },
+  {
+    type: 'email',
+    notification_type: 'support_ticket_reply',
+    subject: 'New Reply to Your Support Ticket #{{ticketId}}',
+    body: `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>SoloCompass Support</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; padding: 20px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <tr><td style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SoloCompass Support</h1>
+        </td></tr>
+        <tr><td style="padding: 32px 24px;">
+          <h2 style="color: #1e293b; margin: 0 0 16px 0; font-size: 24px;">New Reply on Ticket #{{ticketId}} 💬</h2>
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hi {{name}}, the support team has replied to your ticket: <strong>{{ticketSubject}}</strong>.</p>
+          <div style="background-color: #f8fafc; border-left: 4px solid #6366f1; border-radius: 4px; padding: 16px; margin: 0 0 24px 0;">
+            <p style="color: #1e293b; font-size: 14px; font-weight: 600; margin: 0 0 8px 0;">Reply from {{replierName}}:</p>
+            <p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0;">{{replyContent}}</p>
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding: 20px 0;">
+            <a href="{{ticketUrl}}" style="background-color: #6366f1; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block;">View Full Conversation</a>
+          </td></tr></table>
+        </td></tr>
+        <tr><td style="background-color: #f1f5f9; padding: 24px; text-align: center;">
+          <p style="margin: 0; font-size: 12px; color: #94a3b8;">© {{year}} SoloCompass. All rights reserved.</p>
+        </td></tr>
+      </table></td></tr>
+  </table>
+</body>
+</html>`,
+    variables: ['name', 'ticketId', 'ticketSubject', 'replierName', 'replyContent', 'ticketUrl', 'year']
+  },
+  {
+    type: 'email',
+    notification_type: 'support_ticket_status_change',
+    subject: 'Your Support Ticket #{{ticketId}} Status Update',
+    body: `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>SoloCompass Support</title></head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; padding: 20px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <tr><td style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SoloCompass Support</h1>
+        </td></tr>
+        <tr><td style="padding: 32px 24px;">
+          <h2 style="color: #1e293b; margin: 0 0 16px 0; font-size: 24px;">Ticket Status Updated 📋</h2>
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">Hi {{name}}, your ticket <strong>{{ticketSubject}}</strong> (#{{ticketId}}) has been updated.</p>
+          <div style="background-color: #f8fafc; border-radius: 8px; padding: 20px; margin: 0 0 24px 0;">
+            <p style="color: #64748b; font-size: 14px; margin: 0;"><strong>Previous Status:</strong> {{oldStatus}}</p>
+            <p style="color: #64748b; font-size: 14px; margin: 8px 0 0 0;"><strong>New Status:</strong> <span style="font-weight: 700; color: #10b981;">{{newStatus}}</span></p>
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding: 20px 0;">
+            <a href="{{ticketUrl}}" style="background-color: #6366f1; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; display: inline-block;">View Ticket</a>
+          </td></tr></table>
+        </td></tr>
+        <tr><td style="background-color: #f1f5f9; padding: 24px; text-align: center;">
+          <p style="margin: 0; font-size: 12px; color: #94a3b8;">© {{year}} SoloCompass. All rights reserved.</p>
+        </td></tr>
+      </table></td></tr>
+  </table>
+</body>
+</html>`,
+    variables: ['name', 'ticketId', 'ticketSubject', 'oldStatus', 'newStatus', 'ticketUrl', 'year']
   }
 ];
 
@@ -423,21 +533,20 @@ const TEMPLATE_PREVIEW_VARS = {
   payment_failed: { name: 'Alex', amount: '$9.99', failureReason: 'Card expired', paymentUrl: 'https://solocompass.app/settings/billing' },
   checkin_reminder: { name: 'Alex', destination: 'Tokyo, Japan', checkinUrl: 'https://solocompass.app/safety/checkin' },
   sos_alert: { travelerName: 'Alex Johnson', destination: 'Tokyo, Japan', lastLocation: 'Shinjuku Station', emergencyContact: 'Sarah' },
-  safe_checkin_sent: { travelerName: 'Alex Johnson', destination: 'Tokyo, Japan', location: 'Shibuya, Tokyo' }
+  safe_checkin_sent: { travelerName: 'Alex Johnson', destination: 'Tokyo, Japan', location: 'Shibuya, Tokyo' },
+  booking_confirmation: { name: 'Alex', tripName: 'Tokyo Adventure', bookingType: 'Flight', provider: 'JAL', departureLocation: 'London Heathrow', arrivalLocation: 'Tokyo Narita', departureDate: 'April 15, 2026 10:30', confirmationNumber: 'JL406-ABC123', tripUrl: 'https://solocompass.app/trips/123', year: '2026', unsubscribeUrl: 'https://solocompass.app/settings?tab=notifications' },
+  support_ticket_reply: { name: 'Alex', ticketId: '42', ticketSubject: 'Cannot access my trip', replierName: 'Support Team', replyContent: 'Thank you for reaching out. We have investigated and your trip is now accessible. Please try refreshing the page.', ticketUrl: 'https://solocompass.app/support/tickets/42', year: '2026' },
+  support_ticket_status_change: { name: 'Alex', ticketId: '42', ticketSubject: 'Cannot access my trip', oldStatus: 'open', newStatus: 'resolved', ticketUrl: 'https://solocompass.app/support/tickets/42', year: '2026' }
 };
 
 async function initializeDefaultTemplates() {
   try {
-    const existingCount = await db.get('SELECT COUNT(*) as count FROM notification_templates');
-    if (existingCount && existingCount.count > 0) {
-      logger.info('[NotificationTemplateService] Templates already exist, skipping initialization');
-      return;
-    }
-
-    logger.info('[NotificationTemplateService] Initializing default templates...');
+    logger.info('[NotificationTemplateService] Ensuring default templates exist...');
     for (const template of DEFAULT_TEMPLATES) {
       await db.run(
-        `INSERT INTO notification_templates (type, notification_type, subject, body, variables, is_active) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO notification_templates (type, notification_type, subject, body, variables, is_active)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (notification_type, type) DO NOTHING`,
         template.type,
         template.notification_type,
         template.subject || '',
@@ -446,7 +555,7 @@ async function initializeDefaultTemplates() {
         true
       );
     }
-    logger.info('[NotificationTemplateService] Default templates initialized');
+    logger.info('[NotificationTemplateService] Default templates ensured');
   } catch (error) {
     logger.error('[NotificationTemplateService] Failed to initialize templates:', error.message);
   }

@@ -3,6 +3,29 @@ import crypto from 'crypto';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
+// ── RBAC role name mapping ────────────────────────────────────────────────────
+// Internal DB role values are 'user', 'viewer', 'admin'.
+// The spec (and UI) uses the display names 'Explorer', 'Navigator', 'Admin'.
+// Use this map wherever you need to surface a human-readable tier label.
+export const ROLE_DISPLAY_NAMES = {
+  user: 'Explorer',
+  viewer: 'Navigator',
+  admin: 'Admin',
+};
+
+// Inverse lookup: display name → internal role value
+export const DISPLAY_NAME_TO_ROLE = Object.fromEntries(
+  Object.entries(ROLE_DISPLAY_NAMES).map(([k, v]) => [v, k])
+);
+
+/**
+ * Returns the display name for an internal role.
+ * Falls back to the raw role value so existing code never breaks.
+ */
+export const getRoleDisplayName = (role) => ROLE_DISPLAY_NAMES[role] ?? role;
+
+export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
+
 // Lazy secret accessor - exported for use in other modules
 export const getJWTSecret = () => {
   const secret = process.env.JWT_SECRET;
@@ -41,10 +64,55 @@ const validateSession = async (userId, sessionId) => {
   }
 };
 
+const normalizeIp = (ip = '') => ip.replace(/^::ffff:/, '');
+
+const enforceAdminSessionSecurity = async (req, res) => {
+  const allowlistRaw = process.env.ADMIN_IP_ALLOWLIST || '';
+  const allowlist = allowlistRaw
+    .split(',')
+    .map((entry) => normalizeIp(entry.trim()))
+    .filter(Boolean);
+
+  if (allowlist.length > 0) {
+    const requestIp = normalizeIp(req.headers['x-forwarded-for']?.split(',')?.[0] || req.ip || '');
+    if (!allowlist.includes(requestIp)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_IP_RESTRICTED', message: 'Admin access is not allowed from this IP address' }
+      });
+    }
+  }
+
+  const shouldRequire2FA = process.env.ADMIN_REQUIRE_2FA !== 'false';
+  if (!shouldRequire2FA) {
+    return null;
+  }
+
+  try {
+    const adminUser = await db.get('SELECT is_2fa_enabled FROM users WHERE id = ?', req.userId);
+    if (!adminUser?.is_2fa_enabled) {
+      return res.status(428).json({
+        success: false,
+        error: { code: 'ADMIN_2FA_REQUIRED', message: 'Admin account must enable 2FA before accessing admin routes' }
+      });
+    }
+  } catch (error) {
+    logger.error(`[Auth] Failed admin security check: ${error.message}`);
+    return res.status(503).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Unable to verify admin security requirements' }
+    });
+  }
+
+  return null;
+};
+
 export const authenticate = async (req, res, next) => {
   const token = req.cookies?.token || req.headers.authorization?.replace('Bearer ', '');
   
   if (!token) {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+    logger.warn(`[Auth] 401 UNAUTHORIZED - no token | IP: ${ip} | ${req.method} ${req.originalUrl}`);
     return res.status(401).json({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Not authenticated' }
@@ -65,6 +133,8 @@ export const authenticate = async (req, res, next) => {
     if (isSessionValidationEnabled()) {
       const isValidSession = await validateSession(decoded.userId, decoded.sid);
       if (!isValidSession) {
+        const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+        logger.warn(`[Auth] 401 SESSION_EXPIRED | user: ${decoded.userId} | IP: ${ip} | ${req.method} ${req.originalUrl}`);
         return res.status(401).json({
           success: false,
           error: { code: 'SESSION_EXPIRED', message: 'Session expired or invalid' }
@@ -88,12 +158,14 @@ export const authenticate = async (req, res, next) => {
     req.user = decoded;
     next();
   } catch (error) {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     if (error instanceof Error && error.message.includes('JWT_SECRET')) {
       return res.status(500).json({
         success: false,
         error: { code: 'INTERNAL_ERROR', message: 'Security not initialized' }
       });
     }
+    logger.warn(`[Auth] 401 INVALID_TOKEN | IP: ${ip} | UA: ${req.headers['user-agent'] || 'unknown'} | ${req.method} ${req.originalUrl}`);
     return res.status(401).json({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Invalid token' }
@@ -102,7 +174,7 @@ export const authenticate = async (req, res, next) => {
 };
 
 export const requireAuth = authenticate;
-export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
+export const VALID_USER_ROLES = ['user', 'viewer', 'admin', 'support_agent'];
 
 // Admin role levels: 'support', 'moderator', 'super_admin'
 // All admin roles have basic admin access
@@ -110,21 +182,94 @@ export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
 export const requireAdmin = async (req, res, next) => {
   await authenticate(req, res, () => {
     if (req.userRole !== 'admin') {
+      const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+      logger.warn(`[Auth] 403 FORBIDDEN - admin required | user: ${req.userId} | IP: ${ip} | ${req.method} ${req.originalUrl}`);
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Admin access required' }
       });
     }
-    // Grant basic admin access - specific permissions checked separately
-    req.adminLevel = req.user?.admin_level || 'support';
-    next();
+    (async () => {
+      try {
+        const securityRejection = await enforceAdminSessionSecurity(req, res);
+        if (securityRejection) return;
+        // Grant basic admin access - specific permissions checked separately
+        req.adminLevel = req.user?.admin_level || 'support';
+        next();
+      } catch (error) {
+        logger.error(`[Auth] requireAdmin error: ${error.message}`);
+        return res.status(500).json({
+          success: false,
+          error: { code: 'INTERNAL_ERROR', message: 'Failed admin authorization' }
+        });
+      }
+    })();
   });
+};
+
+const parseClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  const candidate = Array.isArray(forwarded) ? forwarded[0] : (forwarded?.split(',')[0] || req.ip || req.connection?.remoteAddress || '');
+  return String(candidate).trim().replace('::ffff:', '');
+};
+
+const parseAllowlist = (value) => {
+  if (!value || typeof value !== 'string') return [];
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+};
+
+export const requireAdminSessionSecurity = async (req, res, next) => {
+  try {
+    if (req.userRole !== 'admin') {
+      return next();
+    }
+
+    const user = await db.get('SELECT id, two_factor_enabled FROM users WHERE id = ?', req.userId);
+    const twoFactorRequired = process.env.ADMIN_2FA_REQUIRED !== 'false';
+    if (twoFactorRequired && !user?.two_factor_enabled) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_2FA_REQUIRED', message: 'Admin account requires 2FA before admin access is allowed.' }
+      });
+    }
+
+    const envAllowlist = parseAllowlist(process.env.ADMIN_IP_ALLOWLIST);
+    let activeAllowlist = envAllowlist;
+    if (!activeAllowlist.length) {
+      const config = await db.get('SELECT config_value FROM system_config WHERE config_key = ?', 'admin_ip_allowlist');
+      activeAllowlist = parseAllowlist(config?.config_value);
+    }
+
+    const ip = parseClientIp(req);
+    if (activeAllowlist.length && !activeAllowlist.includes(ip)) {
+      logger.warn(`[Auth] Blocked admin IP ${ip} for user ${req.userId}`);
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ADMIN_IP_NOT_ALLOWED', message: 'Your IP is not in the admin allowlist.' }
+      });
+    }
+
+    await db.run(
+      'UPDATE users SET admin_last_login_ip = ?, admin_last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ip, req.userId
+    );
+
+    next();
+  } catch (error) {
+    logger.error(`[Auth] Admin session security check failed: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'ADMIN_SECURITY_CHECK_FAILED', message: 'Failed to validate admin session security' }
+    });
+  }
 };
 
 // Super admin only - can access sensitive operations
 export const requireSuperAdmin = async (req, res, next) => {
   await authenticate(req, res, () => {
     if (req.userRole !== 'admin') {
+      const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+      logger.warn(`[Auth] 403 FORBIDDEN - super_admin required | user: ${req.userId} | IP: ${ip} | ${req.method} ${req.originalUrl}`);
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Admin access required' }
@@ -132,6 +277,8 @@ export const requireSuperAdmin = async (req, res, next) => {
     }
     const adminLevel = req.user?.admin_level || 'support';
     if (adminLevel !== 'super_admin') {
+      const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+      logger.warn(`[Auth] 403 INSUFFICIENT_PERMISSIONS - super_admin required | user: ${req.userId} | level: ${adminLevel} | IP: ${ip} | ${req.method} ${req.originalUrl}`);
       return res.status(403).json({
         success: false,
         error: { code: 'INSUFFICIENT_PERMISSIONS', message: 'Super admin access required' }
@@ -167,6 +314,22 @@ export const requireViewerOrAbove = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Viewer access required' }
+      });
+    }
+    next();
+  });
+};
+
+/**
+ * Support agent — can read tickets, post replies, and update ticket status.
+ * Accepts both the dedicated `support_agent` role and any admin role.
+ */
+export const requireSupportAgent = async (req, res, next) => {
+  await authenticate(req, res, () => {
+    if (req.userRole !== 'support_agent' && req.userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Support agent access required' }
       });
     }
     next();
@@ -248,7 +411,7 @@ export const generateToken = (user, sessionId = null) => {
   return jwt.sign(
     payload,
     secret,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
   );
 };
 
@@ -259,7 +422,7 @@ export const generateRefreshToken = (user) => {
   return jwt.sign(
     { userId: user.id, type: 'refresh' },
     secret,
-    { expiresIn: '30d' }
+    { expiresIn: '7d' }
   );
 };
 

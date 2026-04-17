@@ -9,6 +9,7 @@ import {
   testWebhook,
   VALID_EVENTS
 } from '../services/webhookService.js';
+import { handleEmailWebhook } from '../services/notificationLogger.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
@@ -150,6 +151,27 @@ router.get('/events', (req, res) => {
       description: getEventDescription(event)
     }))
   });
+});
+
+// Resend email delivery webhooks (no auth — called by Resend servers)
+router.post('/email', async (req, res) => {
+  try {
+    const event = req.body;
+    if (!event || !event.type) {
+      return res.status(400).json({ success: false, error: 'Invalid webhook payload' });
+    }
+
+    const result = await handleEmailWebhook(event);
+    if (!result.success) {
+      logger.error('[EmailWebhook] Processing failed:', result.error);
+      return res.status(500).json({ success: false, error: 'Webhook processing failed' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('[EmailWebhook] Route error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
 });
 
 function getEventDescription(event) {

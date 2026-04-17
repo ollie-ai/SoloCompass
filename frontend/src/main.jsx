@@ -1,8 +1,27 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { ErrorBoundary } from 'react-error-boundary'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import App from './App.jsx'
+import { I18nProvider } from './i18n/I18nProvider'
+import { trackFrontendError } from './lib/errorTracking'
 import './index.css'
+import { reportWebVitals } from './hooks/useWebVitals.js'
+
+// Bootstrap Google Analytics using the Vite env variable (resolved at build time)
+const gaId = import.meta.env.VITE_GA_ID;
+if (gaId) {
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = `https://www.googletagmanager.com/gtag/js?id=${gaId}`;
+  document.head.appendChild(script);
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { window.dataLayer.push(arguments); }
+  window.gtag = gtag;
+  gtag('js', new Date());
+  gtag('config', gaId);
+}
 
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
@@ -38,16 +57,30 @@ function ErrorFallback({ error, resetErrorBoundary }) {
   )
 }
 
+// Inject Vercel Analytics script in production (consent-free, no PII collected)
+if (import.meta.env.PROD) {
+  const va = document.createElement('script');
+  va.defer = true;
+  va.src   = '/_vercel/insights/script.js';
+  document.head.appendChild(va);
+}
+
 // Hide main content initially to prevent FOUC
 document.getElementById('main-content')?.classList.add('visible');
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ErrorBoundary
-      FallbackComponent={ErrorFallback}
-      onReset={() => window.location.reload()}
-    >
-      <App />
-    </ErrorBoundary>
+    <I18nProvider>
+      <ErrorBoundary
+        FallbackComponent={ErrorFallback}
+        onReset={() => window.location.reload()}
+        onError={(error, info) => trackFrontendError(error, { componentStack: info?.componentStack })}
+      >
+        <App />
+      </ErrorBoundary>
+    </I18nProvider>
   </React.StrictMode>,
 )
+
+// Start observing Core Web Vitals (production only, non-blocking)
+reportWebVitals();

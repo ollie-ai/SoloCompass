@@ -5,7 +5,7 @@
 -- ============================================
 -- Table: accommodations
 -- ============================================
-CREATE TABLE accommodations (
+CREATE TABLE IF NOT EXISTS accommodations (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -23,7 +23,7 @@ CREATE TABLE accommodations (
 -- ============================================
 -- Table: bookings
 -- ============================================
-CREATE TABLE bookings (
+CREATE TABLE IF NOT EXISTS bookings (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -44,7 +44,7 @@ CREATE TABLE bookings (
 -- ============================================
 -- Table: trip_documents
 -- ============================================
-CREATE TABLE trip_documents (
+CREATE TABLE IF NOT EXISTS trip_documents (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -60,7 +60,7 @@ CREATE TABLE trip_documents (
 -- ============================================
 -- Table: trip_places
 -- ============================================
-CREATE TABLE trip_places (
+CREATE TABLE IF NOT EXISTS trip_places (
     id SERIAL PRIMARY KEY,
     trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -76,7 +76,7 @@ CREATE TABLE trip_places (
 -- ============================================
 -- Indexes
 -- ============================================
-CREATE INDEX idx_accommodations_trip ON accommodations(trip_id);
-CREATE INDEX idx_bookings_trip ON bookings(trip_id);
-CREATE INDEX idx_trip_documents_trip ON trip_documents(trip_id);
-CREATE INDEX idx_trip_places_trip ON trip_places(trip_id);
+CREATE INDEX IF NOT EXISTS idx_accommodations_trip ON accommodations(trip_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_trip ON bookings(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_documents_trip ON trip_documents(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_places_trip ON trip_places(trip_id);

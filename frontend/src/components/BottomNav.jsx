@@ -158,6 +158,8 @@ const BottomNav = () => {
         animate={{ y: isVisible ? 0 : 100 }}
         exit={{ y: 100 }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        role="navigation"
+        aria-label="Bottom navigation"
         className="fixed bottom-0 left-0 right-0 z-50 lg:hidden pb-[env(safe-area-inset-bottom,0px)]"
       >
         <div className="bg-base-100/95 backdrop-blur-xl border-t border-base-300/80 shadow-[0_-8px_30px_rgba(0,0,0,0.1)]">

@@ -69,6 +69,11 @@ export function initWebSocketServer(server) {
         if (message.type === 'call_end') {
           await handleCallEnd(ws.userId, message.callId);
         }
+
+        // Settings sync across devices (P3)
+        if (message.type === 'settings_update') {
+          handleSettingsSync(ws.userId, ws, message);
+        }
       } catch (err) {
         logger.error(`[WebSocket] Message error: ${err.message}`);
       }
@@ -135,6 +140,43 @@ export function broadcastToUsers(userIds, message) {
   userIds.forEach((userId) => broadcastToUser(userId, message));
 }
 
+/**
+ * Settings sync across devices (P3)
+ * When a user updates settings on one device, broadcast to all other connected devices
+ */
+function handleSettingsSync(userId, senderWs, message) {
+  const clients = userClients.get(userId);
+  if (!clients || clients.size <= 1) return;
+
+  const payload = JSON.stringify({
+    type: 'settings_sync',
+    section: message.section, // e.g. 'privacy', 'units', 'notifications', 'accessibility'
+    data: message.data,
+    updatedAt: new Date().toISOString(),
+  });
+
+  clients.forEach((ws) => {
+    // Send to all devices EXCEPT the one that made the change
+    if (ws !== senderWs && ws.readyState === 1) {
+      ws.send(payload);
+    }
+  });
+
+  logger.info(`[WebSocket] Settings sync broadcast for user ${userId} (section: ${message.section})`);
+}
+
+/**
+ * Broadcast a settings change to all user devices (called from API routes)
+ */
+export function broadcastSettingsUpdate(userId, section, data) {
+  broadcastToUser(userId, {
+    type: 'settings_sync',
+    section,
+    data,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 async function handleCheckinConfirm(userId, scheduledCheckInId) {
   try {
     const sci = await db.prepare(`
@@ -197,6 +239,102 @@ export function getWebSocketServer() {
 }
 
 export { userClients };
+
+async function isBlockedBetweenUsers(userA, userB) {
+  const blocked = await db.prepare(`
+    SELECT id
+    FROM buddy_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+    LIMIT 1
+  `).get(userA, userB, userB, userA);
+  return !!blocked;
+}
+
+async function getConversationParticipants(conversationId) {
+  return db.prepare(`
+    SELECT id, participant_a, participant_b
+    FROM buddy_conversations
+    WHERE id = ?
+    LIMIT 1
+  `).get(conversationId);
+}
+
+async function handleRealtimeMessageSend(userId, payload) {
+  if (!userId) return;
+
+  const conversationId = parseInt(payload?.conversationId, 10);
+  const content = typeof payload?.content === 'string' ? payload.content.trim() : '';
+  const messageType = payload?.messageType || 'text';
+
+  if (!conversationId || !content) {
+    return;
+  }
+
+  const conversation = await getConversationParticipants(conversationId);
+  if (!conversation) return;
+  if (conversation.participant_a !== userId && conversation.participant_b !== userId) return;
+
+  const otherUserId = conversation.participant_a === userId ? conversation.participant_b : conversation.participant_a;
+  if (await isBlockedBetweenUsers(userId, otherUserId)) {
+    broadcastToUser(userId, {
+      type: 'error',
+      code: 'BLOCKED',
+      message: 'Messaging is disabled for blocked users'
+    });
+    return;
+  }
+
+  const result = await db.prepare(`
+    INSERT INTO buddy_messages (conversation_id, sender_id, content, message_type)
+    VALUES (?, ?, ?, ?)
+  `).run(conversationId, userId, content, messageType);
+
+  await db.prepare(`
+    UPDATE buddy_conversations
+    SET last_message_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(conversationId);
+
+  const saved = await db.prepare(`
+    SELECT 
+      bm.id,
+      bm.conversation_id AS "conversationId",
+      bm.sender_id AS "senderId",
+      bm.content,
+      bm.message_type AS "messageType",
+      bm.is_read AS "isRead",
+      bm.created_at AS "createdAt"
+    FROM buddy_messages bm
+    WHERE bm.id = ?
+    LIMIT 1
+  `).get(result.lastInsertRowid);
+
+  broadcastToUsers([conversation.participant_a, conversation.participant_b], {
+    type: 'message:received',
+    conversationId,
+    message: saved
+  });
+}
+
+async function handleRealtimeTyping(userId, type, rawConversationId) {
+  if (!userId) return;
+  const conversationId = parseInt(rawConversationId, 10);
+  if (!conversationId) return;
+
+  const conversation = await getConversationParticipants(conversationId);
+  if (!conversation) return;
+  if (conversation.participant_a !== userId && conversation.participant_b !== userId) return;
+
+  const otherUserId = conversation.participant_a === userId ? conversation.participant_b : conversation.participant_a;
+  if (await isBlockedBetweenUsers(userId, otherUserId)) return;
+
+  broadcastToUser(otherUserId, {
+    type,
+    conversationId,
+    userId
+  });
+}
 
 async function handleCallInvite(userId, message) {
   try {

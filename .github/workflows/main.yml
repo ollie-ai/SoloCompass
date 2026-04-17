@@ -1,0 +1,23 @@
+name: Main — Orchestrate CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  backend-ci:
+    uses: ./.github/workflows/backend.yml
+    secrets: inherit
+
+  frontend-ci:
+    uses: ./.github/workflows/frontend.yml
+    secrets: inherit
+
+  migrate:
+    needs: [backend-ci]
+    uses: ./.github/workflows/migration.yml
+    secrets: inherit

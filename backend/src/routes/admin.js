@@ -1,6 +1,6 @@
 import express from 'express';
 import { previewEmail, sendCustomEmail, getEmailTemplates, sendTestEmail } from '../services/email.js';
-import { requireAuth, requireAdmin, requireSuperAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireSuperAdmin, requireAdminSessionSecurity } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import researchService from '../services/researchService.js';
@@ -15,7 +15,7 @@ import {
 } from '../services/notificationTemplateService.js';
 
 // Chain auth + admin check for all admin routes
-const adminGuard = [requireAuth, requireAdmin];
+const adminGuard = [requireAuth, requireAdmin, requireAdminSessionSecurity];
 
 const router = express.Router();
 
@@ -105,10 +105,18 @@ router.post('/emails/test', ...adminGuard, async (req, res) => {
   }
 });
 
-router.get('/analytics/overview', ...adminGuard, async (req, res) => {
+const PLAN_PRICES_GBP = {
+  explorer: 0,
+  guardian: 4.99,
+  navigator: 9.99,
+};
+
+const getAnalyticsOverview = async (req, res) => {
   try {
     const period = req.query.period || '30d';
-    const days = parseInt(period) || 30;
+    const daysMatch = String(period).match(/\d+/);
+    const days = Math.max(1, Math.min(365, parseInt(daysMatch?.[0] || '30', 10)));
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     let totalUsers = { count: 0 };
     let activeTrips = { count: 0 };
@@ -118,6 +126,15 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
     let popularDestinations = [];
     let usersLast30Days = { count: 0 };
     let usersLast60Days = { count: 0 };
+    let usersTimeSeries = [];
+    let tripsTimeSeries = [];
+    let engagementTimeSeries = [];
+    let topEvents = [];
+    let activeUsers7d = { count: 0 };
+    let activeUsers30d = { count: 0 };
+    let activityEvents = { count: 0 };
+    let revenueByTier = [];
+    let paidUsers = { count: 0 };
 
     try {
       const totalUsersRes = await db.get('SELECT COUNT(*) as count FROM users');
@@ -150,6 +167,17 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
     } catch (e) { logger.warn('[Admin] Subscription stats failed:', e.message); subscriptionStats = []; }
 
     try {
+      revenueByTier = await db.all(`
+        SELECT COALESCE(LOWER(subscription_tier), 'explorer') as tier, COUNT(*)::int as users
+        FROM users
+        GROUP BY COALESCE(LOWER(subscription_tier), 'explorer')
+      `);
+      if (!Array.isArray(revenueByTier)) revenueByTier = [];
+      const paidUsersRes = await db.get(`SELECT COUNT(*) as count FROM users WHERE is_premium = true`);
+      paidUsers = paidUsersRes || { count: 0 };
+    } catch (e) { logger.warn('[Admin] Revenue breakdown failed:', e.message); }
+
+    try {
       popularDestinations = await db.all(`
         SELECT destination as name, COUNT(*) as trip_count FROM trips
         GROUP BY destination ORDER BY trip_count DESC LIMIT 10
@@ -166,9 +194,75 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
       usersLast60Days = u60 || { count: 0 };
     } catch (e) { logger.warn('[Admin] User growth stats failed:', e.message); }
 
+    try {
+      usersTimeSeries = await db.all(`
+        SELECT DATE(created_at) as day, COUNT(*)::int as value
+        FROM users
+        WHERE created_at >= ?
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(usersTimeSeries)) usersTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] User time series failed:', e.message); usersTimeSeries = []; }
+
+    try {
+      tripsTimeSeries = await db.all(`
+        SELECT DATE(created_at) as day, COUNT(*)::int as value
+        FROM trips
+        WHERE created_at >= ?
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(tripsTimeSeries)) tripsTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] Trip time series failed:', e.message); tripsTimeSeries = []; }
+
+    try {
+      engagementTimeSeries = await db.all(`
+        SELECT DATE(timestamp) as day, COUNT(*)::int as events, COUNT(DISTINCT user_id)::int as active_users
+        FROM events
+        WHERE timestamp >= ?
+        GROUP BY DATE(timestamp)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(engagementTimeSeries)) engagementTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] Engagement time series failed:', e.message); engagementTimeSeries = []; }
+
+    try {
+      topEvents = await db.all(`
+        SELECT event_name, COUNT(*)::int as count
+        FROM events
+        WHERE timestamp >= ?
+        GROUP BY event_name
+        ORDER BY count DESC
+        LIMIT 8
+      `, sinceDate);
+      if (!Array.isArray(topEvents)) topEvents = [];
+      const a7 = await db.get(`SELECT COUNT(DISTINCT user_id) as count FROM events WHERE timestamp >= ?`, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      const a30 = await db.get(`SELECT COUNT(DISTINCT user_id) as count FROM events WHERE timestamp >= ?`, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+      const ev = await db.get(`SELECT COUNT(*) as count FROM events WHERE timestamp >= ?`, sinceDate);
+      activeUsers7d = a7 || { count: 0 };
+      activeUsers30d = a30 || { count: 0 };
+      activityEvents = ev || { count: 0 };
+    } catch (e) { logger.warn('[Admin] Engagement metrics failed:', e.message); }
+
     const churnRate = usersLast60Days.count > 0
       ? Math.max(0, ((usersLast60Days.count - usersLast30Days.count) / usersLast60Days.count) * 100)
       : 0;
+
+    // Daily new user signups for the selected period (for the bar chart)
+    let newUsersByDay = [];
+    try {
+      const dateFilter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const rows = await db.all(
+        `SELECT DATE(created_at) as day, COUNT(*) as count
+         FROM users
+         WHERE created_at >= ?
+         GROUP BY DATE(created_at)
+         ORDER BY day ASC`,
+        dateFilter
+      );
+      newUsersByDay = Array.isArray(rows) ? rows.map(r => ({ day: r.day, count: r.count || 0 })) : [];
+    } catch (e) { logger.warn('[Admin] newUsersByDay query failed:', e.message); }
 
     res.json({
       success: true,
@@ -190,6 +284,8 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
           tripCount: d.trip_count
         })) : [],
         churnRate: Math.round(churnRate * 10) / 10,
+        newUsersLastPeriod: usersLast30Days.count || 0,
+        newUsersByDay,
         period: `${days}d`
       }
     });
@@ -197,12 +293,157 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
     logger.error(`[Admin] Analytics overview failed: ${error.message}`);
     res.status(500).json({ error: 'Failed to get analytics overview' });
   }
+};
+
+router.get('/analytics', ...adminGuard, getAnalyticsOverview);
+router.get('/analytics/overview', ...adminGuard, getAnalyticsOverview);
+
+/**
+ * GET /api/admin/analytics/revenue
+ * Dedicated revenue breakdown endpoint: MRR by tier, paid user counts, churn rate.
+ */
+router.get('/analytics/revenue', ...adminGuard, async (req, res) => {
+  try {
+    const PLAN_PRICES = { explorer: 0, guardian: 4.99, navigator: 9.99 };
+
+    const [revenueByTier, paidUsersRow, totalUsersRow, recentSignupsRow] = await Promise.all([
+      db.all(`
+        SELECT COALESCE(LOWER(subscription_tier), 'explorer') AS tier,
+               COUNT(*)::int AS users
+        FROM users
+        GROUP BY COALESCE(LOWER(subscription_tier), 'explorer')
+      `).catch(() => []),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE is_premium = true`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE created_at >= ?`, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).catch(() => ({ count: 0 })),
+    ]);
+
+    const tiers = (Array.isArray(revenueByTier) ? revenueByTier : []).map((row) => {
+      const tier = String(row.tier || 'explorer').toLowerCase();
+      const users = Number(row.users || 0);
+      const unitPrice = PLAN_PRICES[tier] ?? 0;
+      return { tier, users, unitPrice, mrr: Number((users * unitPrice).toFixed(2)) };
+    }).sort((a, b) => b.mrr - a.mrr);
+
+    const estimatedMrr = tiers.reduce((sum, r) => sum + r.mrr, 0);
+
+    res.json({
+      success: true,
+      data: {
+        currency: 'GBP',
+        estimatedMrr: Number(estimatedMrr.toFixed(2)),
+        paidUsers: Number(paidUsersRow?.count ?? 0),
+        totalUsers: Number(totalUsersRow?.count ?? 0),
+        newUsersLast30d: Number(recentSignupsRow?.count ?? 0),
+        byTier: tiers,
+      },
+    });
+  } catch (error) {
+    logger.error(`[Admin] Revenue breakdown failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to get revenue breakdown' });
+  }
 });
 
 /**
- * GET /api/admin/user-activity/:userId
- * Fetch activity timeline for a specific user
+ * GET /api/admin/analytics/timeseries
+ * Returns daily time-series data for users, trips, and revenue over the requested period.
+ * Query params:
+ *   period  – "7d" | "30d" | "90d" (default "30d")
+ *   metrics – comma-separated list of "users" | "trips" | "revenue" (default all)
  */
+router.get('/analytics/timeseries', ...adminGuard, async (req, res) => {
+  try {
+    const period = req.query.period || '30d';
+    const days = Math.min(parseInt(period) || 30, 365);
+    const metricsParam = req.query.metrics || 'users,trips,revenue';
+    const wantedMetrics = metricsParam.split(',').map(m => m.trim().toLowerCase());
+
+    // Build an array of date buckets (YYYY-MM-DD) from oldest to newest
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      buckets.push(d.toISOString().slice(0, 10));
+    }
+
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    // Initialise result maps
+    const userMap = Object.fromEntries(buckets.map(b => [b, 0]));
+    const tripMap = Object.fromEntries(buckets.map(b => [b, 0]));
+    const revenueMap = Object.fromEntries(buckets.map(b => [b, 0]));
+
+    // Daily new users
+    if (wantedMetrics.includes('users')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM users
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in userMap) userMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries users query failed:', e.message); }
+    }
+
+    // Daily new trips
+    if (wantedMetrics.includes('trips')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM trips
+           WHERE created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in tripMap) tripMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries trips query failed:', e.message); }
+    }
+
+    // Daily subscription activations as a revenue proxy (premium users created)
+    if (wantedMetrics.includes('revenue')) {
+      try {
+        const rows = await db.all(
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM users
+           WHERE is_premium = true AND created_at >= ?
+           GROUP BY DATE(created_at)`,
+          since
+        );
+        for (const row of (rows || [])) {
+          if (row.day in revenueMap) revenueMap[row.day] = row.count;
+        }
+      } catch (e) { logger.warn('[Admin] Timeseries revenue query failed:', e.message); }
+    }
+
+    // Assemble into array series
+    const series = buckets.map(date => {
+      const point = { date };
+      if (wantedMetrics.includes('users')) point.users = userMap[date];
+      if (wantedMetrics.includes('trips')) point.trips = tripMap[date];
+      if (wantedMetrics.includes('revenue')) point.newSubscriptions = revenueMap[date];
+      return point;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        period: `${days}d`,
+        metrics: wantedMetrics,
+        series,
+      }
+    });
+  } catch (error) {
+    logger.error(`[Admin] Analytics timeseries failed: ${error.message}`);
+    res.status(500).json({ error: 'Failed to get analytics time-series' });
+  }
+});
+
+
 router.get('/user-activity/:userId', ...adminGuard, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -719,6 +960,26 @@ router.get('/system-health', ...adminGuard, async (req, res) => {
     }
 
     health.server.totalResponseTime = Date.now() - startTime;
+
+    // Error-rate metrics — count error events in the last 1 h and 24 h
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const errorsLastHour = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneHourAgo
+      );
+      const errorsLastDay = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneDayAgo
+      );
+      health.server.errorRates = {
+        lastHour: errorsLastHour?.count ?? 0,
+        last24h: errorsLastDay?.count ?? 0,
+      };
+    } catch (e) {
+      health.server.errorRates = { lastHour: null, last24h: null, note: 'unavailable' };
+    }
     
     res.json({ success: true, data: health });
   } catch (error) {
@@ -2515,32 +2776,42 @@ router.get('/billing/activity', ...adminGuard, async (req, res) => {
 router.get('/support/tickets', ...adminGuard, async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
-    
-    // For now, use events to track support issues
+
     let query = `
-      SELECT * FROM events 
-      WHERE event_name LIKE 'support_%'
+      SELECT st.*, u.email as user_email, u.name as user_name
+      FROM support_tickets st
+      LEFT JOIN users u ON st.user_id = u.id
+      WHERE 1=1
     `;
     const params = [];
-    
+
     if (status && status !== 'all') {
-      // Map status to event names
-      const statusMap = {
-        'open': 'support_ticket_created',
-        'resolved': 'support_ticket_resolved'
-      };
-      if (statusMap[status]) {
-        query += ' AND event_name = ?';
-        params.push(statusMap[status]);
-      }
+      query += ' AND st.status = ?';
+      params.push(status);
     }
-    
-    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+
+    query += `
+      ORDER BY 
+        st.is_emergency DESC,
+        CASE st.priority 
+          WHEN 'urgent' THEN 4
+          WHEN 'high' THEN 3
+          WHEN 'normal' THEN 2
+          ELSE 1
+        END DESC,
+        st.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const tickets = await db.all(query, ...params);
-    const count = await db.get('SELECT COUNT(*) as count FROM events WHERE event_name LIKE \'support_%\'');
-    
+    const countQuery = status && status !== 'all'
+      ? 'SELECT COUNT(*) as count FROM support_tickets WHERE status = ?'
+      : 'SELECT COUNT(*) as count FROM support_tickets';
+    const count = status && status !== 'all'
+      ? await db.get(countQuery, status)
+      : await db.get(countQuery);
+
     res.json({ success: true, data: { tickets: tickets || [], total: count?.count || 0 } });
   } catch (error) {
     res.json({ success: true, data: { tickets: [], total: 0 } });
@@ -2727,9 +2998,14 @@ router.post('/support/reply', ...adminGuard, async (req, res) => {
     let recipientUserId = userId;
     
     if (!recipientEmail && ticketId) {
-      const ticket = await db.get('SELECT * FROM events WHERE id = ?', ticketId);
+      const ticket = await db.get(`
+        SELECT st.id, st.user_id, u.email
+        FROM support_tickets st
+        LEFT JOIN users u ON st.user_id = u.id
+        WHERE st.id = ?
+      `, ticketId);
       if (ticket) {
-        recipientEmail = ticket.event_data?.email;
+        recipientEmail = ticket.email;
         recipientUserId = ticket.user_id;
       }
     }
@@ -4201,4 +4477,247 @@ router.post('/check-action-approval', ...adminGuard, async (req, res) => {
   }
 });
 
+// GET /admin/reports - moderation queue for user/content reports
+router.get('/reports', ...adminGuard, async (req, res) => {
+  try {
+    const status = req.query.status || 'open';
+    const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+    const offset = parseInt(req.query.offset || '0', 10);
+
+    const reports = await db.all(
+      `SELECT r.*, reporter.email as reporter_email, reviewer.email as reviewer_email
+       FROM reports r
+       LEFT JOIN users reporter ON reporter.id = r.reporter_id
+       LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+       WHERE (? = 'all' OR r.status = ?)
+       ORDER BY r.created_at DESC
+       LIMIT ? OFFSET ?`,
+      status, status, limit, offset
+    );
+
+    const totalRow = await db.get(
+      `SELECT COUNT(*)::int as count FROM reports
+       WHERE (? = 'all' OR status = ?)`,
+      status, status
+    );
+
+    res.json({
+      success: true,
+      data: { reports: reports || [], total: totalRow?.count || 0, limit, offset, status }
+    });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list reports: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch reports' });
+  }
+});
+
+// PATCH /admin/reports/:id - update report moderation status
+router.patch('/reports/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const validStatuses = ['open', 'under_review', 'actioned', 'dismissed'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    const updated = await db.run(
+      'UPDATE reports SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      status, req.userId, id
+    );
+
+    if (!updated?.changes) {
+      return res.status(404).json({ success: false, error: 'Report not found' });
+    }
+
+    await db.run(
+      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
+      req.userId,
+      'admin_report_moderated',
+      JSON.stringify({ reportId: Number(id), status })
+    );
+
+    res.json({ success: true, data: { id: Number(id), status } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to moderate report: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to moderate report' });
+  }
+});
+
 export default router;
+
+// ──────────────────────────────────────────────
+// Reports moderation queue
+// ──────────────────────────────────────────────
+
+router.get('/reports', ...adminGuard, async (req, res) => {
+  try {
+    const { status = 'pending', limit = 50, offset = 0 } = req.query;
+    const params = [];
+    let whereClause = 'WHERE 1=1';
+
+    if (status && status !== 'all') {
+      whereClause += ' AND r.status = ?';
+      params.push(status);
+    }
+
+    const rows = await db.all(`
+      SELECT r.*,
+             reporter.email AS reporter_email,
+             reviewer.email AS reviewer_email
+      FROM reports r
+      LEFT JOIN users reporter ON r.reporter_id = reporter.id
+      LEFT JOIN users reviewer ON r.reviewed_by = reviewer.id
+      ${whereClause}
+      ORDER BY r.created_at DESC
+      LIMIT ? OFFSET ?
+    `, ...params, parseInt(limit), parseInt(offset));
+
+    const countQuery = status && status !== 'all'
+      ? 'SELECT COUNT(*) AS count FROM reports WHERE status = ?'
+      : 'SELECT COUNT(*) AS count FROM reports';
+    const count = status && status !== 'all'
+      ? await db.get(countQuery, status)
+      : await db.get(countQuery);
+
+    res.json({ success: true, data: { reports: rows || [], total: count?.count || 0 } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list reports: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to list reports' });
+  }
+});
+
+router.patch('/reports/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, resolution_note = '' } = req.body;
+    const allowed = ['under_review', 'resolved', 'dismissed'];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, error: `Status must be one of: ${allowed.join(', ')}` });
+    }
+
+    const report = await db.get('SELECT id FROM reports WHERE id = ?', id);
+    if (!report) return res.status(404).json({ success: false, error: 'Report not found' });
+
+    await db.run(
+      `UPDATE reports SET status = ?, resolution_note = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      status, resolution_note, req.userId, id
+    );
+
+    await db.run(
+      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
+      req.userId, 'report_reviewed', JSON.stringify({ reportId: id, status, resolution_note })
+    );
+
+    res.json({ success: true, data: { message: 'Report updated' } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to update report ${req.params.id}: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update report' });
+  }
+});
+
+
+// ──────────────────────────────────────────────
+// FAQ article management (admin)
+// ──────────────────────────────────────────────
+
+router.get('/faq', ...adminGuard, async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM faq_articles ORDER BY category, display_order');
+    res.json({ success: true, data: { articles: rows || [] } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list FAQ articles: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to list FAQ articles' });
+  }
+});
+
+router.post('/faq', ...adminGuard, async (req, res) => {
+  try {
+    const { title, content, category, display_order = 0, active = true } = req.body;
+    if (!title?.trim() || !content?.trim() || !category?.trim()) {
+      return res.status(400).json({ success: false, error: 'title, content, and category are required' });
+    }
+    const result = await db.run(
+      'INSERT INTO faq_articles (title, content, category, display_order, active) VALUES (?, ?, ?, ?, ?)',
+      title.trim(), content.trim(), category.trim(), display_order, active ? true : false
+    );
+    res.status(201).json({ success: true, data: { id: result.lastInsertRowid } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to create FAQ article: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to create FAQ article' });
+  }
+});
+
+router.put('/faq/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, content, category, display_order, active } = req.body;
+    await db.run(
+      'UPDATE faq_articles SET title = ?, content = ?, category = ?, display_order = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      title, content, category, display_order, active ? true : false, id
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`[Admin] Failed to update FAQ article: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update FAQ article' });
+  }
+});
+
+router.delete('/faq/:id', ...adminGuard, async (req, res) => {
+  try {
+    await db.run('DELETE FROM faq_articles WHERE id = ?', req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`[Admin] Failed to delete FAQ article: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to delete FAQ article' });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Changelog management (admin)
+// ──────────────────────────────────────────────
+
+router.get('/changelog', ...adminGuard, async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM changelog_entries ORDER BY created_at DESC LIMIT 100');
+    res.json({ success: true, data: { entries: rows || [] } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to list changelog entries: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to list changelog entries' });
+  }
+});
+
+router.post('/changelog', ...adminGuard, async (req, res) => {
+  try {
+    const { version, title, description = '', type = 'feature', published = false } = req.body;
+    if (!version?.trim() || !title?.trim()) {
+      return res.status(400).json({ success: false, error: 'version and title are required' });
+    }
+    const publishedAt = published ? new Date().toISOString() : null;
+    const result = await db.run(
+      'INSERT INTO changelog_entries (version, title, description, type, published, published_at) VALUES (?, ?, ?, ?, ?, ?)',
+      version.trim(), title.trim(), description, type, published ? true : false, publishedAt
+    );
+    res.status(201).json({ success: true, data: { id: result.lastInsertRowid } });
+  } catch (error) {
+    logger.error(`[Admin] Failed to create changelog entry: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to create changelog entry' });
+  }
+});
+
+router.patch('/changelog/:id', ...adminGuard, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { published, title, description, type } = req.body;
+    const publishedAt = published ? new Date().toISOString() : null;
+    await db.run(
+      'UPDATE changelog_entries SET published = ?, published_at = ?, title = COALESCE(?, title), description = COALESCE(?, description), type = COALESCE(?, type) WHERE id = ?',
+      published ? true : false, publishedAt, title, description, type, id
+    );
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`[Admin] Failed to update changelog entry: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to update changelog entry' });
+  }
+});

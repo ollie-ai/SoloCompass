@@ -1,0 +1,45 @@
+name: Database Migration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/migrations/**'
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Run SQL Migrations
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Run migration files in order
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGPASSWORD: ''
+        run: |
+          set -e
+          echo "Running migrations against Supabase..."
+          for f in $(ls backend/migrations/*.sql | sort); do
+            echo "Applying: $f"
+            psql "$DATABASE_URL" -f "$f" --single-transaction
+          done
+          echo "All migrations applied successfully."

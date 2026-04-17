@@ -1,21 +1,49 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../stores/authStore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import Input from '../components/Input';
-import Loading from '../components/Loading';
 import Skeleton from '../components/Skeleton';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { User, Shield, Bell, MapPin, Sparkles, Globe, Trash2, AlertTriangle, Download, CreditCard, Check, Crown, Zap, ArrowUpRight, X, Smartphone, Monitor, Lock, KeyRound, Fingerprint, LogOut, ChevronRight, Save, CheckCircle, RotateCcw, ShieldAlert, Clock, Users, Wallet, Mail, MessageSquare, Phone, Info, Eye, ShieldCheck, Camera, Search } from 'lucide-react';
-import SoloIDCard from '../components/SoloIDCard';
+import { User, Shield, Bell, CreditCard, Zap } from 'lucide-react';
 import VerificationModal from '../components/VerificationModal';
-import { ACTIVITY_INTERESTS, VIBE_INTERESTS } from '../constants/interests';
 import DashboardShell from '../components/dashboard/DashboardShell';
 import PageHeader from '../components/PageHeader';
+import { useI18n } from '../i18n/I18nProvider';
 
 const EASE = [0.16, 1, 0.3, 1];
 const cardClass = "glass-card p-6 rounded-3xl border border-base-300/50";
+
+function LanguagePreference() {
+  const { locale, setLocale, t, supportedLocales } = useI18n();
+  return (
+    <div className={cardClass}>
+      <div className="p-6 border-b border-base-300/50 flex items-center justify-between">
+        <h3 className="text-base font-black text-base-content flex items-center gap-2">
+          <Globe size={16} className="text-brand-vibrant" /> {t('settings.language')}
+        </h3>
+      </div>
+      <div className="p-6">
+        <p className="text-sm text-base-content/60 mb-4">{t('settings.languageDesc')}</p>
+        <div className="flex gap-3">
+          {supportedLocales.map((code) => (
+            <button
+              key={code}
+              onClick={() => setLocale(code)}
+              className={`px-5 py-2.5 rounded-xl text-sm font-bold border transition-all ${
+                locale === code
+                  ? 'bg-brand-vibrant text-white border-brand-vibrant shadow-md shadow-brand-vibrant/20'
+                  : 'border-base-300 text-base-content/60 hover:border-brand-vibrant/40 hover:text-base-content'
+              }`}
+            >
+              {t(`locale.${code}`)}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const Settings = () => {
   const { user, updateUser, logout, refreshUser, initialized } = useAuthStore();
@@ -45,8 +73,11 @@ const Settings = () => {
     newPassword: '',
     confirmPassword: '',
   });
+  // Field-level error for confirm-password input
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
   const [subscriptionStatus, setSubscriptionStatus] = useState(null);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
   const defaultNotifPrefs = {
     emailNotifications: true,
     pushNotifications: true,
@@ -63,6 +94,7 @@ const Settings = () => {
   const [notifPrefs, setNotifPrefs] = useState({ ...defaultNotifPrefs });
   const [savingNotifPrefs, setSavingNotifPrefs] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
+  const [showAccountDeletionModal, setShowAccountDeletionModal] = useState(false);
 
   useEffect(() => {
     if (initialized && user?.id) {
@@ -164,13 +196,14 @@ const Settings = () => {
     toast.success('Reset to default preferences');
   };
 
-  const handleCancelSubscription = async () => {
-    const confirmed = window.confirm(
-      'Are you sure you want to cancel your subscription? You will lose access to premium features at the end of your current billing period.'
-    );
+  const handleCancelSubscription = () => {
+    setConfirmDialog({
+      open: true,
+      action: 'cancel_subscription',
+    });
+  };
 
-    if (!confirmed) return;
-
+  const executeCancelSubscription = async () => {
     setLoadingSubscription(true);
     try {
       await api.post('/billing/cancel-subscription');
@@ -181,6 +214,7 @@ const Settings = () => {
       toast.error(err.response?.data?.error?.message || err.response?.data?.error || 'Failed to cancel subscription');
     } finally {
       setLoadingSubscription(false);
+      setConfirmDialog({ open: false, action: null });
     }
   };
 
@@ -304,8 +338,10 @@ const Settings = () => {
     setSaving(true);
     setError('');
     setSuccess('');
+    setConfirmPasswordError('');
 
     if (passwordData.newPassword !== passwordData.confirmPassword) {
+      setConfirmPasswordError('Passwords do not match');
       setError('New passwords do not match');
       setSaving(false);
       return;
@@ -324,6 +360,7 @@ const Settings = () => {
       });
       setSuccess('Password changed successfully');
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setConfirmPasswordError('');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to change password');
@@ -332,22 +369,23 @@ const Settings = () => {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    const confirmed = window.confirm(
-      'ARE YOU SURE? This will permanently delete your SoloCompass account and ALL associated trip data, itineraries, and quiz results. This action CANNOT be undone.'
-    );
+  const handleDeleteAccount = () => {
+    setConfirmDialog({ open: true, action: 'delete_account' });
+  };
 
-    if (!confirmed) return;
-
+  const executeDeleteAccount = async () => {
     setSaving(true);
     try {
       await api.delete(`/users/${user?.id}`);
+      setConfirmDialog({ open: false, action: null });
       await logout();
       navigate('/');
       import('react-hot-toast').then(toast => toast.default.success('Your account has been deleted.'));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete account');
+    } finally {
       setSaving(false);
+      setConfirmDialog({ open: false, action: null });
     }
   };
 
@@ -355,10 +393,8 @@ const Settings = () => {
   const handleExportData = async () => {
     setExporting(true);
     try {
-      const response = await api.get(`/users/${user?.id}/export`);
-      const data = response.data.data;
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
+      const response = await api.get('/account/data-export', { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/json' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -418,6 +454,36 @@ const Settings = () => {
 
   return (
     <DashboardShell>
+      <SEO
+        title="Account Settings"
+        description="Manage your SoloCompass profile, security, notifications, and billing preferences."
+      />
+
+      {/* Cancel Subscription dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open && confirmDialog.action === 'cancel_subscription'}
+        onConfirm={executeCancelSubscription}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title="Cancel Subscription?"
+        description="You will lose access to premium features at the end of your current billing period. This cannot be undone until you re-subscribe."
+        confirmLabel="Yes, Cancel"
+        cancelLabel="Keep Subscription"
+        variant="warning"
+        loading={loadingSubscription}
+      />
+
+      {/* Delete Account dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open && confirmDialog.action === 'delete_account'}
+        onConfirm={executeDeleteAccount}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title="Permanently Delete Account?"
+        description="This will permanently delete your SoloCompass account and ALL associated trip data, itineraries, and account information. This action CANNOT be undone."
+        confirmLabel="Delete My Account"
+        cancelLabel="Keep Account"
+        variant="danger"
+        loading={saving}
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-12">
           <PageHeader
@@ -483,6 +549,11 @@ const Settings = () => {
                       <User size={20} className="text-brand-vibrant" /> Account Profile
                     </h2>
                     <p className="text-base-content/60 font-medium text-sm">Manage your private identity and core account details.</p>
+                  </div>
+
+                  {/* Accessible live region for form-level feedback (profile + security tabs) */}
+                  <div aria-live="assertive" aria-atomic="true" className="sr-only" id="settings-live-region">
+                    {error || success}
                   </div>
 
                   <div className={cardClass}>
@@ -570,6 +641,19 @@ const Settings = () => {
                           icon={<MapPin size={18} />}
                           desc="Used for context in your buddy matches."
                         />
+
+                        {error && activeTab === 'profile' && (
+                          <div role="alert" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 border border-error/20 text-error text-sm font-medium">
+                            <AlertTriangle size={16} className="shrink-0" />
+                            {error}
+                          </div>
+                        )}
+                        {success && activeTab === 'profile' && (
+                          <div role="status" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-success text-sm font-medium">
+                            <CheckCircle size={16} className="shrink-0" />
+                            {success}
+                          </div>
+                        )}
 
                         <div className="flex justify-end pt-2">
                           <button
@@ -766,6 +850,8 @@ const Settings = () => {
                     </motion.div>
                   )}
 
+                  <LanguagePreference />
+
                   {lastSaved && !hasUnsavedChanges && (
                     <div className="flex items-center gap-2 text-xs text-base-content/40 font-medium">
                       <Check size={12} /> Saved just now
@@ -833,12 +919,30 @@ const Settings = () => {
                           <Input
                             label="Confirm New Password"
                             type="password"
+                            id="confirm-new-password"
+                            name="confirm-new-password"
                             value={passwordData.confirmPassword}
-                            onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                            onChange={(e) => {
+                              setPasswordData({ ...passwordData, confirmPassword: e.target.value });
+                              if (confirmPasswordError) setConfirmPasswordError('');
+                            }}
                             placeholder="Repeat new password"
+                            error={confirmPasswordError}
                           />
                         </div>
                         <p className="text-xs text-base-content/60 font-medium">Use at least 8 characters, including a number and a symbol.</p>
+                        {error && activeTab === 'security' && (
+                          <div role="alert" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 border border-error/20 text-error text-sm font-medium">
+                            <AlertTriangle size={16} className="shrink-0" />
+                            {error}
+                          </div>
+                        )}
+                        {success && activeTab === 'security' && (
+                          <div role="status" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-success text-sm font-medium">
+                            <CheckCircle size={16} className="shrink-0" />
+                            {success}
+                          </div>
+                        )}
                         <div className="flex justify-end pt-2">
                           <button
                             type="submit"
@@ -1007,6 +1111,7 @@ const Settings = () => {
                                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                       <input
                                         type="checkbox"
+                                        aria-label={item.label}
                                         checked={notifPrefs[item.key]}
                                         onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                         className="sr-only peer"
@@ -1044,6 +1149,7 @@ const Settings = () => {
                                   <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                     <input
                                       type="checkbox"
+                                      aria-label={item.label}
                                       checked={notifPrefs[item.key]}
                                       onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                       className="sr-only peer"
@@ -1074,6 +1180,7 @@ const Settings = () => {
                               <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                 <input
                                   type="checkbox"
+                                  aria-label="Buddy Requests"
                                   checked={notifPrefs.buddyRequests}
                                   onChange={(e) => setNotifPrefs({ ...notifPrefs, buddyRequests: e.target.checked })}
                                   className="sr-only peer"
@@ -1114,6 +1221,7 @@ const Settings = () => {
                                   <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                     <input
                                       type="checkbox"
+                                      aria-label={item.label}
                                       checked={notifPrefs[item.key]}
                                       onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                       className="sr-only peer"
@@ -1131,10 +1239,11 @@ const Settings = () => {
                             <Clock size={14} /> Reminder Timing
                           </h4>
                           <div className="p-4 bg-base-200 rounded-xl border border-base-300/50">
-                            <label className="block text-sm font-bold text-base-content/70 mb-2">
+                            <label htmlFor="reminder-minutes-before" className="block text-sm font-bold text-base-content/70 mb-2">
                               Check-in reminder before due time
                             </label>
                             <select
+                              id="reminder-minutes-before"
                               value={notifPrefs.reminderMinutesBefore}
                               onChange={(e) => setNotifPrefs({ ...notifPrefs, reminderMinutesBefore: parseInt(e.target.value) })}
                               className="w-full px-4 py-3 rounded-xl border border-base-300 bg-base-100 font-bold text-base-content focus:outline-none focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant"
@@ -1173,242 +1282,29 @@ const Settings = () => {
               )}
 
               {activeTab === 'billing' && (
-                <motion.div
-                  key="billing"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ ease: EASE, duration: 0.25 }}
-                  className="space-y-6"
-                >
-                  <div>
-                    <h2 className="text-xl font-black text-base-content">Billing & Data</h2>
-                    <p className="text-base-content/60 font-medium text-sm mt-1">Manage your subscription, download your data, or delete your account.</p>
-                  </div>
-
-                  <div className="flex flex-col gap-1 mb-6">
-                    <h2 className="text-xl font-black text-base-content flex items-center gap-2">
-                      <CreditCard size={20} className="text-brand-vibrant" /> Subscription & Data
-                    </h2>
-                    <p className="text-base-content/60 font-medium text-sm">Manage your plan, billing history, and personal data archive.</p>
-                  </div>
-
-                  <div className={cardClass}>
-                    <div className="p-6 border-b border-base-300/50 flex items-center justify-between">
-                      <h3 className="text-base font-black text-base-content flex items-center gap-2">
-                        Active Subscription
-                      </h3>
-                      <div className="px-2.5 py-0.5 rounded-full bg-base-200 text-[10px] font-black text-base-content/60 uppercase tracking-tighter">
-                        Billing status
-                      </div>
-                    </div>
-                    <div className="p-5">
-                      {subscriptionStatus?.isPremium ? (
-                        <div className="space-y-4">
-                          <div className="p-4 rounded-xl bg-gradient-to-r from-brand-vibrant/5 to-emerald-500/5 border border-brand-vibrant/10">
-                            <div className="flex items-center justify-between mb-3">
-                              <div>
-                                <h4 className="font-black text-base-content">
-                                  {subscriptionStatus.tier === 'guardian' ? 'Guardian' : subscriptionStatus.tier === 'navigator' ? 'Navigator' : 'Explorer'}
-                                </h4>
-                                <p className="text-xs text-base-content/60 font-medium">
-                                  {subscriptionStatus.stripeStatus?.cancelAtPeriodEnd
-                                    ? 'Cancels at end of billing period'
-                                    : 'Active subscription'}
-                                </p>
-                              </div>
-                              <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full ${subscriptionStatus.stripeStatus?.cancelAtPeriodEnd
-                                ? 'bg-warning/20 text-warning'
-                                : 'bg-brand-vibrant/10 text-brand-vibrant'
-                                }`}>
-                                {subscriptionStatus.stripeStatus?.cancelAtPeriodEnd ? 'Cancelling' : 'Active'}
-                              </span>
-                            </div>
-
-                            {subscriptionStatus.expiresAt && (
-                              <p className="text-sm text-base-content/80 font-medium">
-                                {subscriptionStatus.stripeStatus?.cancelAtPeriodEnd
-                                  ? `Access until ${new Date(subscriptionStatus.expiresAt).toLocaleDateString()}`
-                                  : `Renews on ${new Date(subscriptionStatus.expiresAt).toLocaleDateString()}`
-                                }
-                              </p>
-                            )}
-
-                            <div className="mt-3 pt-3 border-t border-brand-vibrant/10">
-                              <h5 className="font-bold text-base-content mb-2 text-sm">Included Features</h5>
-                              <div className="grid grid-cols-2 gap-1.5">
-                                {subscriptionStatus.tier === 'navigator' ? (
-                                  <>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Personal Concierge</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Advanced Safety Analytics</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Buddy Matching with KYC</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Bulk Itinerary Sync</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Unlimited AI Generation</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Real-time Safety Updates</div>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Unlimited AI Generation</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Real-time Safety Updates</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> Solo Guide Chat</div>
-                                    <div className="flex items-center gap-2 text-xs text-base-content/80 font-medium"><Check size={13} className="text-brand-vibrant" /> PDF Export</div>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-3">
-                            {subscriptionStatus?.stripePortalUrl && (
-                              <a
-                                href={subscriptionStatus.stripePortalUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-4 py-2 rounded-xl font-bold text-sm border border-base-300 text-base-content/80 hover:bg-base-200 transition-all inline-flex items-center gap-1.5"
-                              >
-                                Manage subscription <ArrowUpRight size={14} />
-                              </a>
-                            )}
-                            {!subscriptionStatus?.stripeStatus?.cancelAtPeriodEnd && (
-                              <button
-                                onClick={handleCancelSubscription}
-                                disabled={loadingSubscription}
-                                className="px-4 py-2 rounded-xl font-bold text-sm border border-base-300 text-error hover:bg-error/10 disabled:opacity-50 transition-all"
-                              >
-                                {loadingSubscription ? 'Cancelling...' : 'Cancel subscription'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-4">
-                          <div className="p-4 rounded-xl bg-base-200 border border-base-300/50">
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="w-9 h-9 bg-base-300 rounded-lg flex items-center justify-center text-base-content/40">
-                                <Zap size={16} />
-                              </div>
-                              <div>
-                                <h4 className="font-bold text-base-content leading-none">Explorer</h4>
-                                <p className="text-[10px] text-base-content/60 font-bold uppercase tracking-tight mt-1">Free Nomad Plan</p>
-                              </div>
-                            </div>
-                            <ul className="space-y-1.5 text-sm text-base-content/80">
-                              <li className="flex items-center gap-2 font-medium"><Check size={13} className="text-emerald-500" /> Create trips (up to 2 active)</li>
-                              <li className="flex items-center gap-2 font-medium"><Check size={13} className="text-emerald-500" /> 1 AI Itinerary per month</li>
-                              <li className="flex items-center gap-2 font-medium"><Check size={13} className="text-emerald-500" /> Manual check-ins + SOS</li>
-                              <li className="flex items-center gap-2 font-medium text-base-content/30 decoration-slate-200 line-through"><X size={13} /> Scheduled check-ins</li>
-                            </ul>
-                          </div>
-
-                          <div className="grid gap-2">
-                            <button
-                              onClick={() => navigate('/?upgrade=guardian')}
-                              className="p-5 rounded-xl bg-gradient-to-br from-[#10b981]/5 to-[#10b981]/10 border border-[#10b981]/20 hover:border-[#10b981]/40 transition-all text-left group relative overflow-hidden"
-                            >
-                              <div className="flex items-center justify-between mb-2">
-                                <div>
-                                  <h5 className="font-black text-[#10b981] text-lg">Guardian</h5>
-                                  <p className="text-xs text-base-content/60 font-bold uppercase tracking-tight">£4.99/month — Most Popular</p>
-                                </div>
-                                <ArrowUpRight size={20} className="text-[#10b981]/50 group-hover:text-[#10b981] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-                              </div>
-                              <p className="text-sm text-base-content/80 font-medium leading-tight">Unlimited AI itineraries, scheduled check-ins, Safe-Return Timer, and safe haven locator.</p>
-                            </button>
-
-                            <button
-                              onClick={() => navigate('/?upgrade=navigator')}
-                              className="p-5 rounded-xl bg-[#0ea5e9]/5 border border-[#0ea5e9]/20 hover:border-[#0ea5e9]/40 transition-all text-left group"
-                            >
-                              <div className="flex items-center justify-between mb-2">
-                                <div>
-                                  <h5 className="font-black text-[#0ea5e9] text-lg">Navigator</h5>
-                                  <p className="text-xs text-base-content/60 font-bold uppercase tracking-tight">£9.99/month — Founding Price</p>
-                                </div>
-                                <ArrowUpRight size={20} className="text-[#0ea5e9]/50 group-hover:text-[#0ea5e9] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-                              </div>
-                              <p className="text-sm text-base-content/80 font-medium leading-tight">Everything in Guardian + AI destination chat, AI safety advice, and priority support.</p>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className={cardClass}>
-                    <div className="p-5 border-b border-base-300/50">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600">
-                          <Download size={16} />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-black text-base-content">Data Portability</h3>
-                          <p className="text-xs text-base-content/60 font-medium">Download a complete archive of your travel data, preferences, and account information.</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-5">
-                      <p className="text-sm text-base-content/80 font-medium mb-4">
-                        Your export includes trip data, itinerary, safety settings, and profile information.
-                      </p>
-                      <button
-                        onClick={handleExportData}
-                        disabled={exporting}
-                        className="inline-flex items-center gap-2 bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-green-600 disabled:opacity-50 rounded-xl font-bold px-5 py-2.5 text-sm transition-all"
-                      >
-                        <Download size={14} /> {exporting ? 'Generating archive...' : 'Download my data archive'}
-                      </button>
-                      <p className="text-xs text-base-content/40 font-medium mt-4">
-                        Your data is retained for the duration of your account. After deletion, all data is permanently removed within 30 days.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="bg-error/5 p-6 rounded-2xl border-2 border-red-500/10">
-                    <h3 className="text-base font-black text-error mb-4 flex items-center gap-2">
-                      <Trash2 size={18} /> Account Termination
-                    </h3>
-
-                    <div className="p-4 rounded-xl bg-base-100 border border-red-500/15 mb-4">
-                      <div className="flex gap-3">
-                        <AlertTriangle className="text-error shrink-0 mt-0.5" size={18} />
-                        <div>
-                          <h4 className="font-black text-red-900 mb-1">Permanently Delete Account</h4>
-                          <p className="text-sm text-error leading-relaxed font-medium">
-                            Once you delete your account, there is no going back. All itineraries, safety data, and account information will be wiped immediately.
-                          </p>
-                          <p className="text-xs text-error/80 font-medium mt-2">
-                            We recommend downloading your data archive before deleting.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-base-content/60 font-medium mb-3">
-                      Deleting your account permanently removes your trips, preferences, and associated account data.
-                    </p>
-
-                    <div className="flex flex-col sm:flex-row items-center gap-4 mt-6">
-                      <button
-                        onClick={handleDeleteAccount}
-                        disabled={saving}
-                        className="w-full sm:w-auto px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-[10px] uppercase tracking-widest"
-                      >
-                        {saving ? <RotateCcw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        {saving ? 'Processing...' : 'Delete My Account'}
-                      </button>
-                      <p className="text-[10px] text-base-content/40 font-bold italic">
-                        Wait! Have you downloaded your data archive yet?
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
+                <BillingTab
+                  subscriptionStatus={subscriptionStatus}
+                  loadingSubscription={loadingSubscription}
+                  handleCancelSubscription={handleCancelSubscription}
+                  navigate={navigate}
+                  saving={saving}
+                  exporting={exporting}
+                  handleExportData={handleExportData}
+                  handleDeleteAccount={handleDeleteAccount}
+                />
               )}
             </AnimatePresence>
           </div>
         </div>
       </div>
+      <AccountDeletionModal
+        isOpen={showAccountDeletionModal}
+        isDeleting={saving}
+        onClose={() => !saving && setShowAccountDeletionModal(false)}
+        onConfirm={handleDeleteAccount}
+      />
     </DashboardShell>
   );
 };
 
-      export default Settings;
+export default Settings;

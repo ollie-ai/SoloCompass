@@ -1,14 +1,12 @@
 import express from 'express';
-import { body, validationResult } from 'express-validator';
+import { body, param, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
-import { createNotification, getNotificationPreferences } from '../services/notificationService.js';
-import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
-import * as pushService from '../services/pushService.js';
-import * as email from '../services/email.js';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 import multer from 'multer';
 import { supabaseStorage } from '../services/supabaseStorage.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 
 const router = express.Router();
 
@@ -36,20 +34,34 @@ const handleValidationErrors = (req, res, next) => {
 
 async function sendBuddyNotification(userId, notificationType, title, message, data = null) {
   try {
-    await createNotification(userId, notificationType, title, message, data);
-    
-    const prefs = await getNotificationPreferences(userId);
-    const channels = getChannelsForType(notificationType, prefs);
-    
-    if (channels.includes(CHANNEL.PUSH)) {
-      await pushService.sendPushNotification(userId, { title, body: message, ...data });
-    }
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}) });
   } catch (err) {
     logger.error(`[BuddyNotification] Failed to send ${notificationType}:`, err.message);
   }
 }
 
+async function getConnectionForUser(connectionId, userId) {
+  return db.prepare(`
+    SELECT id, sender_id, receiver_id, status
+    FROM buddy_requests
+    WHERE id = ?
+      AND status = 'accepted'
+      AND (sender_id = ? OR receiver_id = ?)
+  `).get(connectionId, userId, userId);
+}
+
 router.use(requireAuth);
+
+const isBlockedBetweenUsers = async (userA, userB) => {
+  const row = await db.prepare(`
+    SELECT id
+    FROM buddy_blocks
+    WHERE (blocker_id = ? AND blocked_id = ?)
+       OR (blocker_id = ? AND blocked_id = ?)
+    LIMIT 1
+  `).get(userA, userB, userB, userA);
+  return !!row;
+};
 
 router.get('/trips', async (req, res) => {
   try {
@@ -67,9 +79,14 @@ router.get('/trips', async (req, res) => {
     }
 
     const blocked = await db.prepare(`
-      SELECT blocked_id FROM buddy_blocks WHERE blocker_id = ?
-    `).all(userId);
-    const blockedUsers = blocked.map(b => b.blocked_id);
+      SELECT CASE
+        WHEN blocker_id = ? THEN blocked_id
+        ELSE blocker_id
+      END AS blocked_user_id
+      FROM buddy_blocks
+      WHERE blocker_id = ? OR blocked_id = ?
+    `).all(userId, userId, userId);
+    const blockedUsers = blocked.map(b => b.blocked_user_id);
 
     const placeholders = userTripIds.map(() => '?').join(',');
     const blockedPlaceholders = blockedUsers.length > 0 ? blockedUsers.map(() => '?').join(',') : null;
@@ -130,7 +147,7 @@ router.get('/trips', async (req, res) => {
 });
 
 // Discovery: Find buddies for a destination without needing a trip context
-router.get('/discovery', async (req, res) => {
+router.get('/discovery', requireFeature(FEATURES.BUDDY_DISCOVERY), async (req, res) => {
   try {
     const { destination } = req.query;
     const userId = req.userId;
@@ -149,10 +166,16 @@ router.get('/discovery', async (req, res) => {
       LEFT JOIN profiles p ON tb.user_id = p.user_id
       WHERE LOWER(tb.destination) LIKE LOWER(?)
       AND tb.user_id != ?
+      AND NOT EXISTS (
+        SELECT 1
+        FROM buddy_blocks bb
+        WHERE (bb.blocker_id = ? AND bb.blocked_id = tb.user_id)
+           OR (bb.blocker_id = tb.user_id AND bb.blocked_id = ?)
+      )
       AND tb.status IN ('searching', 'matched')
       ORDER BY tb.start_date ASC
       LIMIT 10
-    `).all(`%${destination}%`, userId);
+    `).all(`%${destination}%`, userId, userId, userId);
 
     res.json({ 
       success: true, 
@@ -170,7 +193,7 @@ router.get('/discovery', async (req, res) => {
 router.post('/buddies', [
   body('tripId').isNumeric().withMessage('Trip ID is required'),
   body('message').optional().isLength({ max: 500 }).withMessage('Message must be under 500 characters'),
-], handleValidationErrors, async (req, res) => {
+], handleValidationErrors, requireFeature(FEATURES.BUDDY_DISCOVERY), async (req, res) => {
   try {
     const { tripId, message } = req.body;
     const senderId = req.userId;
@@ -200,9 +223,14 @@ router.post('/buddies', [
       return res.status(400).json({ error: 'Cannot send request to yourself' });
     }
 
+    if (await isBlockedBetweenUsers(senderId, receiverId)) {
+      return res.status(403).json({ error: 'Cannot send request to this user' });
+    }
+
     const existingRequest = await db.prepare(`
       SELECT id FROM buddy_requests 
       WHERE sender_id = ? AND receiver_id = ? AND trip_id = ? AND status IN ('pending', 'accepted')
+      AND archived_at IS NULL
     `).get(senderId, receiverId, tripId);
 
     if (existingRequest) {
@@ -262,6 +290,7 @@ router.get('/requests', async (req, res) => {
       LEFT JOIN profiles p ON br.sender_id = p.user_id
       LEFT JOIN trips t ON br.trip_id = t.id
       WHERE br.receiver_id = ?
+      AND br.archived_at IS NULL
       ORDER BY br.created_at DESC
     `).all(userId);
 
@@ -288,6 +317,7 @@ router.get('/requests', async (req, res) => {
       LEFT JOIN profiles p ON br.receiver_id = p.user_id
       LEFT JOIN trips t ON br.trip_id = t.id
       WHERE br.sender_id = ?
+      AND br.archived_at IS NULL
       ORDER BY br.created_at DESC
     `).all(userId);
 
@@ -347,7 +377,7 @@ router.put('/requests/:id', [
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {
@@ -428,6 +458,7 @@ router.get('/connections', async (req, res) => {
       LEFT JOIN profiles p ON br.receiver_id = p.user_id
       JOIN trips t ON br.trip_id = t.id
       WHERE br.sender_id = ? AND br.status = 'accepted'
+      AND br.archived_at IS NULL
     `).all(userId);
 
     const receivedConnections = await db.prepare(`
@@ -449,6 +480,7 @@ router.get('/connections', async (req, res) => {
       LEFT JOIN profiles p ON br.sender_id = p.user_id
       JOIN trips t ON br.trip_id = t.id
       WHERE br.receiver_id = ? AND br.status = 'accepted'
+      AND br.archived_at IS NULL
     `).all(userId);
 
     const connections = [...sentConnections, ...receivedConnections].map(conn => ({
@@ -461,6 +493,102 @@ router.get('/connections', async (req, res) => {
   } catch (error) {
     logger.error(`[Matching] Failed to fetch connections: ${error.message}`);
     res.status(500).json({ error: 'Failed to fetch connections' });
+  }
+});
+
+router.delete('/connections/:id', [
+  param('id').isNumeric().withMessage('Connection ID is required'),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const connectionId = parseInt(req.params.id, 10);
+    const userId = req.userId;
+
+    const connection = await getConnectionForUser(connectionId, userId);
+    if (!connection || connection.status !== 'accepted') {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    await db.prepare(`DELETE FROM buddy_requests WHERE id = ?`).run(connectionId);
+
+    await db.prepare(`
+      DELETE FROM buddy_conversations
+      WHERE (participant_a = ? AND participant_b = ?)
+         OR (participant_a = ? AND participant_b = ?)
+    `).run(connection.sender_id, connection.receiver_id, connection.receiver_id, connection.sender_id);
+
+    res.json({ success: true, message: 'Connection removed' });
+  } catch (error) {
+    logger.error(`[Matching] Failed to remove connection: ${error.message}`);
+    res.status(500).json({ error: 'Failed to remove connection' });
+  }
+});
+
+router.post('/connections/:id/block', [
+  param('id').isNumeric().withMessage('Connection ID is required'),
+  body('reason').optional().isLength({ max: 500 }).withMessage('Reason must be under 500 characters'),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const connectionId = parseInt(req.params.id, 10);
+    const userId = req.userId;
+    const connection = await getConnectionForUser(connectionId, userId);
+
+    if (!connection || connection.status !== 'accepted') {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const blockedId = connection.sender_id === userId ? connection.receiver_id : connection.sender_id;
+
+    await db.prepare(`
+      INSERT INTO buddy_blocks (blocker_id, blocked_id, reason, created_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT (blocker_id, blocked_id)
+      DO UPDATE SET reason = EXCLUDED.reason, created_at = EXCLUDED.created_at
+    `).run(userId, blockedId, req.body.reason || 'Blocked from connection');
+
+    await db.prepare(`
+      UPDATE buddy_requests
+      SET status = 'blocked', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(connectionId);
+
+    res.json({ success: true, message: 'User blocked' });
+  } catch (error) {
+    logger.error(`[Matching] Failed to block connection: ${error.message}`);
+    res.status(500).json({ error: 'Failed to block user' });
+  }
+});
+
+router.post('/connections/:id/report', [
+  param('id').isNumeric().withMessage('Connection ID is required'),
+  body('reason').isString().isLength({ min: 5, max: 500 }).withMessage('Reason must be 5-500 characters'),
+  body('details').optional().isString().trim().isLength({ max: 2000 }).withMessage('Details must be under 2000 characters'),
+  body('category').optional().isIn(['harassment', 'spam', 'scam', 'inappropriate_content', 'safety_concern', 'other']),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const connectionId = parseInt(req.params.id, 10);
+    const userId = req.userId;
+    const connection = await getConnectionForUser(connectionId, userId);
+
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const reportedUserId = connection.sender_id === userId ? connection.receiver_id : connection.sender_id;
+    const { reason, details, category = 'other' } = req.body;
+
+    const reportResult = await db.prepare(`
+      INSERT INTO buddy_reports (reporter_id, reported_user_id, connection_id, category, reason, details)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, reportedUserId, connectionId, category, reason.trim(), details?.trim() || null);
+
+    res.status(201).json({
+      success: true,
+      data: { id: reportResult.lastInsertRowid, connectionId, reportedUserId, status: 'open' },
+      message: 'Report submitted successfully'
+    });
+  } catch (error) {
+    logger.error(`[Matching] Failed to report connection: ${error.message}`);
+    res.status(500).json({ error: 'Failed to submit report' });
   }
 });
 
@@ -490,16 +618,28 @@ router.post('/blocks', [
 });
 
 // Enhanced matching endpoints
-router.get('/potential', async (req, res) => {
+const handlePotentialMatches = async (req, res) => {
   try {
     const userId = req.userId;
     const limit = parseInt(req.query.limit) || 20;
-    const { destination } = req.query;
+    const { destination, startDate, endDate } = req.query;
+
+    // Validate and sanitize genderPref before use in query
+    const VALID_GENDER_PREFS = ['female', 'male', 'non_binary'];
+    const rawGenderPref = req.query.genderPref;
+    const genderPref = (typeof rawGenderPref === 'string' && VALID_GENDER_PREFS.includes(rawGenderPref))
+      ? rawGenderPref
+      : null;
 
     const blocked = await db.prepare(`
-      SELECT blocked_id FROM buddy_blocks WHERE blocker_id = ?
-    `).all(userId);
-    const blockedUsers = blocked.map(b => b.blocked_id);
+      SELECT CASE
+        WHEN blocker_id = ? THEN blocked_id
+        ELSE blocker_id
+      END AS blocked_user_id
+      FROM buddy_blocks
+      WHERE blocker_id = ? OR blocked_id = ?
+    `).all(userId, userId, userId);
+    const blockedUsers = blocked.map(b => b.blocked_user_id);
 
     const blockedClause = blockedUsers.length > 0
       ? `AND tb.user_id NOT IN (${blockedUsers.map(() => '?').join(',')})`
@@ -513,6 +653,23 @@ router.get('/potential', async (req, res) => {
       params.push(`%${destination}%`);
     }
 
+    let dateClause = '';
+    if (startDate) {
+      dateClause += ` AND tb.end_date >= ?`;
+      params.push(startDate);
+    }
+    if (endDate) {
+      dateClause += ` AND tb.start_date <= ?`;
+      params.push(endDate);
+    }
+
+    // Gender preference filter (optional): match users whose gender_identity equals the requested value
+    let genderClause = '';
+    if (genderPref) {
+      genderClause = `AND p.gender_identity = ?`;
+      params.push(genderPref);
+    }
+
     params.push(limit);
 
     const matches = await db.prepare(`
@@ -520,7 +677,7 @@ router.get('/potential', async (req, res) => {
         tb.id, tb.user_id, tb.destination, tb.start_date, tb.end_date, tb.interests,
         u.name as user_name, u.email as user_email,
         p.avatar_url, p.bio, p.travel_style, p.budget_level, p.pace,
-        p.solo_travel_experience, p.accommodation_type
+        p.solo_travel_experience, p.accommodation_type, p.gender_identity
       FROM travel_buddies tb
       JOIN users u ON tb.user_id = u.id
       LEFT JOIN profiles p ON tb.user_id = p.user_id
@@ -528,6 +685,8 @@ router.get('/potential', async (req, res) => {
       AND tb.status IN ('searching', 'matched')
       ${blockedClause}
       ${destClause}
+      ${dateClause}
+      ${genderClause}
       ORDER BY tb.created_at DESC
       LIMIT ?
     `).all(...params);
@@ -598,7 +757,10 @@ router.get('/potential', async (req, res) => {
     logger.error(`[Matching] Failed to fetch potential matches: ${error.message}`);
     res.status(500).json({ error: 'Failed to fetch potential matches' });
   }
-});
+};
+
+router.get('/potential', handlePotentialMatches);
+router.get('/discover', handlePotentialMatches);
 
 router.get('/solo-id', async (req, res) => {
   try {
@@ -835,17 +997,25 @@ router.post('/request', [
       return res.status(400).json({ error: 'Cannot send request to yourself' });
     }
 
+    if (await isBlockedBetweenUsers(senderId, recipientId)) {
+      return res.status(403).json({ error: 'Cannot send request to this user' });
+    }
+
     const existingRequest = await db.prepare(`
       SELECT id FROM buddy_requests 
-      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+      WHERE (
+        (sender_id = ? AND receiver_id = ?)
+        OR (sender_id = ? AND receiver_id = ?)
+      )
       AND status IN ('pending', 'accepted')
+      AND archived_at IS NULL
     `).get(senderId, recipientId, recipientId, senderId);
 
     if (existingRequest) {
       return res.status(400).json({ error: 'Request already exists' });
     }
 
-    await db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO buddy_requests (sender_id, receiver_id, trip_id, message, status)
       VALUES (?, ?, NULL, NULL, 'pending')
     `).run(senderId, recipientId);
@@ -874,7 +1044,7 @@ router.post('/request/:id/accept', async (req, res) => {
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {
@@ -913,7 +1083,7 @@ router.post('/request/:id/decline', async (req, res) => {
     const userId = req.userId;
 
     const request = await db.prepare(`
-      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ?
+      SELECT id, sender_id, trip_id, status FROM buddy_requests WHERE id = ? AND receiver_id = ? AND archived_at IS NULL
     `).get(id, userId);
 
     if (!request) {

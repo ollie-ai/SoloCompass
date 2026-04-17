@@ -18,6 +18,7 @@ import AdvisorySummaryWidget from '../widgets/AdvisorySummaryWidget'
 import DashboardSkeleton from '../DashboardSkeleton'
 import EsimWidget from '../../EsimWidget'
 import { formatFreshness, getDataFreshness, DATA_HEALTH_STATUS } from '../../../lib/dashboardStatusSystem'
+import QuickActionsBar from '../../QuickActionsBar'
 
 // Widget configuration for the management panel
 const WIDGET_CONFIG = {
@@ -97,6 +98,10 @@ const LiveTripDashboard = ({ trip = null, alerts = [], stats = {}, safetyData = 
         subtitle={`Today's plan, check-ins, and safety tools at a glance.`}
         primaryCta={{ label: "View trip details", href: `/trips/${trip?.id}` }}
         secondaryCta={{ label: "Check in now", href: "/safety" }}
+        extraCtas={[
+          { label: "🆘 SOS", href: "/safety?sos=1" },
+          { label: "✦ Ask Atlas", href: "/dashboard?atlas=1" },
+        ]}
         overlay="subtle"
         statusPanel={
           <div className="space-y-3">
@@ -116,6 +121,12 @@ const LiveTripDashboard = ({ trip = null, alerts = [], stats = {}, safetyData = 
           </div>
         }
         tripState="live_trip"
+      />
+
+      {/* Quick actions bar */}
+      <QuickActionsBar
+        onSOS={() => window.location.assign('/safety')}
+        onCheckIn={() => window.location.assign('/safety')}
       />
 
       {/* Widget Management Panel */}

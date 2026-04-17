@@ -1,16 +1,20 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useAuthStore } from './stores/authStore';
+import { useI18n } from './i18n/I18nProvider';
+import { trackFrontendError } from './lib/errorTracking';
 import { useThemeStore } from './stores/themeStore';
 import { initErrorCollector } from './lib/errorCollector';
+import { initSessionTracking } from './lib/telemetry';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import CookieConsent from './components/CookieConsent';
 import CallModal from './components/CallModal';
+import InstallPrompt from './components/InstallPrompt';
 import { useTelemetry } from './hooks/useTelemetry';
 const Home = lazy(() => import('./pages/Home'));
 const Login = lazy(() => import('./pages/Login'));
@@ -20,6 +24,7 @@ const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Quiz = lazy(() => import('./pages/Quiz'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Destinations = lazy(() => import('./pages/Destinations'));
 const DestinationDetail = lazy(() => import('./pages/DestinationDetail'));
 const CountryHub = lazy(() => import('./pages/CountryHub'));
@@ -31,6 +36,7 @@ const Admin = lazy(() => import('./pages/AdminNew'));
 const Advisories = lazy(() => import('./pages/Advisories'));
 const Reviews = lazy(() => import('./pages/Reviews'));
 const Buddies = lazy(() => import('./pages/Buddies'));
+const Meetups = lazy(() => import('./pages/Meetups'));
 const Terms = lazy(() => import('./pages/Terms'));
 const Privacy = lazy(() => import('./pages/Privacy'));
 const Cookies = lazy(() => import('./pages/Cookies'));
@@ -39,25 +45,39 @@ const Partnerships = lazy(() => import('./pages/Partnerships'));
 const EmailPreview = lazy(() => import('./pages/EmailPreview'));
 const Safety = lazy(() => import('./pages/Safety'));
 const Help = lazy(() => import('./pages/Help'));
+const Support = lazy(() => import('./pages/Support'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const Contact = lazy(() => import('./pages/Contact'));
 const About = lazy(() => import('./pages/About'));
 const Docs = lazy(() => import('./pages/Docs'));
 const Features = lazy(() => import('./pages/Features'));
+const FAQ = lazy(() => import('./pages/FAQ'));
+const Blog = lazy(() => import('./pages/Blog'));
 const Pricing = lazy(() => import('./pages/Pricing'));
+const Subscription = lazy(() => import('./pages/Subscription'));
 const SafetyInfo = lazy(() => import('./pages/SafetyInfo'));
 const EmergencyPhrases = lazy(() => import('./pages/EmergencyPhrases'));
+const Phrasebook = lazy(() => import('./pages/Phrasebook'));
 const Translator = lazy(() => import('./pages/Translator'));
 const PinkPath = lazy(() => import('./pages/PinkPath'));
 const CrimeMap = lazy(() => import('./pages/CrimeMap'));
+const Compare = lazy(() => import('./pages/Compare'));
 const NotFound = lazy(() => import('./pages/NotFound'));
+const Referrals = lazy(() => import('./pages/Referrals'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const Messages = lazy(() => import('./pages/Messages'));
 const Checkout = lazy(() => import('./pages/Checkout'));
+const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'));
+const PaymentCancel = lazy(() => import('./pages/PaymentCancel'));
 const GuardianAcknowledge = lazy(() => import('./pages/GuardianAcknowledge'));
 const GuardianDecline = lazy(() => import('./pages/GuardianDecline'));
 const SharedTrip = lazy(() => import('./pages/SharedTrip'));
+const TravelJournal = lazy(() => import('./pages/TravelJournal'));
+const TripItineraryPage = lazy(() => import('./pages/TripItineraryPage'));
+const TripPackingPage = lazy(() => import('./pages/TripPackingPage'));
+const TripSharePage = lazy(() => import('./pages/TripSharePage'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
+const WhatsNew = lazy(() => import('./components/WhatsNew'));
 
 function LoadingFallback() {
   return (
@@ -68,6 +88,7 @@ function LoadingFallback() {
 }
 
 function ErrorFallback({ error, resetErrorBoundary }) {
+  const { t } = useI18n();
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full bg-base-100 rounded-xl shadow-lg p-8 text-center">
@@ -76,22 +97,22 @@ function ErrorFallback({ error, resetErrorBoundary }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
         </div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">Something went wrong</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">{t('app.errorTitle')}</h2>
         <p className="text-gray-600 mb-6">
-          We encountered an unexpected error. Please try again or refresh the page.
+          {t('app.errorDescription')}
         </p>
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => window.location.reload()}
             className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
           >
-            Refresh Page
+            {t('app.refreshPage')}
           </button>
           <button
             onClick={resetErrorBoundary}
             className="px-4 py-2 bg-brand-vibrant text-white rounded-lg hover:opacity-90 transition-opacity"
           >
-            Try Again
+            {t('app.tryAgain')}
           </button>
         </div>
         {import.meta.env.DEV && (
@@ -118,6 +139,7 @@ function App() {
 
   useEffect(() => {
     initErrorCollector();
+    initSessionTracking();
   }, []);
 
   useEffect(() => {
@@ -139,24 +161,33 @@ function App() {
   }, [theme]);
 
   return (
-    <ErrorBoundary FallbackComponent={ErrorFallback}>
+    <ErrorBoundary FallbackComponent={ErrorFallback} onError={(error, info) => trackFrontendError(error, { componentStack: info?.componentStack })}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PageTracker />
         <Toaster position="top-right" />
         <CookieConsent />
         <CallModal />
+        <InstallPrompt />
         <Suspense fallback={<LoadingFallback />}>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Home />} />
             <Route path="/features" element={<Features />} />
             <Route path="/pricing" element={<Pricing />} />
+            <Route path="/pricing/plans" element={<Pricing />} />
+            <Route path="/subscription" element={<Subscription />} />
             <Route path="/safety-info" element={<SafetyInfo />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/auth/google/callback" element={<OAuthCallback provider="google" />} />
+            <Route path="/auth/facebook/callback" element={<OAuthCallback provider="facebook" />} />
+            <Route path="/auth/apple/callback" element={<OAuthCallback provider="apple" />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
+            <Route path="/verify-email/:token" element={<VerifyEmail />} />
+            <Route path="/magic-link" element={<MagicLink />} />
+            <Route path="/profile/:id" element={<PublicProfile />} />
             <Route
               path="/dashboard"
               element={
@@ -190,6 +221,22 @@ function App() {
               }
             />
             <Route
+              path="/buddy/messages"
+              element={
+                <ProtectedRoute>
+                  <Messages />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/buddy/messages/:id"
+              element={
+                <ProtectedRoute>
+                  <Messages />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/checkout"
               element={
                 <ProtectedRoute>
@@ -198,8 +245,40 @@ function App() {
               }
             />
             <Route
+              path="/payment/success"
+              element={
+                <ProtectedRoute>
+                  <PaymentSuccess />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/payment/cancel"
+              element={
+                <ProtectedRoute>
+                  <PaymentCancel />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings/notifications"
+              element={
+                <ProtectedRoute>
+                  <Settings />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/quiz"
               element={<Quiz />}
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <Onboarding />
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/destinations"
@@ -234,6 +313,38 @@ function App() {
               }
             />
             <Route
+              path="/explore"
+              element={
+                <ProtectedRoute>
+                  <Destinations />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/destination/:slug"
+              element={
+                <ProtectedRoute>
+                  <DestinationDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/destination/:slug/:tab"
+              element={
+                <ProtectedRoute>
+                  <DestinationDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/compare"
+              element={
+                <ProtectedRoute>
+                  <Compare />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/trips"
               element={
                 <ProtectedRoute>
@@ -254,6 +365,38 @@ function App() {
               element={
                 <ProtectedRoute>
                   <TripDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/trips/:id/itinerary"
+              element={
+                <ProtectedRoute>
+                  <TripItineraryPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/trips/:id/packing"
+              element={
+                <ProtectedRoute>
+                  <TripPackingPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/trips/:id/share"
+              element={
+                <ProtectedRoute>
+                  <TripSharePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/trips/:id/journal"
+              element={
+                <ProtectedRoute>
+                  <TravelJournal />
                 </ProtectedRoute>
               }
             />
@@ -305,6 +448,16 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* SC-SHARED-05: /phrasebook alias */}
+            <Route path="/phrasebook" element={<Navigate to="/safety/emergency-phrases" replace />} />
+            <Route
+              path="/phrasebook"
+              element={
+                <ProtectedRoute>
+                  <Phrasebook />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/safety/translator"
               element={
@@ -340,26 +493,71 @@ function App() {
                 <Buddies />
               </ProtectedRoute>
             } />
+            <Route path="/buddy" element={
+              <ProtectedRoute>
+                <Buddies />
+              </ProtectedRoute>
+            } />
+            <Route path="/buddy/discover" element={
+              <ProtectedRoute>
+                <Buddies />
+              </ProtectedRoute>
+            } />
+            <Route path="/buddy/meetups" element={
+              <ProtectedRoute>
+                <Meetups />
+              </ProtectedRoute>
+            } />
             <Route path="/terms" element={<Terms />} />
+            <Route path="/guides" element={<Guides />} />
+            <Route path="/tips" element={<Tips />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/cookies" element={<Cookies />} />
             <Route path="/legal" element={<Legal />} />
             <Route path="/help" element={<Help />} />
+            <Route path="/support" element={<Support />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/partnerships" element={<Partnerships />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="/about" element={<About />} />
+            <Route path="/faq" element={<FAQ />} />
+            <Route path="/changelog" element={<Changelog />} />
             <Route path="/guardian/acknowledge/:token" element={<GuardianAcknowledge />} />
             <Route path="/guardian/decline/:token" element={<GuardianDecline />} />
             <Route path="/trips/shared/:shareCode" element={<SharedTrip />} />
+            {/* Deep links — canonical URL aliases that open specific in-app views */}
+            <Route path="/verify" element={<VerifyDeepLink />} />
+            <Route path="/join/:shareCode" element={<JoinDeepLink />} />
+            <Route path="/invite/:token" element={<InviteDeepLink />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
         </Suspense>
         <BottomNav />
+        <WhatsNew />
       </BrowserRouter>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Deep-link helpers — resolve URL params and redirect to the correct in-app view.
+ * These routes are the canonical landing points for links sent by email / SMS.
+ */
+function VerifyDeepLink() {
+  const { search } = useLocation();
+  // /verify?token=XXX  →  /login?verify=1&token=XXX  (Login page reads token and calls verify API)
+  return <Navigate to={`/login${search}`} replace />;
+}
+
+function JoinDeepLink() {
+  const { shareCode } = useParams();
+  return <Navigate to={`/trips/shared/${shareCode}`} replace />;
+}
+
+function InviteDeepLink() {
+  const { token } = useParams();
+  return <Navigate to={`/buddies?invite=${token}`} replace />;
 }
 
 function PageTracker() {

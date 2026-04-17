@@ -219,7 +219,7 @@ const CallModal = () => {
                 {callState.caller?.avatarUrl || callState.callee?.avatarUrl ? (
                   <img
                     src={callState.caller?.avatarUrl || callState.callee?.avatarUrl}
-                    alt="User"
+                    alt={callState.caller?.name ? `${callState.caller.name}'s profile picture` : callState.callee?.name ? `${callState.callee.name}'s profile picture` : 'Caller profile picture'}
                     className="w-20 h-20 rounded-full object-cover border-4 border-brand-vibrant/20"
                   />
                 ) : (

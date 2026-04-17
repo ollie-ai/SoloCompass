@@ -6,6 +6,7 @@ import AdminModal from './AdminModal';
 import AdminDrawer from './AdminDrawer';
 import Button from '../Button';
 import BulkImport from './BulkImport';
+import ConfirmDialog from '../ConfirmDialog';
 import { 
   MapPin, 
   Edit2, 
@@ -57,6 +58,7 @@ const DestinationsTable = () => {
   const [showResearchPackDrawer, setShowResearchPackDrawer] = useState(false);
   const [researchPack, setResearchPack] = useState(null);
   const [researchPackLoading, setResearchPackLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, ids: [], count: 0 });
   const limit = 10;
 
   const [formData, setFormData] = useState({
@@ -167,14 +169,55 @@ const DestinationsTable = () => {
     setShowViewModal(true);
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this destination?')) return;
+  const handleDelete = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_single', ids: [id], count: 1 });
+  };
+
+  const executeConfirmedAction = async () => {
+    const { action, ids } = confirmDialog;
+    setConfirmDialog({ open: false, action: null, ids: [], count: 0 });
     try {
-      await api.delete(`/destinations/${id}`);
-      toast.success('Destination deleted');
+      setLoading(true);
+      switch (action) {
+        case 'delete_single':
+          await api.delete(`/destinations/${ids[0]}`);
+          toast.success('Destination deleted');
+          break;
+        case 'bulk_delete':
+          await Promise.all(ids.map(id => api.delete(`/destinations/${id}`)));
+          toast.success(`${ids.length} destinations deleted`);
+          setSelectedRows(new Set());
+          break;
+        case 'bulk_research':
+          await Promise.all(ids.map(id => api.post(`/destinations/${id}/run-research`)));
+          toast.success(`Research started for ${ids.length} destinations`);
+          setSelectedRows(new Set());
+          break;
+        case 'bulk_eligibility':
+          await Promise.all(ids.map(id => api.get(`/destinations/${id}/eligibility`)));
+          toast.success(`Eligibility checked for ${ids.length} destinations`);
+          setSelectedRows(new Set());
+          break;
+        case 'bulk_publish':
+          await Promise.all(ids.map(id => api.post(`/destinations/${id}/publish`)));
+          toast.success(`${ids.length} destinations published`);
+          setSelectedRows(new Set());
+          break;
+        case 'bulk_approve_publish':
+          for (const id of ids) {
+            await api.post(`/destinations/${id}/approve`, { status: 'approved' });
+            await api.put(`/destinations/${id}`, { publication_status: 'live' });
+          }
+          toast.success(`${ids.length} destinations approved and published`);
+          setSelectedRows(new Set());
+          break;
+        default: break;
+      }
       fetchDestinations();
     } catch (error) {
-      toast.error('Failed to delete destination');
+      toast.error('Operation failed');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -360,72 +403,24 @@ const DestinationsTable = () => {
     setSelectedRows(selected);
   };
 
-  const handleBulkDelete = async (selectedIndices) => {
+  const handleBulkDelete = (selectedIndices) => {
     const idsToDelete = selectedIndices.map(idx => destinations[idx]?.id).filter(Boolean);
-    if (!window.confirm(`Are you sure you want to delete ${idsToDelete.length} destinations?`)) return;
-    
-    try {
-      setLoading(true);
-      await Promise.all(idsToDelete.map(id => api.delete(`/destinations/${id}`)));
-      toast.success(`${idsToDelete.length} destinations deleted`);
-      setSelectedRows(new Set());
-      fetchDestinations();
-    } catch (error) {
-      toast.error('Failed to delete destinations');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({ open: true, action: 'bulk_delete', ids: idsToDelete, count: idsToDelete.length });
   };
 
-  const handleBulkResearch = async (selectedIndices) => {
+  const handleBulkResearch = (selectedIndices) => {
     const idsToResearch = selectedIndices.map(idx => destinations[idx]?.id).filter(Boolean);
-    if (!window.confirm(`Run AI research on ${idsToResearch.length} destinations?`)) return;
-    
-    try {
-      setLoading(true);
-      await Promise.all(idsToResearch.map(id => api.post(`/destinations/${id}/run-research`)));
-      toast.success(`Research started for ${idsToResearch.length} destinations`);
-      setSelectedRows(new Set());
-      fetchDestinations();
-    } catch (error) {
-      toast.error('Failed to start research');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({ open: true, action: 'bulk_research', ids: idsToResearch, count: idsToResearch.length });
   };
 
-  const handleBulkCheckEligibility = async (selectedIndices) => {
+  const handleBulkCheckEligibility = (selectedIndices) => {
     const idsToCheck = selectedIndices.map(idx => destinations[idx]?.id).filter(Boolean);
-    if (!window.confirm(`Check eligibility for ${idsToCheck.length} destinations?`)) return;
-    
-    try {
-      setLoading(true);
-      await Promise.all(idsToCheck.map(id => api.get(`/destinations/${id}/eligibility`)));
-      toast.success(`Eligibility checked for ${idsToCheck.length} destinations`);
-      setSelectedRows(new Set());
-      fetchDestinations();
-    } catch (error) {
-      toast.error('Failed to check eligibility');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({ open: true, action: 'bulk_eligibility', ids: idsToCheck, count: idsToCheck.length });
   };
 
-  const handleBulkPublish = async (selectedIndices) => {
+  const handleBulkPublish = (selectedIndices) => {
     const idsToPublish = selectedIndices.map(idx => destinations[idx]?.id).filter(Boolean);
-    if (!window.confirm(`Publish ${idsToPublish.length} destinations?`)) return;
-    
-    try {
-      setLoading(true);
-      await Promise.all(idsToPublish.map(id => api.post(`/destinations/${id}/publish`)));
-      toast.success(`${idsToPublish.length} destinations published`);
-      setSelectedRows(new Set());
-      fetchDestinations();
-    } catch (error) {
-      toast.error('Failed to publish destinations');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({ open: true, action: 'bulk_publish', ids: idsToPublish, count: idsToPublish.length });
   };
 
   const handleBulkStatusChange = async (selectedIndices) => {
@@ -481,23 +476,9 @@ const DestinationsTable = () => {
       label: 'Approve & Publish',
       icon: <CheckCircle2 size={14} />,
       variant: 'success',
-      onClick: async (selectedIndices) => {
+      onClick: (selectedIndices) => {
         const idsToPublish = selectedIndices.map(idx => destinations[idx]?.id).filter(Boolean);
-        if (!window.confirm(`Approve and publish ${idsToPublish.length} destinations?`)) return;
-        try {
-          setLoading(true);
-          for (const id of idsToPublish) {
-            await api.post(`/destinations/${id}/approve`, { status: 'approved' });
-            await api.put(`/destinations/${id}`, { publication_status: 'live' });
-          }
-          toast.success(`${idsToPublish.length} destinations approved and published`);
-          setSelectedRows(new Set());
-          fetchDestinations();
-        } catch (error) {
-          toast.error('Failed to approve and publish');
-        } finally {
-          setLoading(false);
-        }
+        setConfirmDialog({ open: true, action: 'bulk_approve_publish', ids: idsToPublish, count: idsToPublish.length });
       }
     }
   ];
@@ -995,8 +976,27 @@ const DestinationsTable = () => {
     { value: 'source_partner', label: 'Partner', group: 'Source' },
   ];
 
+  const CONFIRM_LABELS = {
+    delete_single: { title: 'Delete Destination?', description: 'This destination will be permanently deleted.', label: 'Delete', variant: 'danger' },
+    bulk_delete: { title: `Delete ${confirmDialog.count} Destinations?`, description: 'These destinations will be permanently deleted.', label: 'Delete All', variant: 'danger' },
+    bulk_research: { title: `Run AI Research on ${confirmDialog.count} Destinations?`, description: 'This will queue AI research jobs for the selected destinations.', label: 'Run Research', variant: 'warning' },
+    bulk_eligibility: { title: `Check Eligibility for ${confirmDialog.count} Destinations?`, description: 'This will run eligibility checks for the selected destinations.', label: 'Check', variant: 'info' },
+    bulk_publish: { title: `Publish ${confirmDialog.count} Destinations?`, description: 'These destinations will be made publicly visible.', label: 'Publish', variant: 'warning' },
+    bulk_approve_publish: { title: `Approve & Publish ${confirmDialog.count} Destinations?`, description: 'These destinations will be approved and made publicly visible.', label: 'Approve & Publish', variant: 'warning' },
+  };
+  const activeConfirm = confirmDialog.action ? CONFIRM_LABELS[confirmDialog.action] : null;
+
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={executeConfirmedAction}
+        onCancel={() => setConfirmDialog({ open: false, action: null, ids: [], count: 0 })}
+        title={activeConfirm?.title}
+        description={activeConfirm?.description}
+        confirmLabel={activeConfirm?.label}
+        variant={activeConfirm?.variant || 'danger'}
+      />
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           <Button 

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import logger from './logger.js';
+import { getAirportTimezoneByIata, formatAirportLocalTime } from './timezoneService.js';
 
 const AVIATIONSTACK_BASE_URL = 'https://api.aviationstack.com/v1';
 
@@ -61,7 +62,8 @@ export async function getFlightStatus(flightNumber, date, apiKey) {
         delay: flight.departure?.delay,
         city: flight.departure?.city,
         country: flight.departure?.country,
-        timezone: flight.departure?.timezone
+        timezone: flight.departure?.timezone || getAirportTimezoneByIata(flight.departure?.iata)?.timezone || null,
+        local_time_label: formatAirportLocalTime(flight.departure?.scheduled || flight.departure?.estimated, flight.departure?.iata),
       },
       arrival: {
         airport: flight.arrival?.airport,
@@ -75,7 +77,8 @@ export async function getFlightStatus(flightNumber, date, apiKey) {
         delay: flight.arrival?.delay,
         city: flight.arrival?.city,
         country: flight.arrival?.country,
-        timezone: flight.arrival?.timezone
+        timezone: flight.arrival?.timezone || getAirportTimezoneByIata(flight.arrival?.iata)?.timezone || null,
+        local_time_label: formatAirportLocalTime(flight.arrival?.scheduled || flight.arrival?.estimated, flight.arrival?.iata),
       },
       status: flight.flight_status,
       aircraft: flight.aircraft?.iata || flight.aircraft?.model,
@@ -132,7 +135,8 @@ export async function getFlightById(flightId, apiKey) {
         delay: flight.departure?.delay,
         city: flight.departure?.city,
         country: flight.departure?.country,
-        timezone: flight.departure?.timezone
+        timezone: flight.departure?.timezone || getAirportTimezoneByIata(flight.departure?.iata)?.timezone || null,
+        local_time_label: formatAirportLocalTime(flight.departure?.scheduled || flight.departure?.estimated, flight.departure?.iata),
       },
       arrival: {
         airport: flight.arrival?.airport,
@@ -146,7 +150,8 @@ export async function getFlightById(flightId, apiKey) {
         delay: flight.arrival?.delay,
         city: flight.arrival?.city,
         country: flight.arrival?.country,
-        timezone: flight.arrival?.timezone
+        timezone: flight.arrival?.timezone || getAirportTimezoneByIata(flight.arrival?.iata)?.timezone || null,
+        local_time_label: formatAirportLocalTime(flight.arrival?.scheduled || flight.arrival?.estimated, flight.arrival?.iata),
       },
       status: flight.flight_status,
       aircraft: flight.aircraft?.iata || flight.aircraft?.model,

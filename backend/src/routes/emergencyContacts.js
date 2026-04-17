@@ -2,12 +2,26 @@ import express from 'express';
 import db from '../db.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { sendVerificationSMS } from '../services/smsService.js';
-import { v4 as uuidv4 } from 'uuid';
+import { PLAN_TIERS } from '../middleware/paywall.js';
 import logger from '../services/logger.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 
-const router = express.Router();
+const TIER_CONTACT_LIMITS = {
+  [PLAN_TIERS.EXPLORER]: 1,
+  [PLAN_TIERS.GUARDIAN]: 3,
+  [PLAN_TIERS.NAVIGATOR]: 5
+};
+
+async function getUserTier(userId) {
+  const user = await db.prepare('SELECT subscription_tier, is_premium FROM users WHERE id = ?').get(userId);
+  if (!user) return PLAN_TIERS.EXPLORER;
+  if (user.is_premium && !user.subscription_tier) return PLAN_TIERS.GUARDIAN;
+  return user.subscription_tier || PLAN_TIERS.EXPLORER;
+}
 
 const RELATIONSHIPS = ['parent', 'spouse', 'sibling', 'friend', 'partner', 'other'];
+
+const router = express.Router();
 
 // GET /emergency-contacts - List user's emergency contacts (admin can view any user's)
 router.get('/', authenticate, async (req, res) => {
@@ -86,7 +100,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /emergency-contacts - Create new contact
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, requireFeature(FEATURES.EMERGENCY_CONTACTS), async (req, res) => {
   try {
     const {
       name,
@@ -137,15 +151,29 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // Check contact limit (max 10 contacts)
-    const existingCount = await db.prepare(`
-      SELECT COUNT(*) as count FROM emergency_contacts WHERE user_id = ?
-    `).get(req.userId);
+    // Check tier-based contact limits
+    const userRecord = await db.prepare('SELECT subscription_tier, is_premium FROM users WHERE id = ?').get(req.userId);
+    const tier = userRecord?.subscription_tier || 'explorer';
 
-    if (existingCount.count >= 10) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Maximum of 10 emergency contacts allowed' 
+    const contactLimits = { explorer: 1, guardian: 3, navigator: null };
+    const limit = contactLimits[tier];
+
+    const existingCount = await db.prepare(
+      'SELECT COUNT(*) as count FROM emergency_contacts WHERE user_id = ?'
+    ).get(req.userId);
+
+    if (limit !== null && existingCount.count >= limit) {
+      const upgradeTarget = tier === 'explorer' ? 'Guardian (3 contacts)' : 'Navigator (unlimited)';
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'CONTACT_LIMIT_REACHED',
+          message: `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan allows ${limit} emergency contact${limit === 1 ? '' : 's'}. Upgrade to ${upgradeTarget} for more.`,
+          currentPlan: tier,
+          limit,
+          used: existingCount.count,
+          upgradeUrl: '/settings?tab=billing',
+        },
       });
     }
 
@@ -421,7 +449,7 @@ router.post('/:id/send-verification', authenticate, async (req, res) => {
       });
     }
 
-    const verificationCode = uuidv4().substring(0, 8).toUpperCase();
+    const verificationCode = String(Math.floor(100000 + Math.random() * 900000));
     
     await db.prepare(`
       UPDATE emergency_contacts 
@@ -448,6 +476,45 @@ router.post('/:id/send-verification', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Error sending verification SMS:', error);
     res.status(500).json({ success: false, error: 'Failed to send verification SMS' });
+  }
+});
+
+// POST /emergency-contacts/:id/verify - Verify contact with code
+router.post('/:id/verify', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'Verification code is required' });
+    }
+
+    const contact = await db.prepare(`
+      SELECT id, user_id, verification_code, verified FROM emergency_contacts WHERE id = ? AND user_id = ?
+    `).get(id, req.userId);
+
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+
+    if (contact.verified) {
+      return res.json({ success: true, message: 'Contact is already verified' });
+    }
+
+    if (!contact.verification_code || contact.verification_code !== String(code)) {
+      return res.status(400).json({ success: false, error: 'Invalid verification code' });
+    }
+
+    await db.prepare(`
+      UPDATE emergency_contacts
+      SET verified = true, verification_code = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+
+    res.json({ success: true, message: 'Contact verified successfully' });
+  } catch (error) {
+    logger.error('Error verifying contact:', error);
+    res.status(500).json({ success: false, error: 'Failed to verify contact' });
   }
 });
 

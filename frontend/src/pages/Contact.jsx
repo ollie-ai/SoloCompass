@@ -1,27 +1,8 @@
-import { useState } from 'react';
-import { Mail, Phone, MapPin, Clock, MessageSquare, Send } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { Mail, Phone, MapPin, Clock, MessageSquare } from 'lucide-react';
 import SEO from '../components/SEO';
-import api from '../lib/api';
+import FeedbackForm from '../components/FeedbackForm';
 
 export default function Contact() {
-  const [form, setForm] = useState({ name: '', email: '', subject: 'General Enquiry', message: '' });
-  const [sending, setSending] = useState(false);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSending(true);
-    try {
-      await api.post('/help/contact', form);
-      toast.success('Message sent! We will get back to you within 24 hours.');
-      setForm({ name: '', email: '', subject: 'General Enquiry', message: '' });
-    } catch {
-      toast.error('Failed to send message. Please try again or email us directly.');
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-base-200 pt-20 pb-16">
       <SEO title="Contact Us" description="Get in touch with the SoloCompass team for support, partnerships, or general enquiries." />
@@ -96,70 +77,8 @@ export default function Contact() {
           </div>
 
           <div className="bg-base-100 rounded-2xl p-6 shadow-sm border border-base-300/50">
-            <h2 className="text-xl font-black text-base-content mb-6">Send a Message</h2>
-            
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <div>
-                <label className="block text-sm font-bold text-base-content/80 mb-2">Name</label>
-                <input
-                  type="text"
-                  required
-                  value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-base-300/50 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium"
-                  placeholder="Your name"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-bold text-base-content/80 mb-2">Email</label>
-                <input
-                  type="email"
-                  required
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-base-300/50 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium"
-                  placeholder="you@example.com"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-bold text-base-content/80 mb-2">Subject</label>
-                <select
-                  value={form.subject}
-                  onChange={e => setForm({ ...form, subject: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-base-300/50 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium"
-                >
-                  <option>General</option>
-                  <option>Account</option>
-                  <option>Billing</option>
-                  <option>Safety</option>
-                  <option>Partnerships</option>
-                  <option>Press</option>
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-bold text-base-content/80 mb-2">Message</label>
-                <textarea
-                  required
-                  rows={5}
-                  value={form.message}
-                  onChange={e => setForm({ ...form, message: e.target.value })}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-base-300/50 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium resize-none"
-                  placeholder="How can we help?"
-                />
-              </div>
-              
-              <button
-                type="submit"
-                disabled={sending}
-                className="w-full py-4 bg-brand-vibrant text-white rounded-xl font-bold hover:bg-brand-vibrant/90 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-brand-vibrant/20 disabled:opacity-50"
-              >
-                <Send size={18} />
-                {sending ? 'Sending...' : 'Send Message'}
-              </button>
-            </form>
+            <h2 className="text-xl font-black text-base-content mb-6">Send Feedback</h2>
+            <FeedbackForm />
           </div>
         </div>
       </div>

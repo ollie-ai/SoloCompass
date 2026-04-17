@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { pool } from '../db.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { premiumOnly } from '../middleware/paywall.js';
 import rateLimit from 'express-rate-limit';
@@ -11,6 +12,13 @@ import * as countryEligibilityService from '../services/countryEligibilityServic
 import * as advisoryIngestionService from '../services/advisoryIngestionService.js';
 
 const router = express.Router();
+
+// General rate limiter for destination data endpoints
+const destinationsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: { success: false, error: 'Too many requests, please try again later.' }
+});
 
 const safeJsonParse = (str, fallbackVal = []) => {
   if (!str) return fallbackVal;
@@ -26,6 +34,8 @@ router.get('/', authenticate, async (req, res) => {
       climate, 
       travel_style,
       solo_friendly_min,
+      region,
+      safety,
       search,
       filter,
       level,
@@ -173,7 +183,15 @@ router.get('/', authenticate, async (req, res) => {
       params.push(parseInt(solo_friendly_min));
     }
 
-    // Sorting logic
+    if (region) {
+      query += ' AND region ILIKE ?';
+      params.push(`%${region}%`);
+    }
+
+    if (safety) {
+      query += ' AND safety_rating = ?';
+      params.push(safety);
+    }
     const sort = req.query.sort || 'popularity';
     const sortMap = {
       popularity: 'solo_friendly_rating DESC',
@@ -256,6 +274,8 @@ router.get('/', authenticate, async (req, res) => {
     if (climate) { countQuery += ' AND climate = ?'; countParams.push(climate); }
     if (travel_style) { countQuery += ' AND travel_styles ILIKE ?'; countParams.push(`%${travel_style}%`); }
     if (solo_friendly_min) { countQuery += ' AND solo_friendly_rating >= ?'; countParams.push(parseInt(solo_friendly_min)); }
+    if (region) { countQuery += ' AND region ILIKE ?'; countParams.push(`%${region}%`); }
+    if (safety) { countQuery += ' AND safety_rating = ?'; countParams.push(safety); }
     
     const { total } = await db.prepare(countQuery).get(...countParams);
 
@@ -279,6 +299,85 @@ router.get('/', authenticate, async (req, res) => {
       success: false,
       message: 'Failed to fetch destinations'
     });
+  }
+});
+
+// GET /search - search destinations
+router.get('/search', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { q, limit = 20 } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ success: false, error: 'Query must be at least 2 characters' });
+    }
+    const searchTerm = `%${q.trim()}%`;
+    const result = await pool.query(`
+      SELECT id, COALESCE(title, name) as title, name, slug, country, region, city,
+             description, budget_level, climate, safety_rating, solo_friendly_rating,
+             image_url, publication_status
+      FROM destinations
+      WHERE publication_status = 'live'
+        AND (name ILIKE $1 OR country ILIKE $1 OR city ILIKE $1 OR description ILIKE $1 OR region ILIKE $1)
+      ORDER BY
+        CASE WHEN name ILIKE $2 THEN 0 WHEN country ILIKE $2 THEN 1 ELSE 2 END,
+        name ASC
+      LIMIT $3
+    `, [searchTerm, `%${q.trim()}%`, parseInt(limit)]);
+    res.json({ success: true, data: result.rows, total: result.rows.length });
+  } catch (error) {
+    logger.error('Error searching destinations:', error);
+    res.status(500).json({ success: false, error: 'Search failed' });
+  }
+});
+
+// GET /trending - trending destinations
+router.get('/trending', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const result = await pool.query(`
+      SELECT d.id, COALESCE(d.title, d.name) as title, d.name, d.slug, d.country,
+             d.region, d.description, d.budget_level, d.climate, d.safety_rating,
+             d.solo_friendly_rating, d.image_url,
+             COUNT(DISTINCT t.id) as trip_count,
+             COUNT(DISTINCT r.id) as review_count
+      FROM destinations d
+      LEFT JOIN trips t ON t.destination_ref_id = d.id AND t.created_at > NOW() - INTERVAL '30 days'
+      LEFT JOIN reviews r ON r.destination_id = d.id AND r.created_at > NOW() - INTERVAL '30 days'
+      WHERE d.publication_status = 'live'
+      GROUP BY d.id
+      ORDER BY (COUNT(DISTINCT t.id) + COUNT(DISTINCT r.id)) DESC, d.solo_friendly_rating DESC NULLS LAST
+      LIMIT $1
+    `, [parseInt(limit)]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    logger.error('Error fetching trending destinations:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch trending destinations' });
+  }
+});
+
+// GET /compare - compare 2-3 destinations
+router.get('/compare', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { ids } = req.query;
+    if (!ids) return res.status(400).json({ success: false, error: 'ids parameter required (comma-separated)' });
+    const idList = ids.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id)).slice(0, 3);
+    if (idList.length < 2) return res.status(400).json({ success: false, error: 'At least 2 destination IDs required' });
+    const placeholders = idList.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await pool.query(`
+      SELECT d.id, COALESCE(d.title, d.name) as title, d.name, d.slug, d.country, d.region,
+             d.description, d.budget_level, d.climate, d.safety_rating, d.solo_friendly_rating,
+             d.image_url, d.latitude, d.longitude, d.best_months, d.travel_styles,
+             ss.overall as safety_overall, ss.women as safety_women, ss.lgbtq as safety_lgbtq,
+             ss.night as safety_night, ss.solo as safety_solo,
+             pi.visa_notes, pi.tap_water_safe, pi.currency_code, pi.language
+      FROM destinations d
+      LEFT JOIN safety_scores ss ON ss.destination_id = d.id
+      LEFT JOIN destination_practical_info pi ON pi.destination_id = d.id
+      WHERE d.id IN (${placeholders})
+    `, idList);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    logger.error('Error comparing destinations:', error);
+    res.status(500).json({ success: false, error: 'Comparison failed' });
   }
 });
 
@@ -341,6 +440,231 @@ router.get('/:id', authenticate, async (req, res) => {
       success: false,
       message: 'Failed to fetch destination'
     });
+  }
+});
+
+// GET /:id/weather - weather data (12-month historical cache)
+router.get('/:id/weather', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const dest = await pool.query('SELECT id, name, latitude, longitude FROM destinations WHERE id = $1', [id]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+    const destination = dest.rows[0];
+
+    // Check DB cache first
+    const cached = await pool.query(
+      'SELECT * FROM weather_cache WHERE destination_id = $1 ORDER BY month ASC',
+      [id]
+    );
+
+    if (cached.rows.length === 12) {
+      return res.json({ success: true, data: { monthly: cached.rows, destination: destination.name }, source: 'cache' });
+    }
+
+    // Return current OWM data if no 12-month cache
+    const apiKey = process.env.OPENWEATHERMAP_API_KEY;
+    if (apiKey && destination.latitude && destination.longitude) {
+      try {
+        const { getWeatherByCoords, getForecast } = await import('../services/weatherService.js');
+        const [current, forecast] = await Promise.all([
+          getWeatherByCoords(destination.latitude, destination.longitude, apiKey),
+          getForecast(destination.name, apiKey)
+        ]);
+        return res.json({ success: true, data: { current, forecast, destination: destination.name, monthly: cached.rows }, source: 'live' });
+      } catch (weatherErr) {
+        logger.warn('[Destinations] Weather fetch failed:', weatherErr.message);
+      }
+    }
+
+    res.json({ success: true, data: { monthly: cached.rows, destination: destination.name }, source: 'cache' });
+  } catch (error) {
+    logger.error('Error fetching destination weather:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch weather data' });
+  }
+});
+
+// GET /:id/cost - cost breakdown
+router.get('/:id/cost', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const dest = await pool.query('SELECT id, name, budget_level FROM destinations WHERE id = $1', [id]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+
+    const costData = await pool.query(
+      'SELECT category, budget_low, budget_mid, budget_high, currency_code, notes FROM destination_cost_data WHERE destination_id = $1 ORDER BY category',
+      [id]
+    );
+
+    const summary = {
+      budget_level: dest.rows[0].budget_level,
+      categories: costData.rows
+    };
+
+    res.json({ success: true, data: summary });
+  } catch (error) {
+    logger.error('Error fetching destination cost:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch cost data' });
+  }
+});
+
+// GET /:id/practical - practical info
+router.get('/:id/practical', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const dest = await pool.query('SELECT id, name, emergency_contacts FROM destinations WHERE id = $1', [id]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+
+    const practical = await pool.query(
+      'SELECT * FROM destination_practical_info WHERE destination_id = $1',
+      [id]
+    );
+
+    const data = practical.rows[0] || {};
+    // Merge with emergency_contacts from destinations row if practical info empty
+    if (!data.emergency_number) {
+      try {
+        const contacts = JSON.parse(dest.rows[0].emergency_contacts || '{}');
+        data.emergency_number = contacts.police || data.emergency_number;
+        data.police_number = contacts.police || data.police_number;
+        data.ambulance_number = contacts.ambulance || data.ambulance_number;
+        data.fire_number = contacts.fire || data.fire_number;
+      } catch {}
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Error fetching destination practical info:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch practical info' });
+  }
+});
+
+// GET /:id/sunrise-sunset - astronomical data
+router.get('/:id/sunrise-sunset', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { date } = req.query;
+    const dest = await pool.query('SELECT id, name, latitude, longitude FROM destinations WHERE id = $1', [id]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+    const { latitude, longitude, name } = dest.rows[0];
+    if (!latitude || !longitude) {
+      return res.status(422).json({ success: false, error: 'Destination has no coordinates' });
+    }
+    const targetDate = date || new Date().toISOString().split('T')[0];
+    const apiUrl = `https://api.sunrise-sunset.org/json?lat=${latitude}&lng=${longitude}&date=${targetDate}&formatted=0`;
+    const response = await axios.get(apiUrl, { timeout: 5000 });
+    res.json({ success: true, data: { ...response.data.results, destination: name, date: targetDate } });
+  } catch (error) {
+    logger.error('Error fetching sunrise-sunset data:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch astronomical data' });
+  }
+});
+
+// GET /:id/reviews - list reviews for destination
+router.get('/:id/reviews', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20, sort = 'newest' } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const sortClause = sort === 'helpful' ? 'r.helpful_count DESC' :
+                       sort === 'highest' ? 'r.overall_rating DESC' : 'r.created_at DESC';
+
+    const result = await pool.query(`
+      SELECT r.*, u.name as author_name
+      FROM reviews r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE (r.destination_id = $1 OR LOWER(r.destination) LIKE LOWER($2))
+        AND r.status = 'approved'
+      ORDER BY ${sortClause}
+      LIMIT $3 OFFSET $4
+    `, [parseInt(id), `%${id}%`, parseInt(limit), offset]);
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total FROM reviews WHERE (destination_id = $1) AND status = 'approved'`,
+      [parseInt(id)]
+    );
+
+    res.json({ success: true, data: result.rows, total: parseInt(countResult.rows[0].total), page: parseInt(page) });
+  } catch (error) {
+    logger.error('Error fetching destination reviews:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch reviews' });
+  }
+});
+
+// POST /:id/reviews - submit review for destination
+router.post('/:id/reviews', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { title, content, overallRating, soloFriendlyRating, safetyRating, valueRating, visitedDate, tags = [] } = req.body;
+
+    if (!title || !content) return res.status(400).json({ success: false, error: 'Title and content are required' });
+    if (!overallRating || overallRating < 1 || overallRating > 5) return res.status(400).json({ success: false, error: 'Overall rating must be between 1 and 5' });
+    if (content.length < 50) return res.status(400).json({ success: false, error: 'Review content must be at least 50 characters' });
+
+    // One review per user per destination
+    const existing = await pool.query(
+      'SELECT id FROM reviews WHERE user_id = $1 AND destination_id = $2',
+      [userId, parseInt(id)]
+    );
+    if (existing.rows.length > 0) return res.status(409).json({ success: false, error: 'You have already reviewed this destination' });
+
+    const dest = await pool.query('SELECT name FROM destinations WHERE id = $1', [parseInt(id)]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+
+    const result = await pool.query(`
+      INSERT INTO reviews (user_id, destination_id, destination, title, content, overall_rating, solo_friendly_rating, safety_rating, value_rating, visited_date, tags, status, venue_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', 'other')
+      RETURNING id
+    `, [userId, parseInt(id), dest.rows[0].name, title, content, overallRating, soloFriendlyRating || null, safetyRating || null, valueRating || null, visitedDate || null, JSON.stringify(tags)]);
+
+    res.status(201).json({ success: true, data: { id: result.rows[0].id }, message: 'Review submitted for moderation' });
+  } catch (error) {
+    logger.error('Error creating destination review:', error);
+    res.status(500).json({ success: false, error: 'Failed to submit review' });
+  }
+});
+
+// GET /:id/tips - community tips for destination
+router.get('/:id/tips', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { category, page = 1, limit = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const conditions = ['ct.destination_id = $1', "ct.status = 'active'"];
+    const params = [parseInt(id)];
+    if (category) { conditions.push(`ct.category = $${params.length + 1}`); params.push(category); }
+    const result = await pool.query(`
+      SELECT ct.*, u.name as author_name
+      FROM community_tips ct
+      LEFT JOIN users u ON u.id = ct.user_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY ct.upvotes DESC, ct.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, parseInt(limit), offset]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    logger.error('Error fetching tips:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch tips' });
+  }
+});
+
+// POST /:id/tips - submit tip for destination
+router.post('/:id/tips', authenticate, destinationsLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { content, category = 'general' } = req.body;
+    if (!content || content.trim().length < 20) return res.status(400).json({ success: false, error: 'Tip must be at least 20 characters' });
+    const dest = await pool.query('SELECT id FROM destinations WHERE id = $1', [parseInt(id)]);
+    if (!dest.rows.length) return res.status(404).json({ success: false, error: 'Destination not found' });
+    const result = await pool.query(`
+      INSERT INTO community_tips (user_id, destination_id, category, content) VALUES ($1, $2, $3, $4) RETURNING id
+    `, [userId, parseInt(id), category, content.trim()]);
+    res.status(201).json({ success: true, data: { id: result.rows[0].id }, message: 'Tip submitted' });
+  } catch (error) {
+    logger.error('Error submitting tip:', error);
+    res.status(500).json({ success: false, error: 'Failed to submit tip' });
   }
 });
 

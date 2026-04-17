@@ -23,7 +23,8 @@ import {
   Mail,
   Server,
   Settings,
-  Gauge
+  Gauge,
+  BarChart3
 } from 'lucide-react';
 
 const StatCard = ({ title, value, change, changeType, icon: Icon, color, to }) => {
@@ -114,6 +115,40 @@ const ServiceStatus = ({ name, status, icon: Icon }) => {
   );
 };
 
+const MiniTrendChart = ({ title, points = [], valueKey = 'value', color = '#0ea5e9' }) => {
+  const safePoints = Array.isArray(points) ? points : [];
+  const values = safePoints.map((p) => Number(p?.[valueKey] || 0));
+  const max = Math.max(1, ...values);
+  const min = Math.min(...values, 0);
+  const range = Math.max(1, max - min);
+  const width = 320;
+  const height = 80;
+
+  const coords = safePoints.map((point, index) => {
+    const x = safePoints.length <= 1 ? 0 : (index / (safePoints.length - 1)) * width;
+    const y = height - (((Number(point?.[valueKey] || 0) - min) / range) * height);
+    return `${x},${y}`;
+  }).join(' ');
+
+  const latest = safePoints[safePoints.length - 1]?.[valueKey] || 0;
+
+  return (
+    <div className="p-4 bg-base-100 rounded-xl border border-base-300">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-bold text-base-content">{title}</p>
+        <span className="text-xs font-black text-base-content/50">{latest}</span>
+      </div>
+      {safePoints.length > 1 ? (
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-20">
+          <polyline fill="none" stroke={color} strokeWidth="3" points={coords} strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <div className="h-20 flex items-center justify-center text-xs text-base-content/40">No trend data</div>
+      )}
+    </div>
+  );
+};
+
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
@@ -121,6 +156,7 @@ const AdminDashboard = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [health, setHealth] = useState(null);
   const [metricsSummary, setMetricsSummary] = useState({ total: 0, critical: 0, warning: 0, healthy: 0 });
+  const [timeSeries, setTimeSeries] = useState({ users: [], trips: [], engagement: [] });
 
   useEffect(() => {
     fetchDashboardData();
@@ -138,12 +174,14 @@ const fetchDashboardData = async () => {
         api.get('/admin/audit-logs', { params: { limit: 5 } }),
         api.get('/admin/audit-logs', { params: { type: 'client_error', days: 7, limit: 1 } }),
         api.get('/admin/system-health'),
-        api.get('/admin/metrics/violations')
+        api.get('/admin/metrics/violations'),
+        api.get('/admin/analytics/timeseries?period=30d&metrics=users,trips,revenue'),
       ]);
       
       // Set data (with fallbacks for failed requests)
-      const [statsRes, opsRes, modRes, auditRes, errorsRes, healthRes, metricsRes] = results;
+      const [statsRes, opsRes, modRes, auditRes, errorsRes, healthRes, metricsRes, tsRes] = results;
       setStats(statsRes?.data?.data || {});
+      setTimeSeries(statsRes?.data?.data?.timeSeries || { users: [], trips: [], engagement: [] });
       setAlerts({
         ops: opsRes?.data?.data?.alerts?.filter(a => !a.resolved_at).length || 0,
         errors: errorsRes?.data?.data?.total || 0,
@@ -153,6 +191,9 @@ const fetchDashboardData = async () => {
       setHealth(healthRes?.data?.data);
       if (metricsRes?.data?.success) {
         setMetricsSummary(metricsRes.data.data.summary || { total: 0, critical: 0, warning: 0, healthy: 0 });
+      }
+      if (tsRes?.data?.success) {
+        setTimeseries(tsRes.data.data.series || []);
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
@@ -245,6 +286,13 @@ const fetchDashboardData = async () => {
         />
       </div>
 
+      {/* Analytics Trends */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <MiniTrendChart title="User growth trend" points={timeSeries.users} valueKey="value" color="#0ea5e9" />
+        <MiniTrendChart title="Trip creation trend" points={timeSeries.trips} valueKey="value" color="#10b981" />
+        <MiniTrendChart title="Engagement trend" points={timeSeries.engagement} valueKey="events" color="#f59e0b" />
+      </div>
+
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Activity */}
@@ -314,6 +362,36 @@ const fetchDashboardData = async () => {
           </div>
         </div>
       </div>
+
+      {/* Growth Trends */}
+      {timeseries.length > 0 && (
+        <div className="bg-base-100 rounded-2xl border border-base-300 overflow-hidden">
+          <div className="p-4 border-b border-base-300 bg-base-200/30 flex items-center justify-between">
+            <h3 className="font-black text-base-content flex items-center gap-2">
+              <BarChart3 size={18} className="text-sky-500" />
+              Growth Trends (Last 30 Days)
+            </h3>
+            <div className="flex items-center gap-1 text-xs">
+              {[
+                { key: 'users', label: 'Users', color: 'text-sky-500 bg-sky-500/10' },
+                { key: 'trips', label: 'Trips', color: 'text-emerald-500 bg-emerald-500/10' },
+                { key: 'newSubscriptions', label: 'Subscriptions', color: 'text-violet-500 bg-violet-500/10' },
+              ].map(m => (
+                <button
+                  key={m.key}
+                  onClick={() => setTsMetric(m.key)}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${tsMetric === m.key ? m.color : 'text-base-content/40 hover:text-base-content/60'}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="p-4">
+            <MiniBarChart data={timeseries} metricKey={tsMetric} />
+          </div>
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div className="bg-base-100 rounded-2xl border border-base-300 p-4">

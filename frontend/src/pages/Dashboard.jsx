@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../stores/authStore';
 import Skeleton from '../components/Skeleton';
-import api, { getTripAccommodation, getTripBookings, getTripDocuments, getTripPlaces, getTripBudget } from '../lib/api';
+import api, { getTripAccommodation, getTripBookings, getTripDocuments, getTripPlaces, getTripBudget, getDashboardActivity } from '../lib/api';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'framer-motion';
 import { resolveDashboardState, computeStats } from '../lib/dashboardStateResolver';
@@ -16,6 +16,7 @@ import LiveTripDashboard from '../components/dashboard/states/LiveTripDashboard'
 import CompletedDashboard from '../components/dashboard/states/CompletedDashboard';
 import SubscriptionBanner from '../components/dashboard/SubscriptionBanner';
 import APIErrorBoundary from '../components/APIErrorBoundary';
+import SafetyStatusIndicator from '../components/SafetyStatusIndicator';
 
 // Stable selector for user - prevents unnecessary re-renders
 const selectUser = (state) => state.user;
@@ -46,6 +47,8 @@ const Dashboard = () => {
   const [timeWeather, setTimeWeather] = useState(null);
   const [devMode, setDevMode] = useState(null);
   const [savedDashboardState, setSavedDashboardState] = useDashboardState();
+  const [activityFeed, setActivityFeed] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(true);
   
   // Ref to store interval ID for cleanup
   const paymentIntervalRef = useRef(null);
@@ -88,11 +91,12 @@ const Dashboard = () => {
       try {
         setLoading(true);
         setError(null);
-        const [tripsRes, alertsRes, contactsRes, checkInRes] = await Promise.all([
+        const [tripsRes, alertsRes, contactsRes, checkInRes, activityRes] = await Promise.all([
           api.get('/trips'),
           api.get('/advisories'),
           api.get('/emergency-contacts'),
           api.get('/checkin/schedule'),
+          getDashboardActivity({ page: 1, limit: 12 }).catch(() => ({ data: { activity: [] } })),
         ]);
         const tripsData = tripsRes.data.data?.trips || tripsRes.data.trips || [];
         const alertsData = alertsRes.data.advisories || alertsRes.data || [];
@@ -108,6 +112,7 @@ const Dashboard = () => {
         });
         const computed = computeStats(tripsData, alertsData);
         setStats(computed);
+        setActivityFeed(activityRes?.data?.activity || []);
         const resolved = resolveDashboardState(tripsData);
         setDashboardState(resolved);
       } catch (err) {
@@ -115,6 +120,7 @@ const Dashboard = () => {
         setError('Failed to load dashboard data');
       } finally {
         setLoading(false);
+        setActivityLoading(false);
       }
     };
 
@@ -247,6 +253,10 @@ const Dashboard = () => {
 
   return (
     <APIErrorBoundary>
+      <SEO
+        title="Dashboard"
+        description="Your SoloCompass mission control — view your active trips, safety status, and travel insights."
+      />
       <AnimatePresence mode="wait">
         <motion.div
           key={displayState}
@@ -256,6 +266,10 @@ const Dashboard = () => {
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         >
           <DashboardShell>
+            <main id="dashboard-main" aria-label="Dashboard">
+            <div className="flex items-center justify-end mb-3">
+              <SafetyStatusIndicator safetyData={safetyData} />
+            </div>
             {isDev && (
               <div className="mb-4 p-2 bg-amber-500/5 border border-amber-500/20 rounded-xl flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -277,7 +291,9 @@ const Dashboard = () => {
               </div>
             )}
             <SubscriptionBanner />
+            <ActivityFeedWidget activity={activityFeed} loading={activityLoading} />
             {renderState()}
+            </main>
           </DashboardShell>
         </motion.div>
       </AnimatePresence>

@@ -1,11 +1,12 @@
 /**
- * AI Service - Direct Azure OpenAI Integration
- * Handles all AI-related functionality for SoloCompass
+ * AI Service - Multi-provider Fallback Chain
+ * Providers: Azure OpenAI → OpenAI Direct → Anthropic → Static Fallback
  */
 
 import logger from './logger.js';
 
-// Azure OpenAI Configuration helper
+// ── Provider Configurations ──────────────────────────────────────
+
 const getAzureConfig = () => ({
   endpoint: process.env.AZURE_OPENAI_ENDPOINT,
   apiKey: process.env.AZURE_OPENAI_API_KEY,
@@ -13,13 +14,25 @@ const getAzureConfig = () => ({
   apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview'
 });
 
+const getOpenAIConfig = () => ({
+  apiKey: process.env.OPENAI_API_KEY,
+  model: process.env.OPENAI_MODEL || 'gpt-4o-mini'
+});
+
+const getAnthropicConfig = () => ({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  model: process.env.ANTHROPIC_MODEL || 'claude-3-haiku-20240307'
+});
+
+// ── Individual Provider Calls ────────────────────────────────────
+
 /**
  * Call Azure OpenAI API directly
  */
 export async function callAzureOpenAI(messages, options = {}) {
   const { temperature = 0.7, max_tokens = 1000, json = false } = options;
   const config = getAzureConfig();
-  
+
   if (!config.endpoint || !config.apiKey) {
     throw new Error('Azure OpenAI not configured');
   }
@@ -51,7 +64,6 @@ export async function callAzureOpenAI(messages, options = {}) {
       })
     });
   } catch (fetchErr) {
-    // Expose the real network cause (ENOTFOUND, ECONNREFUSED, certificate errors, etc.)
     const cause = fetchErr.cause?.message || fetchErr.cause?.code || fetchErr.message;
     logger.error(`[AI] Network fetch failed — URL: ${url} — Cause: ${cause}`);
     throw new Error(`Azure OpenAI network error: ${cause}`);
@@ -63,13 +75,120 @@ export async function callAzureOpenAI(messages, options = {}) {
   }
 
   const data = await response.json();
-  
   if (!data.choices || !data.choices[0]) {
     throw new Error('Invalid response from Azure OpenAI');
   }
 
   logger.http(`[AI] Azure OpenAI response received`);
   return data.choices[0].message.content;
+}
+
+/**
+ * Call OpenAI API directly (fallback when Azure is unavailable).
+ * Reads OPENAI_API_KEY and OPENAI_MODEL from the environment.
+ */
+export async function callOpenAIDirect(messages, options = {}) {
+  const { temperature = 0.7, max_tokens = 1000, json = false } = options;
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model  = process.env.OPENAI_MODEL || 'gpt-4o';
+
+  if (!apiKey) {
+    throw new Error('OpenAI direct not configured (OPENAI_API_KEY missing)');
+  }
+
+  logger.http(`[AI] Calling OpenAI direct: ${model}`);
+
+  let response;
+  try {
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        ...(json && { response_format: { type: 'json_object' } }),
+      }),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause?.message || fetchErr.cause?.code || fetchErr.message;
+    throw new Error(`OpenAI direct network error: ${cause}`);
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`OpenAI direct error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  if (!data.choices?.[0]) {
+    throw new Error('Invalid response from OpenAI direct');
+  }
+
+  logger.http('[AI] OpenAI direct response received');
+  return data.choices[0].message.content;
+}
+
+/**
+ * Call Anthropic Claude API (fallback when both OpenAI providers are unavailable).
+ * Reads ANTHROPIC_API_KEY and ANTHROPIC_MODEL from the environment.
+ */
+export async function callClaude(messages, options = {}) {
+  const { max_tokens = 1000 } = options;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const model  = process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022';
+
+  if (!apiKey) {
+    throw new Error('Claude not configured (ANTHROPIC_API_KEY missing)');
+  }
+
+  // Convert OpenAI-style messages to Anthropic format.
+  // System messages must be passed as the top-level `system` parameter.
+  const systemMessage = messages.find(m => m.role === 'system');
+  const conversationMessages = messages
+    .filter(m => m.role !== 'system')
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+
+  logger.http(`[AI] Calling Claude: ${model}`);
+
+  let response;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens,
+        ...(systemMessage && { system: systemMessage.content }),
+        messages: conversationMessages,
+      }),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr.cause?.message || fetchErr.cause?.code || fetchErr.message;
+    throw new Error(`Claude network error: ${cause}`);
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Claude error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const text = data.content?.[0]?.text;
+  if (!text) {
+    throw new Error('Invalid response from Claude');
+  }
+
+  logger.http('[AI] Claude response received');
+  return text;
 }
 
 /**
@@ -186,6 +305,10 @@ export function getFallbackItinerary(destination, days) {
 
 export default {
   callAzureOpenAI,
+  callOpenAIDirect,
+  callAnthropic,
+  callAI,
+  getAIUsageStats,
   getFallbackResponse,
   getSafetyFallback,
   getFallbackItinerary

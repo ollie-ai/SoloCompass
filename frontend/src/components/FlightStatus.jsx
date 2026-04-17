@@ -82,6 +82,11 @@ const FlightStatusCard = ({ flight, onAddToTrip, tripId }) => {
     return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
+  const getAirportTimeLabel = (segment) => {
+    if (!segment) return '--:--';
+    return segment.local_time_label || formatTime(segment.scheduled || segment.estimated);
+  };
+
   const formatDate = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -158,7 +163,7 @@ const FlightStatusCard = ({ flight, onAddToTrip, tripId }) => {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-base-content/40 uppercase">Scheduled</span>
-              <span className="text-sm font-black text-base-content">{formatTime(flight.departure?.scheduled)}</span>
+              <span className="text-sm font-black text-base-content">{getAirportTimeLabel(flight.departure)}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-base-content/40 uppercase">Estimated</span>
@@ -175,7 +180,7 @@ const FlightStatusCard = ({ flight, onAddToTrip, tripId }) => {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-base-content/40 uppercase">Scheduled</span>
-              <span className="text-sm font-black text-base-content">{formatTime(flight.arrival?.scheduled)}</span>
+              <span className="text-sm font-black text-base-content">{getAirportTimeLabel(flight.arrival)}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-base-content/40 uppercase">Estimated</span>

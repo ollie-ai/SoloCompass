@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { optionalAuth } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
+import { forwardErrorTrackingEvent } from '../services/errorTrackingService.js';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.post('/report', optionalAuth, async (req, res) => {
       const { message, stack, url, userAgent, timestamp, type } = err;
 
       logger.warn(`[ClientError] ${type}: ${message}${url ? ` @ ${url}` : ''}`);
+      await forwardErrorTrackingEvent({ source: 'frontend', message, stack, url, userAgent, timestamp, type, userId });
 
       try {
         await db.prepare(

@@ -15,6 +15,7 @@ import CountryHero from '../components/destinations/CountryHero';
 import QuickFitCards from '../components/destinations/QuickFitCards';
 import StickyJumpNav from '../components/destinations/StickyJumpNav';
 import OfficialAdvisoryCard from '../components/destinations/OfficialAdvisoryCard';
+import TravelAdvisoryBanner from '../components/destinations/TravelAdvisoryBanner';
 import RegionalDifferences from '../components/destinations/RegionalDifferences';
 import BestCitiesShelf from '../components/destinations/BestCitiesShelf';
 import BudgetSnapshot from '../components/destinations/BudgetSnapshot';
@@ -25,6 +26,7 @@ import AffiliateHub from '../components/destinations/AffiliateHub';
 import CityCard from '../components/destinations/CityCard';
 import DestinationChat from '../components/DestinationChat';
 import PlanGate from '../components/PlanGate';
+import Skeleton from '../components/Skeleton';
 import {
   Globe, ShieldCheck, AlertTriangle, MapPin, ArrowLeft, CheckCircle,
   ExternalLink, Sparkles, ChevronRight, BookmarkPlus
@@ -84,7 +86,36 @@ export default function CountryHub() {
     fetchDestination();
   }, [slug, navigate]);
 
-  if (loading) return <DashboardShell><div className="flex justify-center py-20"><Loading /></div></DashboardShell>;
+  if (loading) return (
+    <DashboardShell>
+      {/* Skeleton hero */}
+      <div className="skeleton h-64 md:h-80 w-full rounded-none" />
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+        {/* Country name + tags */}
+        <div className="space-y-3">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="h-10 w-80" />
+          <div className="flex gap-2">
+            {[1, 2, 3].map(i => <Skeleton key={i} className="h-6 w-20 rounded-full" />)}
+          </div>
+          <Skeleton className="h-4 w-full max-w-2xl" />
+          <Skeleton className="h-4 w-4/5 max-w-2xl" />
+        </div>
+        {/* Section cards */}
+        <div className="grid md:grid-cols-3 gap-6">
+          <div className="md:col-span-2 space-y-6">
+            <Skeleton className="h-48 rounded-2xl" />
+            <Skeleton className="h-36 rounded-2xl" />
+            <Skeleton className="h-56 rounded-2xl" />
+          </div>
+          <div className="space-y-4">
+            <Skeleton className="h-64 rounded-2xl" />
+            <Skeleton className="h-40 rounded-2xl" />
+          </div>
+        </div>
+      </div>
+    </DashboardShell>
+  );
   if (error || !destination) {
     return (
       <DashboardShell>
@@ -200,6 +231,10 @@ export default function CountryHub() {
         />
 
         {/* Section 2: OfficialAdvisoryCard - advisory + entry */}
+        <TravelAdvisoryBanner
+          destination={destination}
+          dismissable
+        />
         <OfficialAdvisoryCard
           destination={destination}
           advisory_stance={advisory_stance}

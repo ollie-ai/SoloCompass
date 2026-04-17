@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import api from '../lib/api';
+import { hasConsentFor } from '../components/CookieConsent';
 
 export function useTelemetry() {
   const location = useLocation();
@@ -9,6 +10,7 @@ export function useTelemetry() {
   const { user } = useAuthStore();
 
   const trackPageView = useCallback(async (path, referrer = null) => {
+    if (!hasConsentFor('analytics')) return;
     try {
       await api.post('/analytics/track', {
         type: 'page_view',
@@ -21,6 +23,7 @@ export function useTelemetry() {
   }, []);
 
   const trackEvent = useCallback(async (eventType, properties = {}) => {
+    if (!hasConsentFor('analytics')) return;
     try {
       await api.post('/analytics/track', {
         type: 'event',

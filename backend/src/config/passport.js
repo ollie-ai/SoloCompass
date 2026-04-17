@@ -62,16 +62,16 @@ export const configurePassport = () => {
         
         if (!user) {
           const result = await db.run(
-            'INSERT INTO users (email, password, name, role, is_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            'INSERT INTO users (email, password, name, role, email_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             email, 'social_login_locked', profile.displayName || 'Google User', 'user', true
           );
           const userId = result.lastInsertRowid;
           
           await db.run('INSERT INTO profiles (user_id) VALUES ($1)', userId);
           user = await db.get('SELECT * FROM users WHERE id = $1', userId);
-        } else if (!user.is_verified) {
-          await db.run('UPDATE users SET is_verified = true WHERE id = $1', user.id);
-          user.is_verified = true;
+        } else if (!user.email_verified) {
+          await db.run('UPDATE users SET email_verified = true WHERE id = $1', user.id);
+          user.email_verified = true;
         }
         
         if (!user) {
@@ -114,16 +114,16 @@ export const configurePassport = () => {
         
         if (!user) {
           const result = await db.run(
-            'INSERT INTO users (email, password, name, role, is_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            'INSERT INTO users (email, password, name, role, email_verified) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             email, 'social_login_locked', profile.displayName || profile.username || 'GitHub User', 'user', true
           );
           const userId = result.lastInsertRowid;
           
           await db.run('INSERT INTO profiles (user_id) VALUES ($1)', userId);
           user = await db.get('SELECT * FROM users WHERE id = $1', userId);
-        } else if (!user.is_verified) {
-          await db.run('UPDATE users SET is_verified = true WHERE id = $1', user.id);
-          user.is_verified = true;
+        } else if (!user.email_verified) {
+          await db.run('UPDATE users SET email_verified = true WHERE id = $1', user.id);
+          user.email_verified = true;
         }
         
         if (!user) {

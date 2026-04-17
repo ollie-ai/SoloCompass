@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowRightLeft, Loader2, RefreshCw } from 'lucide-react';
-import api from '../lib/api';
+import api, { getExchangeRates } from '../lib/api';
 import toast from 'react-hot-toast';
 
 const COMMON_CURRENCIES = [
@@ -62,6 +62,7 @@ const CurrencyConverter = ({ defaultFrom = 'GBP', defaultTo = 'EUR', initialAmou
     setError(null);
 
     try {
+      // Try the dedicated currency conversion endpoint first
       const response = await api.post('/currency/convert', {
         amount: parseFloat(amount),
         from: fromCurrency,
@@ -72,10 +73,22 @@ const CurrencyConverter = ({ defaultFrom = 'GBP', defaultTo = 'EUR', initialAmou
         setResult(response.data.data.converted);
         setRate(response.data.data.rate);
       }
-    } catch (err) {
-      console.error('Currency conversion error:', err);
-      toast.error('Currency conversion failed. Please try again.');
-      setError(err.response?.data?.message || 'Conversion failed');
+    } catch (primaryErr) {
+      // Fallback to /exchange/rates endpoint
+      try {
+        const ratesResponse = await getExchangeRates(fromCurrency, toCurrency);
+        if (ratesResponse.success && ratesResponse.data?.rates?.[toCurrency]) {
+          const exchangeRate = ratesResponse.data.rates[toCurrency];
+          setRate(exchangeRate);
+          setResult(parseFloat(amount) * exchangeRate);
+        } else {
+          throw new Error('No rate data available');
+        }
+      } catch (fallbackErr) {
+        console.error('Currency conversion error:', fallbackErr);
+        toast.error('Currency conversion failed. Please try again.');
+        setError(primaryErr.response?.data?.message || 'Conversion failed');
+      }
     } finally {
       setLoading(false);
     }

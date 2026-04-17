@@ -19,6 +19,15 @@ export async function generateSitemap() {
       '/quiz',
       '/safety',
       '/reviews',
+      '/about',
+      '/features',
+      '/pricing',
+      '/faq',
+      '/changelog',
+      '/help',
+      '/contact',
+      '/safety-info',
+      '/partnerships',
       '/login',
       '/register'
     ];

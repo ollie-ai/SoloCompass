@@ -32,7 +32,10 @@ import {
   LifeBuoy,
   Megaphone,
   Gauge,
-  ShieldCheck
+  ShieldCheck,
+  Flag,
+  HelpCircle,
+  BookOpen
 } from 'lucide-react';
 
 // Eager load all components (faster)
@@ -58,6 +61,9 @@ import AnnouncementsSection from '../components/admin/AnnouncementsSection';
 import StripeReconciliation from '../components/admin/StripeReconciliation';
 import MetricsThresholds from '../components/admin/MetricsThresholds';
 import ActionApprovalSection from '../components/admin/ActionApprovalSection';
+import AdminReportsSection from '../components/admin/AdminReportsSection';
+import FAQManagement from '../components/admin/FAQManagement';
+import ChangelogManagement from '../components/admin/ChangelogManagement';
 
 const AdminPage = ({ activeTab }) => {
   const { user } = useAuthStore();
@@ -109,12 +115,20 @@ const AdminPage = ({ activeTab }) => {
         return <StripeReconciliation />;
       case 'support':
         return <SupportSection />;
+      case 'reports':
+        return <ReportsQueueSection />;
       case 'announcements':
         return <AnnouncementsSection />;
       case 'metrics':
         return <MetricsThresholds />;
       case 'actions':
         return <ActionApprovalSection />;
+      case 'reports':
+        return <AdminReportsSection />;
+      case 'faq':
+        return <FAQManagement />;
+      case 'cl':
+        return <ChangelogManagement />;
       default:
         return <AdminDashboard />;
     }
@@ -160,6 +174,12 @@ const AdminPage = ({ activeTab }) => {
         return { title: 'Reconciliation', subtitle: 'Stripe entitlement reconciliation' };
       case 'support':
         return { title: 'Support', subtitle: 'Support tickets and user issues' };
+      case 'reports':
+        return { title: 'Content Reports', subtitle: 'User-submitted content and safety reports' };
+      case 'faq':
+        return { title: 'FAQ Management', subtitle: 'Manage help centre articles' };
+      case 'cl':
+        return { title: 'Changelog', subtitle: 'Manage release notes and changelog entries' };
       case 'announcements':
         return { title: 'Announcements', subtitle: 'Site-wide announcements and banners' };
       case 'metrics':
@@ -221,6 +241,9 @@ const AdminLayout = () => {
     { id: 'billing', label: 'Billing', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10', hover: 'hover:bg-emerald-500/10 hover:text-emerald-600' },
     { id: 'reconciliation', label: 'Reconciliation', icon: CreditCard, color: 'text-violet-500', bg: 'bg-violet-500/10', hover: 'hover:bg-violet-500/10 hover:text-violet-600' },
     { id: 'support', label: 'Support', icon: LifeBuoy, color: 'text-blue-500', bg: 'bg-blue-500/10', hover: 'hover:bg-blue-500/10 hover:text-blue-600' },
+    { id: 'reports', label: 'Reports', icon: Flag, color: 'text-red-500', bg: 'bg-red-500/10', hover: 'hover:bg-red-500/10 hover:text-red-600' },
+    { id: 'faq', label: 'FAQ', icon: HelpCircle, color: 'text-sky-500', bg: 'bg-sky-500/10', hover: 'hover:bg-sky-500/10 hover:text-sky-600' },
+    { id: 'cl', label: 'Changelog', icon: BookOpen, color: 'text-violet-500', bg: 'bg-violet-500/10', hover: 'hover:bg-violet-500/10 hover:text-violet-600' },
     { id: 'actions', label: 'Approvals', icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-500/10', hover: 'hover:bg-violet-500/10 hover:text-violet-600' },
     
     // Settings

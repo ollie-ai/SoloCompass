@@ -7,15 +7,14 @@ import { premiumOnly } from '../middleware/paywall.js';
 import { sanitizeAll } from '../middleware/validate.js';
 import db from '../db.js';
 import { generateItinerary } from '../services/itineraryAI.js';
+import { generateStructuredItinerary } from '../services/itineraryGenerator.js';
 import { getTripReadiness, generateChecklist } from '../services/readinessService.js';
 import { getTimezoneInfo } from '../services/timezoneService.js';
 import { getForecast } from '../services/weatherService.js';
-import { createNotification, getNotificationPreferences, sendTripUpdate } from '../services/notificationService.js';
-import { getChannelsForType, CHANNEL } from '../services/notificationRegistry.js';
-import * as pushService from '../services/pushService.js';
-import * as email from '../services/email.js';
+import { sendTripUpdate } from '../services/notificationService.js';
 import logger from '../services/logger.js';
 import PDFDocument from 'pdfkit';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 
 const router = express.Router();
 
@@ -37,6 +36,15 @@ const tripMutateLimiter = rateLimit({
   message: { success: false, code: 'RATE_LIMITED', message: 'Too many requests. Please slow down.' }
 });
 
+// Rate limiter for calendar export (lightweight file generation)
+const calendarExportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour window
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, code: 'RATE_LIMITED', message: 'Too many calendar export requests. Please try again later.' }
+});
+
 // Standardized error response helper
 function formatError(code, message) {
   return { success: false, error: { code, message } };
@@ -53,23 +61,7 @@ const handleValidationErrors = (req, res, next) => {
 
 async function sendTripNotification(userId, notificationType, title, message, data = null, relatedId = null) {
   try {
-    await createNotification(userId, notificationType, title, message, data, relatedId);
-    
-    const prefs = await getNotificationPreferences(userId);
-    const channels = getChannelsForType(notificationType, prefs);
-    
-    if (channels.includes(CHANNEL.PUSH)) {
-      await pushService.sendPushNotification(userId, { title, body: message, ...data });
-    }
-    
-    if (channels.includes(CHANNEL.EMAIL)) {
-      const user = await db.prepare('SELECT email, name FROM users WHERE id = ?').get(userId);
-      if (user?.email) {
-        if (notificationType === 'trip_reminder') {
-          await email.sendTripConfirmed(user.email, { name: user.name, ...data });
-        }
-      }
-    }
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}), relatedId });
   } catch (err) {
     logger.error(`[TripNotification] Failed to send ${notificationType}:`, err.message);
   }
@@ -140,6 +132,28 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+// Generate a structured itinerary payload for client-side planning workflows
+router.post('/ai-generate', requireAuth, async (req, res) => {
+  try {
+    const { destinationId, startDate, endDate, preferences = {} } = req.body || {};
+    if (!destinationId || !startDate || !endDate) {
+      return res.status(400).json(formatError('VALIDATION_ERROR', 'destinationId, startDate and endDate are required'));
+    }
+
+    const data = await generateStructuredItinerary({
+      destinationId: parseInt(destinationId, 10),
+      startDate,
+      endDate,
+      preferences,
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('AI structured itinerary generation failed:', error.message);
+    res.status(500).json(formatError('INTERNAL_ERROR', error.message || 'Failed to generate itinerary'));
+  }
+});
+
 // Get single trip with itinerary
 router.get('/:id', requireAuth, async (req, res) => {
   try {
@@ -186,6 +200,345 @@ router.get('/:id', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Get trip error:', error);
     res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip'));
+  }
+});
+
+// Get timeline view for a trip (server-side aggregation)
+router.get('/:id/timeline', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare(`
+      SELECT id, user_id, name, destination, start_date, end_date, status
+      FROM trips WHERE id = ? AND user_id = ?
+    `).get(id, req.userId);
+
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const itineraryActivities = await db.prepare(`
+      SELECT
+        a.id,
+        a.name,
+        a.type,
+        a.location,
+        a.time,
+        a.cost,
+        a.notes,
+        a.created_at,
+        d.day_number,
+        d.date as day_date
+      FROM activities a
+      JOIN itinerary_days d ON a.day_id = d.id
+      WHERE d.trip_id = ?
+      ORDER BY d.day_number ASC, a.order_index ASC
+    `).all(id);
+
+    const bookings = await db.prepare(`
+      SELECT
+        id, type, provider, booking_reference, status, travel_date, departure_datetime, arrival_datetime, created_at
+      FROM bookings
+      WHERE trip_id = ?
+      ORDER BY COALESCE(travel_date, created_at) ASC
+    `).all(id);
+
+    const documents = await db.prepare(`
+      SELECT id, document_type, name, expiry_date, created_at
+      FROM trip_documents
+      WHERE trip_id = ?
+      ORDER BY created_at ASC
+    `).all(id);
+
+    const timeline = [
+      ...(itineraryActivities || []).map((item) => ({
+        id: `activity-${item.id}`,
+        source: 'itinerary',
+        type: 'activity',
+        title: item.name,
+        subtitle: item.type || 'Activity',
+        location: item.location || null,
+        timestamp: item.day_date || item.created_at,
+        meta: {
+          dayNumber: item.day_number,
+          time: item.time || null,
+          cost: item.cost ?? null,
+          notes: item.notes || null,
+        },
+      })),
+      ...(bookings || []).map((item) => ({
+        id: `booking-${item.id}`,
+        source: 'bookings',
+        type: 'booking',
+        title: item.provider || item.type || 'Booking',
+        subtitle: item.type || 'Booking',
+        timestamp: item.travel_date || item.departure_datetime || item.created_at,
+        meta: {
+          status: item.status || null,
+          bookingReference: item.booking_reference || null,
+          arrivalDateTime: item.arrival_datetime || null,
+        },
+      })),
+      ...(documents || []).map((item) => ({
+        id: `document-${item.id}`,
+        source: 'documents',
+        type: 'document',
+        title: item.name,
+        subtitle: item.document_type || 'Document',
+        timestamp: item.expiry_date || item.created_at,
+        meta: {
+          expiryDate: item.expiry_date || null,
+        },
+      })),
+    ].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+    res.json({
+      success: true,
+      data: {
+        trip: {
+          id: trip.id,
+          name: trip.name,
+          destination: trip.destination,
+          startDate: trip.start_date,
+          endDate: trip.end_date,
+          status: trip.status,
+        },
+        timeline,
+      },
+    });
+  } catch (error) {
+    logger.error('Get trip timeline error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip timeline'));
+  }
+});
+
+// Get dedicated packing-list view for a trip
+router.get('/:id/packing-list', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const list = await db.prepare(`
+      SELECT id, trip_id, name, is_shared, created_at, updated_at
+      FROM packing_lists
+      WHERE trip_id = ? AND user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(id, req.userId);
+
+    if (!list) {
+      return res.json({ success: true, data: null });
+    }
+
+    const items = await db.prepare(`
+      SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes, created_at, updated_at
+      FROM packing_items
+      WHERE packing_list_id = ?
+      ORDER BY category ASC, is_essential DESC, name ASC
+    `).all(list.id);
+
+    res.json({
+      success: true,
+      data: {
+        id: list.id,
+        tripId: list.trip_id,
+        name: list.name,
+        isShared: Boolean(list.is_shared),
+        createdAt: list.created_at,
+        updatedAt: list.updated_at,
+        items: (items || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          quantity: item.quantity,
+          isPacked: Boolean(item.is_packed),
+          isEssential: Boolean(item.is_essential),
+          isCustom: Boolean(item.is_custom),
+          notes: item.notes,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+        })),
+      },
+    });
+  } catch (error) {
+    logger.error('Get trip packing list error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip packing list'));
+  }
+});
+
+const PACKING_CATEGORIES = ['documents', 'electronics', 'clothing', 'toiletries', 'medicine', 'essentials', 'activities', 'other'];
+
+// Create a packing list for a trip (or return existing one)
+router.post('/:id/packing-list', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, templateId } = req.body;
+
+    const trip = await db.prepare('SELECT id, destination FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const existing = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (existing) {
+      return res.status(409).json(formatError('CONFLICT', 'Packing list already exists for this trip'));
+    }
+
+    const listName = (name && String(name).trim()) || `Packing for ${trip.destination || 'trip'}`;
+    const result = await db.prepare('INSERT INTO packing_lists (user_id, trip_id, name) VALUES (?, ?, ?)').run(req.userId, id, listName);
+    const listId = result.lastInsertRowid;
+
+    if (templateId) {
+      const template = await db.prepare('SELECT items FROM packing_templates WHERE id = ?').get(templateId);
+      if (template) {
+        let items = [];
+        try { items = JSON.parse(template.items || '[]'); } catch { /* ignore parse error */ }
+        for (const item of items) {
+          await db.prepare('INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential, is_custom) VALUES (?, ?, ?, ?, ?, false)')
+            .run(listId, item.name, item.category || 'other', item.quantity || 1, item.isEssential ? true : false);
+        }
+      }
+    } else {
+      const defaults = [
+        { name: 'Passport', category: 'documents', isEssential: true },
+        { name: 'Travel insurance docs', category: 'documents', isEssential: true },
+        { name: 'Phone charger', category: 'electronics', isEssential: true },
+        { name: 'Medications', category: 'medicine', isEssential: true },
+        { name: 'Wallet & cards', category: 'essentials', isEssential: true },
+      ];
+      for (const item of defaults) {
+        await db.prepare('INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential) VALUES (?, ?, ?, 1, ?)')
+          .run(listId, item.name, item.category, item.isEssential ? true : false);
+      }
+    }
+
+    const list = await db.prepare('SELECT id, trip_id, name, is_shared, created_at FROM packing_lists WHERE id = ?').get(listId);
+    const items = await db.prepare('SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE packing_list_id = ? ORDER BY category, is_essential DESC, name').all(listId);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: list.id,
+        tripId: list.trip_id,
+        name: list.name,
+        isShared: Boolean(list.is_shared),
+        createdAt: list.created_at,
+        items: (items || []).map((i) => ({
+          id: i.id, name: i.name, category: i.category, quantity: i.quantity,
+          isPacked: Boolean(i.is_packed), isEssential: Boolean(i.is_essential),
+          isCustom: Boolean(i.is_custom), notes: i.notes,
+        })),
+      },
+    });
+  } catch (error) {
+    logger.error('Create trip packing list error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to create packing list'));
+  }
+});
+
+// Add an item to the packing list of a trip
+router.post('/:id/packing-list/items', requireAuth, tripMutateLimiter, sanitizeAll(['name', 'notes']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, category = 'other', quantity = 1, isEssential = false, notes } = req.body;
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json(formatError('VALIDATION_ERROR', 'Item name is required'));
+    }
+    const safeCategory = PACKING_CATEGORIES.includes(category) ? category : 'other';
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found — create it first'));
+    }
+
+    const result = await db.prepare(
+      'INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential, is_custom, notes) VALUES (?, ?, ?, ?, ?, true, ?)'
+    ).run(list.id, String(name).trim(), safeCategory, Math.max(1, Number(quantity) || 1), isEssential ? true : false, notes || null);
+
+    const item = await db.prepare(
+      'SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE id = ?'
+    ).get(result.lastInsertRowid);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: item.id, name: item.name, category: item.category, quantity: item.quantity,
+        isPacked: Boolean(item.is_packed), isEssential: Boolean(item.is_essential),
+        isCustom: Boolean(item.is_custom), notes: item.notes,
+      },
+    });
+  } catch (error) {
+    logger.error('Add packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to add packing list item'));
+  }
+});
+
+// Update a packing list item (check/uncheck, quantity, notes)
+router.put('/:id/packing-list/items/:itemId', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const { isPacked, quantity, notes, name, category } = req.body;
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found'));
+    }
+    const item = await db.prepare('SELECT id FROM packing_items WHERE id = ? AND packing_list_id = ?').get(itemId, list.id);
+    if (!item) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Item not found'));
+    }
+
+    const setClauses = ['updated_at = CURRENT_TIMESTAMP'];
+    const params = [];
+    if (isPacked !== undefined) { setClauses.push('is_packed = ?'); params.push(isPacked ? true : false); }
+    if (quantity !== undefined) { setClauses.push('quantity = ?'); params.push(Math.max(1, Number(quantity) || 1)); }
+    if (notes !== undefined) { setClauses.push('notes = ?'); params.push(notes); }
+    if (name !== undefined && String(name).trim()) { setClauses.push('name = ?'); params.push(String(name).trim()); }
+    if (category !== undefined && PACKING_CATEGORIES.includes(category)) { setClauses.push('category = ?'); params.push(category); }
+    params.push(itemId);
+
+    await db.prepare(`UPDATE packing_items SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
+
+    const updated = await db.prepare(
+      'SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE id = ?'
+    ).get(itemId);
+
+    res.json({
+      success: true,
+      data: {
+        id: updated.id, name: updated.name, category: updated.category, quantity: updated.quantity,
+        isPacked: Boolean(updated.is_packed), isEssential: Boolean(updated.is_essential),
+        isCustom: Boolean(updated.is_custom), notes: updated.notes,
+      },
+    });
+  } catch (error) {
+    logger.error('Update packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to update packing list item'));
+  }
+});
+
+// Delete a packing list item
+router.delete('/:id/packing-list/items/:itemId', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found'));
+    }
+
+    const deleted = await db.prepare('DELETE FROM packing_items WHERE id = ? AND packing_list_id = ?').run(itemId, list.id);
+    if (!deleted.changes) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Item not found'));
+    }
+
+    res.json({ success: true, message: 'Item removed' });
+  } catch (error) {
+    logger.error('Delete packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete packing list item'));
   }
 });
 
@@ -293,6 +646,14 @@ router.post('/', requireAuth, sanitizeAll(['name', 'destination', 'notes']), [
     `).run(req.userId, name, destination, startDate || null, endDate || null, budget || null, notes || null);
 
     const trip = await db.prepare('SELECT id, user_id, name, destination, start_date, end_date, budget, notes, status FROM trips WHERE id = ?').get(result.lastInsertRowid);
+
+    // Fire-and-forget: cache emergency numbers for the trip destination
+    getEmergencyNumbersWithFallback(destination).then(emergencyData => {
+      if (emergencyData) {
+        // Attach cached emergency numbers to the trip response payload via a background log
+        logger.info(`[Trips] Cached emergency numbers for ${destination} (${emergencyData.countryCode})`);
+      }
+    }).catch(() => {});
 
     res.json({ 
       success: true, 
@@ -1331,8 +1692,36 @@ router.get('/:id/time-weather', requireAuth, async (req, res) => {
   }
 });
 
+// Duplicate a trip
+router.post('/:id/duplicate', tripMutateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const trip = await db.prepare('SELECT * FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+    
+    const newName = `${trip.name} (Copy)`;
+    const result = await db.prepare(`
+      INSERT INTO trips (user_id, name, destination, start_date, end_date, budget, notes, status, vibe_check)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+    `).run(req.userId, newName, trip.destination, trip.start_date, trip.end_date, trip.budget, trip.notes, trip.vibe_check);
+    
+    const newTrip = await db.prepare('SELECT * FROM trips WHERE id = ?').get(result.lastInsertRowid);
+    
+    res.status(201).json({
+      success: true,
+      data: newTrip
+    });
+  } catch (error) {
+    logger.error('Duplicate trip error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to duplicate trip'));
+  }
+});
+
 // Generate a shareable link for a trip
-router.post('/:id/share', requireAuth, async (req, res) => {
+router.post('/:id/share', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1418,6 +1807,191 @@ router.get('/shared/:shareCode', async (req, res) => {
   }
 });
 
+// ============================================================
+// TRIP LEGS (Multi-leg trips)
+// ============================================================
+
+// GET /:id/legs
+router.get('/:id/legs', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    const legs = await db.prepare(`
+      SELECT id, trip_id, title, destination, start_date, end_date, leg_order, notes, created_at, updated_at
+      FROM trip_legs WHERE trip_id = ? ORDER BY leg_order ASC, start_date ASC
+    `).all(id);
+    res.json({ success: true, data: legs });
+  } catch (error) {
+    logger.error('Get trip legs error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch trip legs'));
+  }
+});
+
+// POST /:id/legs
+router.post('/:id/legs', tripMutateLimiter, requireAuth, [
+  body('title').notEmpty().withMessage('Leg title is required'),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, destination, startDate, endDate, notes } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    const maxOrder = await db.prepare('SELECT COALESCE(MAX(leg_order), 0) as max FROM trip_legs WHERE trip_id = ?').get(id);
+    const legOrder = (maxOrder?.max || 0) + 1;
+
+    const result = await db.prepare(`
+      INSERT INTO trip_legs (trip_id, user_id, title, destination, start_date, end_date, leg_order, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, req.userId, title, destination || null, startDate || null, endDate || null, legOrder, notes || null);
+
+    const leg = await db.prepare('SELECT * FROM trip_legs WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: leg });
+  } catch (error) {
+    logger.error('Create trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to create trip leg'));
+  }
+});
+
+// PUT /:id/legs/:legId
+router.put('/:id/legs/:legId', tripMutateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { id, legId } = req.params;
+    const { title, destination, startDate, endDate, notes, legOrder } = req.body;
+
+    const leg = await db.prepare(`
+      SELECT tl.id FROM trip_legs tl
+      JOIN trips t ON tl.trip_id = t.id
+      WHERE tl.id = ? AND tl.trip_id = ? AND t.user_id = ?
+    `).get(legId, id, req.userId);
+    if (!leg) return res.status(404).json(formatError('NOT_FOUND', 'Trip leg not found'));
+
+    const updates = ['updated_at = CURRENT_TIMESTAMP'];
+    const params = [];
+    if (title !== undefined) { updates.push('title = ?'); params.push(title); }
+    if (destination !== undefined) { updates.push('destination = ?'); params.push(destination); }
+    if (startDate !== undefined) { updates.push('start_date = ?'); params.push(startDate); }
+    if (endDate !== undefined) { updates.push('end_date = ?'); params.push(endDate); }
+    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+    if (legOrder !== undefined) { updates.push('leg_order = ?'); params.push(legOrder); }
+    params.push(legId);
+
+    await db.prepare(`UPDATE trip_legs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    const updated = await db.prepare('SELECT * FROM trip_legs WHERE id = ?').get(legId);
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    logger.error('Update trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to update trip leg'));
+  }
+});
+
+// DELETE /:id/legs/:legId
+router.delete('/:id/legs/:legId', tripMutateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { id, legId } = req.params;
+    const leg = await db.prepare(`
+      SELECT tl.id FROM trip_legs tl
+      JOIN trips t ON tl.trip_id = t.id
+      WHERE tl.id = ? AND tl.trip_id = ? AND t.user_id = ?
+    `).get(legId, id, req.userId);
+    if (!leg) return res.status(404).json(formatError('NOT_FOUND', 'Trip leg not found'));
+
+    await db.prepare('DELETE FROM trip_legs WHERE id = ?').run(legId);
+    res.json({ success: true, message: 'Trip leg deleted' });
+  } catch (error) {
+    logger.error('Delete trip leg error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete trip leg'));
+  }
+});
+
+// ============================================================
+// ITINERARY DAYS — manual add-day
+// ============================================================
+
+// POST /:id/itinerary/days
+router.post('/:id/itinerary/days', tripMutateLimiter, requireAuth, [
+  body('dayNumber').optional().isInt({ min: 1 }),
+  body('date').optional().isISO8601(),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dayNumber, date, title, notes } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    // Determine next day_number if not supplied
+    let dn = dayNumber;
+    if (!dn) {
+      const maxDay = await db.prepare('SELECT COALESCE(MAX(day_number), 0) as max FROM itinerary_days WHERE trip_id = ?').get(id);
+      dn = (maxDay?.max || 0) + 1;
+    }
+
+    const result = await db.prepare(`
+      INSERT INTO itinerary_days (trip_id, day_number, date, title, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, dn, date || null, title || null, notes || null);
+
+    const day = await db.prepare('SELECT * FROM itinerary_days WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json({ success: true, data: { ...day, activities: [] } });
+  } catch (error) {
+    logger.error('Add itinerary day error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to add itinerary day'));
+  }
+});
+
+// DELETE /:id/itinerary/days/:dayId
+router.delete('/:id/itinerary/days/:dayId', tripMutateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { id, dayId } = req.params;
+    const day = await db.prepare(`
+      SELECT id.id FROM itinerary_days id
+      WHERE id.id = ? AND id.trip_id = ?
+    `).get(dayId, id);
+    // ownership via trip
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip || !day) return res.status(404).json(formatError('NOT_FOUND', 'Day not found'));
+
+    await db.prepare('DELETE FROM activities WHERE day_id = ?').run(dayId);
+    await db.prepare('DELETE FROM itinerary_days WHERE id = ?').run(dayId);
+    res.json({ success: true, message: 'Day deleted' });
+  } catch (error) {
+    logger.error('Delete itinerary day error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete itinerary day'));
+  }
+});
+
+// ============================================================
+// ACTIVITY REORDER (drag-and-drop)
+// ============================================================
+
+// PUT /:id/activities/reorder
+router.put('/:id/activities/reorder', tripMutateLimiter, requireAuth, [
+  body('activities').isArray().withMessage('activities must be an array'),
+  body('activities.*.id').isNumeric(),
+  body('activities.*.orderIndex').isNumeric(),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { activities } = req.body;
+
+    const trip = await db.prepare('SELECT id FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+
+    for (const { id: actId, orderIndex } of activities) {
+      await db.prepare('UPDATE activities SET order_index = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND trip_id = ?').run(orderIndex, actId, id);
+    }
+
+    res.json({ success: true, message: 'Activities reordered' });
+  } catch (error) {
+    logger.error('Reorder activities error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to reorder activities'));
+  }
+});
+
 // Add collaborator to a trip
 router.post('/:id/collaborators', requireAuth, async (req, res) => {
   try {
@@ -1481,6 +2055,22 @@ router.get('/:id/collaborators', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error('Get collaborators error:', error);
     res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to get collaborators'));
+  }
+});
+
+// Get trip templates
+router.get('/templates/list', async (req, res) => {
+  try {
+    const templates = await db.prepare(`
+      SELECT id, name, description, destination_type, created_at
+      FROM trip_templates
+      ORDER BY created_at DESC
+    `).all();
+    
+    res.json({ success: true, data: templates });
+  } catch (error) {
+    logger.error('Get trip templates error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch templates'));
   }
 });
 

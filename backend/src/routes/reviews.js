@@ -1,11 +1,19 @@
 import express from 'express';
 import db from '../db.js';
+import { pool } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
 
 const VENUE_TYPES = ['restaurant', 'hotel', 'attraction', 'transport', 'other'];
+
+const PROFANITY_LIST = ['spam', 'scam', 'fake']; // Minimal list - expand as needed
+const containsProfanity = (text) => {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return PROFANITY_LIST.some(word => lower.includes(word));
+};
 
 // GET /reviews - List reviews with filters (public endpoint)
 router.get('/', async (req, res) => {
@@ -208,7 +216,9 @@ router.post('/', authenticate, async (req, res) => {
       title,
       content,
       tags = [],
-      photos = []
+      photos = [],
+      destinationId,
+      visitedDate
     } = req.body;
 
     // Validation
@@ -233,11 +243,29 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
+    if (containsProfanity(content) || containsProfanity(title)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Review contains inappropriate content' 
+      });
+    }
+
     if (!VENUE_TYPES.includes(venueType)) {
       return res.status(400).json({ 
         success: false, 
         error: 'Invalid venue type' 
       });
+    }
+
+    // One review per user per destination (when destination_id is provided)
+    if (req.body.destinationId) {
+      const existingReview = await pool.query(
+        'SELECT id FROM reviews WHERE user_id = $1 AND destination_id = $2',
+        [req.userId, parseInt(req.body.destinationId)]
+      );
+      if (existingReview.rows.length > 0) {
+        return res.status(409).json({ success: false, error: 'You have already reviewed this destination' });
+      }
     }
 
     // Check if user has a completed trip to this destination (for verification)
@@ -259,8 +287,9 @@ router.post('/', authenticate, async (req, res) => {
       INSERT INTO reviews (
         user_id, destination, venue_name, venue_address, venue_type,
         overall_rating, solo_friendly_rating, safety_rating, value_rating,
-        title, content, tags, photos, is_verified, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        title, content, tags, photos, is_verified, status,
+        destination_id, visited_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       req.userId,
       destination || null,
@@ -276,7 +305,9 @@ router.post('/', authenticate, async (req, res) => {
       JSON.stringify(tags),
       JSON.stringify(photos),
       isVerified,
-      'pending'
+      'pending',
+      destinationId ? parseInt(destinationId) : null,
+      visitedDate || null
     );
 
     const newReview = await db.get(`
@@ -631,6 +662,41 @@ router.post('/admin/:id/reject', authenticate, async (req, res) => {
   } catch (error) {
     logger.error(`[Reviews Admin] Reject failed: ${error.message}`);
     res.status(500).json({ success: false, error: 'Rejection failed' });
+  }
+});
+
+// POST /reviews/:id/report - report a review
+router.post('/:id/report', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.userId;
+    const { reason, details } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'Reason is required' });
+    }
+
+    const validReasons = ['spam', 'offensive', 'misleading', 'fake', 'other'];
+    if (!validReasons.includes(reason)) {
+      return res.status(400).json({ success: false, error: `Reason must be one of: ${validReasons.join(', ')}` });
+    }
+
+    const review = await db.get('SELECT id FROM reviews WHERE id = ?', id);
+    if (!review) {
+      return res.status(404).json({ success: false, error: 'Review not found' });
+    }
+
+    // Use pool for the review_reports table (PostgreSQL)
+    await pool.query(`
+      INSERT INTO review_reports (user_id, review_id, reason, details)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, review_id) DO UPDATE SET reason = $3, details = $4
+    `, [userId, parseInt(id), reason, details || null]);
+
+    res.json({ success: true, message: 'Review reported. Thank you for your feedback.' });
+  } catch (error) {
+    logger.error(`[Reviews] Report failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to report review' });
   }
 });
 

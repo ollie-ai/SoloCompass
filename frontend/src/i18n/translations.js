@@ -1,0 +1,227 @@
+export const translations = {
+  en: {
+    app: {
+      errorTitle: 'Something went wrong',
+      errorDescription: 'We encountered an unexpected error. Please try again or refresh the page.',
+      refreshPage: 'Refresh Page',
+      tryAgain: 'Try Again'
+    },
+    tour: {
+      title: 'Quick feature tour',
+      body: 'Discover safety check-ins, emergency tools, and your personalised trip planner.',
+      cta: 'Got it'
+    },
+    nav: {
+      home: 'Home',
+      features: 'Features',
+      safety: 'Safety',
+      help: 'Help',
+      dashboard: 'Dashboard',
+      trips: 'My Trips',
+      explore: 'Explore',
+      buddies: 'Buddies',
+      messages: 'Messages',
+      alerts: 'Alerts',
+      signIn: 'Sign In',
+      getStarted: 'Get Started Free',
+      logout: 'Logout',
+      settings: 'Settings',
+      helpSupport: 'Help & Support'
+    },
+    help: {
+      title: 'How can we help?',
+      subtitle: 'Find answers to common questions or get in touch with our mission control.',
+      searchPlaceholder: 'Search help articles...',
+      safetyHelp: 'Safety Help',
+      safetyHelpDesc: 'Check-ins, contacts, SOS',
+      quickStart: 'Quick Start Guide',
+      quickStartDesc: 'Get set up in 5 minutes',
+      contactSupport: 'Contact Support',
+      contactSupportDesc: 'We reply within 1-2 business days',
+      emergencyNote: 'SoloCompass support cannot replace local emergency services. For urgent emergencies, contact local emergency services first (112 in Europe, 911 in the US, 999 in the UK).',
+      stillNeedHelp: 'Still need help?',
+      stillNeedHelpDesc: 'Our support team aims to reply within 1-2 business days.',
+      emailSupport: 'Email Support',
+      noResults: 'No results found for "{{query}}"',
+      clearSearch: 'Clear search',
+      updatedAt: 'Updated {{date}}',
+      helpArticles: 'Help articles'
+    },
+    safety: {
+      title: 'Your Safety Hub',
+      subtitle: 'Stay safe on every adventure',
+      checkIn: 'Check In',
+      checkInSchedule: 'Check-In Schedule',
+      emergencyContacts: 'Emergency Contacts',
+      sos: 'SOS',
+      sosDescription: 'Alert emergency contacts with your location',
+      safeHaven: 'Safe Haven',
+      fakeCall: 'Fake Call',
+      emergencyNumbers: 'Emergency Numbers',
+      addContact: 'Add Contact',
+      scheduleCheckIn: 'Schedule Check-In',
+      checkInSent: 'Check-in sent',
+      sosSent: 'SOS alert sent to your emergency contacts'
+    },
+    features: {
+      title: 'Travel smarter.',
+      titleHighlight: 'Travel safer.',
+      subtitle: 'SoloCompass combines AI-powered trip planning with a mission-critical safety layer — so you can explore with absolute confidence.',
+      getStartedFree: 'Get Started Free',
+      seeHowSafetyWorks: 'See how safety works',
+      whatWeCanDo: 'What SoloCompass can do',
+      whatWeCanDoDesc: 'Tools designed specifically for solo travellers — from planning to staying safe on the road.',
+      whyWeBuilt: 'Why we built SoloCompass',
+      whyWeBuiltDesc: 'Four principles that guide every feature we build.',
+      howItWorks: 'How it works',
+      howItWorksDesc: 'Three steps from sign-up to your first trip.',
+      featuresByPlan: 'Feature availability by plan',
+      ctaTitle: 'Ready to plan your next solo trip?',
+      ctaDesc: 'Start free — no credit card required.'
+    },
+    dashboard: {
+      greeting: 'Welcome back, {{name}}!',
+      noTrips: 'No trips yet',
+      noTripsDesc: 'Start planning your first solo adventure.',
+      createTrip: 'Create a Trip',
+      activeTrip: 'Active Trip',
+      upcomingTrip: 'Upcoming Trip',
+      completedTrips_one: '{{count}} completed trip',
+      completedTrips_other: '{{count}} completed trips',
+      safetyStatus: 'Safety Status',
+      alerts: 'Alerts',
+      stats: 'Stats',
+      loading: 'Loading dashboard...'
+    },
+    settings: {
+      title: 'Control Centre',
+      subtitle: 'Manage your global identity, security protocols, and mission data.',
+      profile: 'Profile & Preferences',
+      security: 'Security',
+      notifications: 'Notifications',
+      billing: 'Billing & Data',
+      language: 'Language',
+      languageDesc: 'Choose your preferred display language',
+      saveProfile: 'Save Profile',
+      saving: 'Saving...',
+      saved: 'Saved'
+    },
+    locale: {
+      en: 'English',
+      es: 'Español'
+    }
+  },
+
+  es: {
+    app: {
+      errorTitle: 'Algo salió mal',
+      errorDescription: 'Encontramos un error inesperado. Inténtalo de nuevo o recarga la página.',
+      refreshPage: 'Recargar página',
+      tryAgain: 'Intentar de nuevo'
+    },
+    tour: {
+      title: 'Recorrido rápido',
+      body: 'Descubre check-ins de seguridad, herramientas de emergencia y tu planificador de viajes.',
+      cta: 'Entendido'
+    },
+    nav: {
+      home: 'Inicio',
+      features: 'Funciones',
+      safety: 'Seguridad',
+      help: 'Ayuda',
+      dashboard: 'Panel',
+      trips: 'Mis viajes',
+      explore: 'Explorar',
+      buddies: 'Compañeros',
+      messages: 'Mensajes',
+      alerts: 'Alertas',
+      signIn: 'Iniciar sesión',
+      getStarted: 'Empezar gratis',
+      logout: 'Cerrar sesión',
+      settings: 'Ajustes',
+      helpSupport: 'Ayuda y soporte'
+    },
+    help: {
+      title: '¿Cómo podemos ayudarte?',
+      subtitle: 'Encuentra respuestas a preguntas frecuentes o contacta con nuestro equipo.',
+      searchPlaceholder: 'Buscar artículos de ayuda...',
+      safetyHelp: 'Ayuda de seguridad',
+      safetyHelpDesc: 'Check-ins, contactos, SOS',
+      quickStart: 'Guía de inicio rápido',
+      quickStartDesc: 'Configúrate en 5 minutos',
+      contactSupport: 'Contactar soporte',
+      contactSupportDesc: 'Respondemos en 1-2 días hábiles',
+      emergencyNote: 'El soporte de SoloCompass no puede reemplazar a los servicios de emergencia locales. Para emergencias urgentes, contacta primero a los servicios locales (112 en Europa, 911 en EEUU).',
+      stillNeedHelp: '¿Necesitas más ayuda?',
+      stillNeedHelpDesc: 'Nuestro equipo intenta responder en 1-2 días hábiles.',
+      emailSupport: 'Contactar por email',
+      noResults: 'Sin resultados para "{{query}}"',
+      clearSearch: 'Limpiar búsqueda',
+      updatedAt: 'Actualizado {{date}}',
+      helpArticles: 'Artículos de ayuda'
+    },
+    safety: {
+      title: 'Tu centro de seguridad',
+      subtitle: 'Mantente seguro en cada aventura',
+      checkIn: 'Check-in',
+      checkInSchedule: 'Programa de check-in',
+      emergencyContacts: 'Contactos de emergencia',
+      sos: 'SOS',
+      sosDescription: 'Alerta a tus contactos de emergencia con tu ubicación',
+      safeHaven: 'Refugio seguro',
+      fakeCall: 'Llamada falsa',
+      emergencyNumbers: 'Números de emergencia',
+      addContact: 'Añadir contacto',
+      scheduleCheckIn: 'Programar check-in',
+      checkInSent: 'Check-in enviado',
+      sosSent: 'Alerta SOS enviada a tus contactos de emergencia'
+    },
+    features: {
+      title: 'Viaja más inteligente.',
+      titleHighlight: 'Viaja más seguro.',
+      subtitle: 'SoloCompass combina planificación de viajes con IA y una capa de seguridad — para que explores con total confianza.',
+      getStartedFree: 'Empezar gratis',
+      seeHowSafetyWorks: 'Ver cómo funciona la seguridad',
+      whatWeCanDo: 'Qué puede hacer SoloCompass',
+      whatWeCanDoDesc: 'Herramientas diseñadas específicamente para viajeros en solitario.',
+      whyWeBuilt: 'Por qué construimos SoloCompass',
+      whyWeBuiltDesc: 'Cuatro principios que guían cada función que creamos.',
+      howItWorks: 'Cómo funciona',
+      howItWorksDesc: 'Tres pasos desde el registro hasta tu primer viaje.',
+      featuresByPlan: 'Funciones disponibles por plan',
+      ctaTitle: '¿Listo para planear tu próximo viaje en solitario?',
+      ctaDesc: 'Empieza gratis — sin tarjeta de crédito.'
+    },
+    dashboard: {
+      greeting: '¡Bienvenido de nuevo, {{name}}!',
+      noTrips: 'Sin viajes todavía',
+      noTripsDesc: 'Empieza a planificar tu primera aventura en solitario.',
+      createTrip: 'Crear un viaje',
+      activeTrip: 'Viaje activo',
+      upcomingTrip: 'Próximo viaje',
+      completedTrips_one: '{{count}} viaje completado',
+      completedTrips_other: '{{count}} viajes completados',
+      safetyStatus: 'Estado de seguridad',
+      alerts: 'Alertas',
+      stats: 'Estadísticas',
+      loading: 'Cargando panel...'
+    },
+    settings: {
+      title: 'Centro de control',
+      subtitle: 'Gestiona tu identidad, seguridad y datos de misión.',
+      profile: 'Perfil y preferencias',
+      security: 'Seguridad',
+      notifications: 'Notificaciones',
+      billing: 'Facturación y datos',
+      language: 'Idioma',
+      languageDesc: 'Elige tu idioma de visualización preferido',
+      saveProfile: 'Guardar perfil',
+      saving: 'Guardando...',
+      saved: 'Guardado'
+    },
+    locale: {
+      en: 'English',
+      es: 'Español'
+    }
+  }
+};

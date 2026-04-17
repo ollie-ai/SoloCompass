@@ -88,6 +88,13 @@ export const NOTIFICATION_TYPES = {
     controlLevel: CONTROL_LEVEL.LOCKED,
     forEmergencyContact: true,
   },
+  sos_acknowledged: {
+    name: 'SOS Acknowledged',
+    description: 'Guardian acknowledged your SOS alert',
+    priority: PRIORITY.P0_EMERGENCY,
+    channels: [CHANNEL.IN_APP, CHANNEL.PUSH],
+    controlLevel: CONTROL_LEVEL.LOCKED,
+  },
   safe_return_overdue: {
     name: 'Safe Return Overdue',
     description: 'Safe return timer has expired',
@@ -114,6 +121,7 @@ export const NOTIFICATION_TYPES = {
     channels: [CHANNEL.IN_APP, CHANNEL.EMAIL, CHANNEL.PUSH],
     controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
     preferenceKey: 'tripReminders',
+    batchable: true,
   },
   itinerary_ready: {
     name: 'AI Itinerary Ready',
@@ -162,6 +170,7 @@ export const NOTIFICATION_TYPES = {
     channels: [CHANNEL.IN_APP, CHANNEL.PUSH],
     controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
     preferenceKey: 'buddyRequests',
+    batchable: true,
   },
   buddy_accepted: {
     name: 'Buddy Request Accepted',
@@ -222,6 +231,57 @@ export const NOTIFICATION_TYPES = {
     priority: PRIORITY.P2_IMPORTANT,
     channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
     controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+  payment_success: {
+    name: 'Payment Successful',
+    description: 'Payment processed successfully',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+  usage_warning: {
+    name: 'Usage Warning',
+    description: 'Approaching usage limit',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.IN_APP, CHANNEL.PUSH],
+    controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
+    preferenceKey: 'budgetAlerts',
+  },
+  trial_ending: {
+    name: 'Trial Ending Soon',
+    description: 'Free trial ending reminder',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP, CHANNEL.PUSH],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+  trial_expired: {
+    name: 'Trial Expired',
+    description: 'Free trial has expired',
+    priority: PRIORITY.P2_IMPORTANT,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
+    controlLevel: CONTROL_LEVEL.SYSTEM_MANAGED,
+  },
+
+  // === MARKETING & DIGEST (P3) ===
+  marketing_promotion: {
+    name: 'Promotion',
+    description: 'Promotional offers and deals (weekly digest, unsubscribable)',
+    priority: PRIORITY.P3_INFO,
+    channels: [CHANNEL.EMAIL],
+    controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
+    preferenceKey: 'marketingNotifications',
+    batchable: true,
+    digestFrequency: 'weekly',
+  },
+  content_tip: {
+    name: 'Tips & Content',
+    description: 'Travel tips, content updates, and recommendations (daily digest)',
+    priority: PRIORITY.P3_INFO,
+    channels: [CHANNEL.EMAIL, CHANNEL.IN_APP],
+    controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
+    preferenceKey: 'marketingNotifications',
+    batchable: true,
+    digestFrequency: 'daily',
   },
 };
 

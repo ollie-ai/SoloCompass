@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, Loader2, Globe, MessageCircle, Clock, UserPlus, Shield, Crown, CheckCircle, Search, X, MapPin, 
@@ -16,6 +16,7 @@ import SoloIDCard from '../components/SoloIDCard';
 import MatchingProfile from '../components/MatchingProfile';
 import MatchingProfileEdit from '../components/MatchingProfileEdit';
 import VerificationModal from '../components/VerificationModal';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -37,39 +38,31 @@ const Buddies = () => {
   const [soloId, setSoloId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [filterDestination, setFilterDestination] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [highlightedSuggestion, setHighlightedSuggestion] = useState(-1);
+  const [filters, setFilters] = useState({ destination: '', startDate: '', endDate: '', interests: [], genderPref: '' });
+  const filterDestination = filters.destination;
   const [activeTab, setActiveTab] = useState('discover');
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [confirmBlockId, setConfirmBlockId] = useState(null);
   const searchRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
     fetchData();
-  }, [filterDestination]);
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (searchRef.current && !searchRef.current.contains(e.target)) {
-        setShowSuggestions(false);
-        setHighlightedSuggestion(-1);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const filteredSuggestions = destinationSuggestions.filter(
-    (d) => d.toLowerCase().includes(filterDestination.toLowerCase()) && filterDestination.length > 0
-  );
+  }, [filters.destination]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      const params = new URLSearchParams();
+      if (filters.destination) params.set('destination', filters.destination);
+      if (filters.startDate) params.set('startDate', filters.startDate);
+      if (filters.endDate) params.set('endDate', filters.endDate);
+      if (filters.genderPref) params.set('genderPref', filters.genderPref);
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+
       const [potentialRes, requestsRes, connectionsRes, profileRes, soloIdRes] = await Promise.all([
-        api.get(`/matching/potential${filterDestination ? `?destination=${encodeURIComponent(filterDestination)}` : ''}`),
+        api.get(`/matching/potential${queryString}`),
         api.get('/matching/requests'),
         api.get('/matching/connections'),
         api.get('/matching/profile').catch(err => { console.error('[Buddies] Failed to fetch profile:', err); return { data: { data: null } }; }),
@@ -78,7 +71,22 @@ const Buddies = () => {
       setPotentialMatches(potentialRes.data.data || []);
       setIncomingRequests(requestsRes.data.data?.incoming || []);
       setOutgoingRequests(requestsRes.data.data?.outgoing || []);
-      setConnections(connectionsRes.data.data || []);
+      const normalizedConnections = (connectionsRes.data.data || []).map((conn) => ({
+        ...conn,
+        user: {
+          id: conn.buddy_id,
+          name: conn.buddy_name,
+          location: conn.location || null,
+        },
+        trip: conn.trip_destination ? {
+          destination: conn.trip_destination,
+          name: conn.trip_name,
+          startDate: conn.start_date,
+          endDate: conn.end_date,
+        } : null,
+        connectedAt: conn.created_at,
+      }));
+      setConnections(normalizedConnections);
       setMyProfile(profileRes.data.data);
       setSoloId(soloIdRes.data.data);
     } catch (error) {
@@ -132,16 +140,58 @@ const Buddies = () => {
     }
   };
 
-  const handleBlockUser = async (userId) => {
-    if (!window.confirm('Are you sure you want to block this user?')) {
-      return;
-    }
+  const handleBlockUser = (userId) => {
+    setConfirmBlockId(userId);
+  };
+
+  const executeBlockUser = async () => {
+    const userId = confirmBlockId;
+    setConfirmBlockId(null);
     try {
       await api.post(`/matching/block/${userId}`);
       toast.success('User blocked');
       setPotentialMatches(prev => (prev || []).filter(m => m.userId !== userId));
     } catch (error) {
       toast.error('Failed to block user');
+    }
+  };
+
+  const openConnectionSafetyModal = (connection) => {
+    setSelectedConnection(connection);
+    setShowBlockReportModal(true);
+  };
+
+  const closeConnectionSafetyModal = () => {
+    setShowBlockReportModal(false);
+    setSelectedConnection(null);
+  };
+
+  const handleReportConnection = async ({ reason, details }) => {
+    if (!selectedConnection?.id) return;
+    setSafetyActionLoading(true);
+    try {
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/report`, { reason, details });
+      toast.success('Report submitted');
+      closeConnectionSafetyModal();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Failed to submit report');
+    } finally {
+      setSafetyActionLoading(false);
+    }
+  };
+
+  const handleBlockConnection = async () => {
+    if (!selectedConnection?.id) return;
+    setSafetyActionLoading(true);
+    try {
+      await api.post(`/v1/buddy/connections/${selectedConnection.id}/block`);
+      toast.success('User blocked');
+      setConnections(prev => (prev || []).filter(c => c.id !== selectedConnection.id));
+      closeConnectionSafetyModal();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Failed to block user');
+    } finally {
+      setSafetyActionLoading(false);
     }
   };
 
@@ -264,43 +314,6 @@ const Buddies = () => {
     return { percent, label: 'Incomplete' };
   };
 
-  const handleSuggestionKeyDown = (e) => {
-    if (!showSuggestions || filteredSuggestions.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlightedSuggestion(prev => (prev < filteredSuggestions.length - 1 ? prev + 1 : 0));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightedSuggestion(prev => (prev > 0 ? prev - 1 : filteredSuggestions.length - 1));
-    } else if (e.key === 'Enter' && highlightedSuggestion >= 0) {
-      e.preventDefault();
-      selectSuggestion(filteredSuggestions[highlightedSuggestion]);
-    } else if (e.key === 'Escape') {
-      setShowSuggestions(false);
-      setHighlightedSuggestion(-1);
-    }
-  };
-
-  const selectSuggestion = (suggestion) => {
-    setFilterDestination(suggestion);
-    setShowSuggestions(false);
-    setHighlightedSuggestion(-1);
-    fetchData();
-  };
-
-  const highlightMatch = (text, query) => {
-    if (!query) return text;
-    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const parts = text.split(regex);
-    return parts.map((part, i) =>
-      regex.test(part) ? (
-        <span key={`highlight-${part}-${i}`} className="text-brand-vibrant font-bold">{part}</span>
-      ) : (
-        part
-      )
-    );
-  };
-
   const tabs = [
     { id: 'discover', label: 'Discover', icon: Users, count: potentialMatches.length },
     { id: 'requests', label: 'Requests', icon: UserPlus, count: incomingRequests.filter(r => r.status === 'pending').length },
@@ -371,6 +384,15 @@ const Buddies = () => {
 
   return (
     <DashboardShell>
+      <ConfirmDialog
+        open={confirmBlockId !== null}
+        onConfirm={executeBlockUser}
+        onCancel={() => setConfirmBlockId(null)}
+        title="Block This User?"
+        description="This user will be blocked and will no longer appear in your matches or be able to contact you."
+        confirmLabel="Block User"
+        variant="danger"
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <PageHeader 
           title={<>Solo <span className="text-gradient">Collective</span></>}
@@ -379,73 +401,12 @@ const Buddies = () => {
           icon={Users}
         />
 
-      <motion.div
-        className="glass-card p-6 mb-10 overflow-visible relative z-30"
-        ref={searchRef}
-      >
-        <div className="flex gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-base-content/40" size={18} />
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Filter by mission destination..."
-              value={filterDestination}
-              onChange={(e) => {
-                setFilterDestination(e.target.value);
-                setShowSuggestions(true);
-                setHighlightedSuggestion(-1);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setShowSuggestions(false);
-                  setHighlightedSuggestion(-1);
-                  fetchData();
-                }
-                handleSuggestionKeyDown(e);
-              }}
-              className="w-full pl-12 pr-4 py-3.5 rounded-2xl border border-white/5 text-sm font-bold text-base-content outline-none focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant bg-white/5 placeholder:text-base-content/20 uppercase tracking-wide"
-            />
-            <AnimatePresence>
-              {showSuggestions && filteredSuggestions.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                  className="absolute top-full left-0 right-0 mt-3 glass-card rounded-2xl shadow-2xl overflow-hidden z-50 p-2"
-                >
-                  {filteredSuggestions.map((s, index) => (
-                    <button
-                      key={s}
-                      onClick={() => selectSuggestion(s)}
-                      onMouseEnter={() => setHighlightedSuggestion(index)}
-                      className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors flex items-center gap-2 ${
-                        index === highlightedSuggestion
-                          ? 'bg-brand-vibrant/5 text-brand-vibrant'
-                          : 'text-base-content/80 hover:bg-brand-vibrant/5 hover:text-brand-vibrant'
-                      }`}
-                    >
-                      <Globe size={14} className="text-base-content/30" />
-                      {highlightMatch(s, filterDestination)}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <button
-            onClick={() => {
-              setShowSuggestions(false);
-              setHighlightedSuggestion(-1);
-              fetchData();
-            }}
-            className="px-6 py-2.5 rounded-xl font-bold text-sm bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-emerald-600 transition-colors"
-          >
-            Search
-          </button>
-        </div>
-      </motion.div>
+      <BuddyFilters
+        filters={filters}
+        onChange={setFilters}
+        onSearch={fetchData}
+        suggestions={destinationSuggestions}
+      />
 
       <motion.div variants={itemVariants} className="mb-10">
         <div className="flex glass-card-dark p-1.5 gap-1.5 rounded-2xl">
@@ -513,73 +474,14 @@ const Buddies = () => {
               {potentialMatches.length === 0 ? (
                 emptyStateForDiscover()
               ) : (
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {potentialMatches.map((match, index) => (
-                    <motion.div
-                      key={match.userId}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1], delay: index * 0.05 }}
-                    >
-                      <div className="glass-card rounded-2xl hover:bg-white/[0.02] transition-colors overflow-hidden group border-white/5">
-                        <div className="p-6">
-                          <div className="flex items-start gap-4 mb-5">
-                            <div className="w-14 h-14 rounded-2xl bg-brand-vibrant/10 flex items-center justify-center shrink-0 border border-brand-vibrant/20 group-hover:scale-105 transition-transform duration-500">
-                              <span className="text-xl font-black text-brand-vibrant font-outfit uppercase">
-                                {getInitials(match.name || match.userName)}
-                              </span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-outfit font-black text-lg text-base-content tracking-tight uppercase">{match.name || match.userName || 'Traveler'}</h4>
-                                {match.emailVerified && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-black text-brand-vibrant bg-brand-vibrant/10 border border-brand-vibrant/20 uppercase tracking-widest">
-                                    <CheckCircle size={10} /> Verified
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 text-[11px] font-black text-base-content/30 uppercase tracking-premium">
-                                <MapPin size={12} className="text-brand-vibrant/40" />
-                                {match.location || 'Location hidden'}
-                              </div>
-                            </div>
-                          </div>
-
-                          {match.destination && (
-                            <div className="flex items-center gap-2 text-xs text-base-content/70 font-bold mb-4 px-3 py-1.5 bg-white/5 rounded-xl border border-white/5">
-                              <Globe size={14} className="text-brand-vibrant" />
-                              <span className="uppercase tracking-wide">{match.destination}</span>
-                            </div>
-                          )}
-
-                          <div className="flex flex-wrap gap-2 mb-6">
-                            {getMatchReasons(match).map((reason, i) => (
-                              <span key={`reason-${reason.label}-${i}`} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-premium border ${reason.color}`}>
-                                <reason.icon size={12} strokeWidth={2.5} /> {reason.label}
-                              </span>
-                            ))}
-                          </div>
-
-                          <div className="flex gap-3">
-                            <button
-                              onClick={() => handleConnect(match.userId)}
-                              disabled={actionLoading}
-                              className="flex-1 btn-premium text-[11px] py-3 disabled:opacity-50"
-                            >
-                              <UserPlus size={14} strokeWidth={2.5} /> Connect
-                            </button>
-                            <button
-                              onClick={() => handleSkip(match.userId)}
-                              className="px-4 py-3 rounded-xl font-black text-[11px] bg-white/5 text-base-content/40 border border-white/5 hover:bg-white/10 hover:text-base-content/60 transition-all uppercase tracking-premium"
-                            >
-                              Skip
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                <BuddyDiscoveryGrid
+                  matches={potentialMatches}
+                  onConnect={handleConnect}
+                  onSkip={handleSkip}
+                  loading={actionLoading}
+                  getMatchReasons={getMatchReasons}
+                  myProfile={myProfile}
+                />
               )}
             </>
             </PlanGate>
@@ -825,9 +727,20 @@ const Buddies = () => {
                           </div>
                         )}
 
-                        <div className="flex items-center gap-1.5 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
-                          <Calendar size={12} />
-                          Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
+                        <div className="flex items-center justify-between gap-2 text-xs text-base-content/40 font-medium pt-3 border-t border-base-300/50">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Calendar size={12} />
+                            Connected {conn.connectedAt ? getRelativeTime(conn.connectedAt) : 'Recently'}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openConnectionSafetyModal(conn);
+                            }}
+                            className="px-2 py-1 rounded-lg border border-base-300 text-base-content/60 hover:text-error hover:border-error/40"
+                          >
+                            Safety
+                          </button>
                         </div>
                       </motion.div>
                     );
@@ -928,6 +841,14 @@ const Buddies = () => {
       <VerificationModal 
         isOpen={showVerificationModal} 
         onClose={() => setShowVerificationModal(false)} 
+      />
+      <BlockReportModal
+        open={showBlockReportModal}
+        loading={safetyActionLoading}
+        userName={selectedConnection?.user?.name || selectedConnection?.buddy_name}
+        onClose={closeConnectionSafetyModal}
+        onReport={handleReportConnection}
+        onBlock={handleBlockConnection}
       />
       </div>
     </DashboardShell>

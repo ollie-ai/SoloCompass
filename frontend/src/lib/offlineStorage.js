@@ -2,10 +2,13 @@ const OFFLINE_DATA_KEY = 'solocompass_offline_data';
 
 const OFFLINE_DATA_SCHEMA = {
   trips: null,
+  tripDetails: {},
   destinations: null,
   destinationAI: null,
   emergencyNumbers: null,
   currencyRates: null,
+  returnPlan: null,
+  pendingCheckins: [],
   lastSync: null
 };
 
@@ -112,13 +115,89 @@ export const offlineStorage = {
     }
   },
 
+  getPendingCheckins() {
+    const data = this.getOfflineData();
+    return data?.pendingCheckins || [];
+  },
+
+  addPendingCheckin(checkin) {
+    const data = this.getOfflineData() || { ...OFFLINE_DATA_SCHEMA };
+    const pending = data.pendingCheckins || [];
+    pending.push({ ...checkin, queuedAt: new Date().toISOString() });
+    return this.setOfflineData({ pendingCheckins: pending });
+  },
+
+  clearPendingCheckins() {
+    return this.setOfflineData({ pendingCheckins: [] });
+  },
+
+  getReturnPlan() {
+    const data = this.getOfflineData();
+    return data?.returnPlan || null;
+  },
+
+  setReturnPlan(plan) {
+    return this.setOfflineData({ returnPlan: plan });
+  },
+
+  clearReturnPlan() {
+    return this.setOfflineData({ returnPlan: null });
+  },
+
   getOfflineEssentialsStatus() {
     const data = this.getOfflineData();
     return {
       offlineMaps: !!data?.destinations,
       emergencyNumbers: !!data?.emergencyNumbers,
-      currencyOffline: !!data?.currencyRates
+      currencyOffline: !!data?.currencyRates,
+      returnPlan: !!data?.returnPlan
     };
+  },
+
+  /**
+   * Cache full trip detail (itinerary, documents, bookings, etc.) for offline viewing.
+   * @param {string|number} tripId
+   * @param {object} detail  — the full trip detail object to cache
+   */
+  setTripDetail(tripId, detail) {
+    const data = this.getOfflineData();
+    const existing = data?.tripDetails || {};
+    existing[tripId] = {
+      ...detail,
+      cachedAt: new Date().toISOString(),
+    };
+    return this.setOfflineData({ tripDetails: existing });
+  },
+
+  /**
+   * Retrieve a cached trip detail for offline viewing.
+   * @param {string|number} tripId
+   * @returns {object|null}
+   */
+  getTripDetail(tripId) {
+    const data = this.getOfflineData();
+    return data?.tripDetails?.[tripId] || null;
+  },
+
+  /**
+   * Remove a single cached trip detail (e.g. when a trip is deleted).
+   * @param {string|number} tripId
+   */
+  removeTripDetail(tripId) {
+    const data = this.getOfflineData();
+    if (!data?.tripDetails?.[tripId]) return true;
+    const tripDetails = { ...data.tripDetails };
+    delete tripDetails[tripId];
+    return this.setOfflineData({ tripDetails });
+  },
+
+  /**
+   * Return a map of all cached trip details.
+   * @returns {object}
+   */
+  getAllTripDetails() {
+    const data = this.getOfflineData();
+    return data?.tripDetails || {};
   }
 };
 

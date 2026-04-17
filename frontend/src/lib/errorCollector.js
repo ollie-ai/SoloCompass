@@ -1,4 +1,5 @@
 import api from './api';
+import { trackFrontendError } from './errorTracking';
 
 const BATCH_INTERVAL = 10000;
 const BATCH_THRESHOLD = 5;
@@ -95,6 +96,7 @@ function enqueueError(error, type) {
   if (isDuplicate(normalized)) return;
 
   errorQueue.push(normalized);
+  trackFrontendError(new Error(normalized.message), normalized).catch(() => {});
 
   if (errorQueue.length >= BATCH_THRESHOLD) {
     flushQueue();
@@ -127,6 +129,7 @@ export function reportError(error, context = {}) {
   if (isDuplicate(normalized)) return;
 
   errorQueue.push(normalized);
+  trackFrontendError(new Error(normalized.message), normalized).catch(() => {});
 
   if (errorQueue.length >= BATCH_THRESHOLD) {
     flushQueue();

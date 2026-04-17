@@ -3,6 +3,17 @@ import db from '../db.js';
 import logger from './logger.js';
 import { FROM_EMAIL, FROM_NAME, getResendClient } from './resendClient.js';
 import { broadcastToUser } from './websocket.js';
+import { shouldBatch, enqueueP3Notification, setFlushCallback } from './notificationBatchQueue.js';
+
+function getUnsubscribeUrl(token = 'pending-token') {
+  const apiBase = process.env.BACKEND_URL || 'http://localhost:3005';
+  return `${apiBase}/api/notifications/unsubscribe?token=${token}`;
+}
+
+function unsubscribeFooter(token) {
+  const url = getUnsubscribeUrl(token);
+  return `<p style="color:#64748b;font-size:12px;margin-top:16px;">To unsubscribe: <a href="${url}">${url}</a></p>`;
+}
 
 // Helper for formatting location in emails
 export function formatLocation(latitude, longitude, address) {
@@ -50,6 +61,7 @@ export async function sendSafeCheckinNotification(contact, user, checkIn, locati
         </div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">This notification was sent by SoloCompass Safety Check-In.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -57,7 +69,8 @@ export async function sendSafeCheckinNotification(contact, user, checkIn, locati
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[SoloCompass] ${user.name} checked in safely ✓`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -107,6 +120,7 @@ export async function sendEmergencyAlertNotification(contact, user, checkIn, loc
         </div>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">SoloCompass Support: support@solocompass.com</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -114,7 +128,8 @@ export async function sendEmergencyAlertNotification(contact, user, checkIn, loc
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[URGENT] ${user.name} - Emergency Alert from SoloCompass`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -151,6 +166,7 @@ export async function sendMissedCheckinNotification(contact, user, scheduledChec
         <p><strong>${user.name}</strong> scheduled a check-in for <strong>${scheduledTime}</strong> but has not checked in yet.</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
         <p style="color: #64748b; font-size: 12px; margin: 0;">This notification was sent by SoloCompass Safety Check-In.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -158,7 +174,8 @@ export async function sendMissedCheckinNotification(contact, user, scheduledChec
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: `[SoloCompass] ${user.name} - Missed Check-In`,
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -228,6 +245,7 @@ export async function sendTestNotification(contact, user) {
         </div>
         <p>Hi ${contact.name},</p>
         <p>This is a test notification from SoloCompass.</p>
+        ${unsubscribeFooter(`contact-${contact.id || 'unknown'}`)}
       </div>
     `;
 
@@ -235,7 +253,8 @@ export async function sendTestNotification(contact, user) {
       from: FROM_EMAIL(),
       to: [contact.email],
       subject: '[SoloCompass] Test Notification - Emergency Contact Setup',
-      html
+      html,
+      headers: { 'List-Unsubscribe': `<${getUnsubscribeUrl(`contact-${contact.id || 'unknown'}`)}>` }
     });
 
     if (error) return { success: false, error };
@@ -246,23 +265,77 @@ export async function sendTestNotification(contact, user) {
   }
 }
 
+/**
+ * Check if notification should be suppressed due to Do Not Disturb hours
+ */
+async function shouldSuppressForDND(userId, priority) {
+  // Never suppress P0 (Emergency) notifications
+  if (priority === 'P0') return false;
+  
+  try {
+    const prefs = await db.get(
+      'SELECT quiet_hours_start, quiet_hours_end, quiet_hours_timezone FROM notification_preferences WHERE user_id = ?',
+      userId
+    );
+    
+    if (!prefs?.quiet_hours_start || !prefs?.quiet_hours_end) return false;
+    
+    // Get current time in user's timezone
+    const now = new Date();
+    const userTz = prefs.quiet_hours_timezone || 'UTC';
+    const userTime = new Date(now.toLocaleString('en-US', { timeZone: userTz }));
+    const currentMinutes = userTime.getHours() * 60 + userTime.getMinutes();
+    
+    // Parse quiet hours (stored as TIME in HH:MM:SS format)
+    const [startH, startM] = prefs.quiet_hours_start.split(':').map(Number);
+    const [endH, endM] = prefs.quiet_hours_end.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    // Handle overnight DND (e.g., 22:00 - 07:00)
+    if (startMinutes > endMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+    
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  } catch {
+    return false;
+  }
+}
+
 // ... the rest of the db methods stay same ...
 export async function createNotification(userId, type, title, message, data = null, relatedId = null) {
+  // P3 (informational) notifications are batched into a digest to reduce noise.
+  if (shouldBatch(type)) {
+    enqueueP3Notification(userId, type, title, message, data);
+    return null;
+  }
+
   try {
+    const notificationData = data ? { ...data } : {};
+
+    // Check DND — still save to DB but suppress real-time broadcast
+    const isDND = await shouldSuppressForDND(userId, notificationData.priority);
+    if (isDND) {
+      notificationData.suppressed_by_dnd = true;
+    }
+
     const result = await db.prepare(`
       INSERT INTO notifications (user_id, type, title, message, data, is_read, related_id)
       VALUES (?, ?, ?, ?, ?, false, ?)
-    `).run(userId, type, title, message, data ? JSON.stringify(data) : null, relatedId || null);
+    `).run(userId, type, title, message, JSON.stringify(notificationData), relatedId || null);
     
-    // Real-time broadcast
-    broadcastToUser(userId, {
-      type: 'notification',
-      notification: {
-        userId, type, title, message, data, relatedId,
-        id: result.lastInsertRowid,
-        created_at: new Date().toISOString()
-      }
-    });
+    // Real-time broadcast (skip if DND is active)
+    if (!isDND) {
+      broadcastToUser(userId, {
+        type: 'notification',
+        notification: {
+          userId, type, title, message, data: notificationData, relatedId,
+          id: result.lastInsertRowid,
+          created_at: new Date().toISOString()
+        }
+      });
+    }
 
     return result;
   } catch (err) {
@@ -270,6 +343,24 @@ export async function createNotification(userId, type, title, message, data = nu
     return null;
   }
 }
+
+// Wire the batch queue's flush callback now that createNotification is defined.
+// Uses the direct (non-batched) DB write to avoid re-entering the queue.
+setFlushCallback(async (userId, type, title, message, data) => {
+  try {
+    const result = await db.prepare(
+      `INSERT INTO notifications (user_id, type, title, message, data, is_read, related_id)
+       VALUES (?, ?, ?, ?, ?, false, NULL)`
+    ).run(userId, type, title, message, data ? JSON.stringify(data) : null);
+
+    broadcastToUser(userId, {
+      type: 'notification',
+      notification: { userId, type, title, message, data, id: result.lastInsertRowid, created_at: new Date().toISOString() },
+    });
+  } catch (err) {
+    logger.error('[NotifBatch] Flush write failed:', err.message);
+  }
+});
 
 export async function getUserNotifications(userId, { limit = 50, offset = 0, unreadOnly = false } = {}) {
     try {

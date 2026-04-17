@@ -22,7 +22,7 @@ router.use(requireAuth);
  */
 router.get('/status', async (req, res) => {
   try {
-    const user = await db.get('SELECT verification_tier, is_verified, email FROM users WHERE id = ?', req.userId);
+    const user = await db.get('SELECT verification_tier, email_verified, email FROM users WHERE id = ?', req.userId);
     const profile = await db.get('SELECT phone, social_links FROM profiles WHERE user_id = ?', req.userId);
 
     const socialLinks = profile?.social_links ? JSON.parse(profile.social_links) : {};
@@ -32,7 +32,7 @@ router.get('/status', async (req, res) => {
       success: true,
       data: {
         currentTier: user.verification_tier || 0,
-        emailVerified: !!user.is_verified,
+        emailVerified: !!user.email_verified,
         phoneVerified: !!profile?.phone, // Simplified for V1
         socialLinked: hasSocial,
         nextRequirements: user.verification_tier === 1 ? ['Verify Phone', 'Link Social Account'] : 

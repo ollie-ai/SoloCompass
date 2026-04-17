@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Lock } from 'lucide-react'
 import TripImageHero from '../TripImageHero'
+import UpcomingTripCard from '../UpcomingTripCard'
 import DashboardModuleGrid, { ModuleCard } from '../DashboardModuleGrid'
 import CollapsibleWidget from '../CollapsibleWidget'
 import WidgetManagementPanel from '../WidgetManagementPanel'
@@ -212,7 +213,11 @@ const UpcomingDashboard = ({ trip, alerts = [], stats = {}, safetyData = {}, tim
         trip={trip} title={trip?.destination || "Your Upcoming Trip"}
         subtitle={countdown ? `${countdown.text} until departure — review what's ready.` : "Review what's ready."}
         primaryCta={{ label: "Open Trip", href: `/trips/${trip?.id}` }}
-        secondaryCta={{ label: "View Safety", href: "/safety" }}
+        secondaryCta={{ label: "Safety", href: "/safety" }}
+        extraCtas={[
+          { label: "🆘 SOS", href: "/safety?sos=1" },
+          { label: "✦ Ask Atlas", href: "/dashboard?atlas=1" },
+        ]}
         overlay="subtle"
         statusPanel={
           <div className="flex flex-col items-center">

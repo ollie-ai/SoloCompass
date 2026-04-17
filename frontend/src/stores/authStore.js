@@ -81,10 +81,12 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  register: async (email, password, name) => {
+  register: async (email, password, name, referralCode) => {
     try {
       set({ error: null, isLoading: true });
-      const response = await api.post('/auth/register', { email, password, name });
+      const payload = { email, password, name };
+      if (referralCode) payload.referralCode = referralCode;
+      const response = await api.post('/auth/register', payload);
       set({
         user: response.data.data.user,
         isAuthenticated: true,

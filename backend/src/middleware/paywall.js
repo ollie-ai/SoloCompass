@@ -133,6 +133,19 @@ const PLAN_ACCESS = {
   ]
 };
 
+const getRequiredPlanForFeature = (feature) => {
+  if ((PLAN_ACCESS[PLAN_TIERS.EXPLORER] || []).includes(feature)) {
+    return PLAN_TIERS.EXPLORER;
+  }
+  if ((PLAN_ACCESS[PLAN_TIERS.GUARDIAN] || []).includes(feature)) {
+    return PLAN_TIERS.GUARDIAN;
+  }
+  if ((PLAN_ACCESS[PLAN_TIERS.NAVIGATOR] || []).includes(feature)) {
+    return PLAN_TIERS.NAVIGATOR;
+  }
+  return PLAN_TIERS.EXPLORER;
+};
+
 /**
  * Get user's plan tier from database
  */
@@ -165,14 +178,16 @@ export const requireFeature = (feature) => {
     try {
       const plan = await getUserPlan(req.userId);
       const hasAccess = await hasFeature(req.userId, feature);
+      const requiredPlan = getRequiredPlanForFeature(feature);
 
       if (!hasAccess) {
         return res.status(403).json({
           success: false,
           error: {
             code: 'FEATURE_NOT_INCLUDED',
-            message: `This feature requires the ${plan === PLAN_TIERS.GUARDIAN ? 'Guardian' : plan === PLAN_TIERS.NAVIGATOR ? 'Navigator' : 'Explorer'} plan.`,
+            message: `This feature requires the ${requiredPlan === PLAN_TIERS.NAVIGATOR ? 'Navigator' : requiredPlan === PLAN_TIERS.GUARDIAN ? 'Guardian' : 'Explorer'} plan.`,
             currentPlan: plan,
+            requiredPlan,
             upgradeUrl: '/settings?tab=billing'
           }
         });
@@ -181,7 +196,13 @@ export const requireFeature = (feature) => {
       next();
     } catch (error) {
       logger.error('Feature check middleware error:', error);
-      next(); // Allow on error to avoid blocking users
+      return res.status(503).json({
+        success: false,
+        error: {
+          code: 'FEATURE_GATE_UNAVAILABLE',
+          message: 'Feature access could not be verified'
+        }
+      });
     }
   };
 };
@@ -267,75 +288,88 @@ export const enforceTripLimits = async (req, res, next) => {
 };
 
 /**
+ * Per-tier daily AI query limits.
+ * Explorer: 10/day, Guardian: 50/day, Navigator: unlimited
+ */
+const AI_DAILY_LIMITS = {
+  [PLAN_TIERS.EXPLORER]: 10,
+  [PLAN_TIERS.GUARDIAN]: 50,
+  [PLAN_TIERS.NAVIGATOR]: Infinity,
+};
+
+/**
+ * Increment the daily AI usage counter for a user.
+ * Uses ai_usage_daily table (migration v029).
+ */
+async function incrementAIDailyUsage(userId) {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  try {
+    await db.prepare(`
+      INSERT INTO ai_usage_daily (user_id, usage_date, count)
+      VALUES (?, ?, 1)
+      ON CONFLICT (user_id, usage_date) DO UPDATE SET count = count + 1
+    `).run(userId, today);
+  } catch (err) {
+    logger.error(`[AI Limits] Failed to increment daily usage: ${err.message}`);
+  }
+}
+
+/**
  * Middleware to check AI usage limits
  */
 export const checkAILimits = async (req, res, next) => {
   try {
     const user = await db.prepare('SELECT subscription_tier, is_premium FROM users WHERE id = ?').get(req.userId);
     const plan = user?.subscription_tier || PLAN_TIERS.EXPLORER;
-    
-    // Navigator has unlimited
-    if (plan === PLAN_TIERS.NAVIGATOR) {
+
+    const dailyLimit = AI_DAILY_LIMITS[plan] ?? AI_DAILY_LIMITS[PLAN_TIERS.EXPLORER];
+
+    // Unlimited tiers — just track and pass through
+    if (dailyLimit === Infinity) {
+      await incrementAIDailyUsage(req.userId);
       return next();
     }
 
-    // Guardian has unlimited
-    if (plan === PLAN_TIERS.GUARDIAN || user?.is_premium) {
+    const today = new Date().toISOString().slice(0, 10);
+    let usageRow;
+    try {
+      usageRow = await db.prepare(
+        'SELECT count FROM ai_usage_daily WHERE user_id = ? AND usage_date = ?'
+      ).get(req.userId, today);
+    } catch (err) {
+      // Table may not exist yet in older envs — allow through
+      logger.warn('[AI Limits] ai_usage_daily table missing, skipping limit check');
       return next();
     }
 
-    // Explorer - check monthly limit (1 per month for itinerary, 5 per month for chat)
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-    
-    // Check both itinerary and chat usage for Explorer plan
-    const itineraryUsage = await db.prepare(
-      'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
-    ).get(req.userId, currentMonth, 'itinerary');
+    const usedToday = usageRow?.count || 0;
 
-    const chatUsage = await db.prepare(
-      'SELECT COUNT(*) as count FROM ai_usage WHERE user_id = ? AND month = ? AND type = ?'
-    ).get(req.userId, currentMonth, 'chat');
-
-    // Determine what type of AI request this is based on route
-    const isChatRequest = req.path === '/chat';
-    const isItineraryRequest = req.path === '/generate-itinerary';
-    
-    if (isItineraryRequest && itineraryUsage?.count >= 1) {
+    if (usedToday >= dailyLimit) {
+      const tierName = plan === PLAN_TIERS.GUARDIAN ? 'Guardian' : 'Explorer';
       return res.status(429).json({
         success: false,
+        upgradeRequired: true,
         error: {
           code: 'AI_LIMIT_REACHED',
-          message: 'Explorer plan includes 1 AI itinerary per month. Your limit resets next month.',
+          message: `You've reached your ${tierName} plan limit of ${dailyLimit} AI queries per day. Upgrade to unlock more.`,
+          currentTier: plan,
+          limit: dailyLimit,
+          used: usedToday,
           upgradeUrl: '/settings?tab=billing',
-          nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
+          nextReset: new Date(Date.UTC(
+            new Date().getUTCFullYear(),
+            new Date().getUTCMonth(),
+            new Date().getUTCDate() + 1
+          )).toISOString()
         }
       });
     }
 
-    if (isChatRequest && chatUsage?.count >= 5) {
-      return res.status(429).json({
-        success: false,
-        error: {
-          code: 'AI_LIMIT_REACHED',
-          message: 'Explorer plan includes 5 AI chat messages per month. Your limit resets next month.',
-          upgradeUrl: '/settings?tab=billing',
-          nextReset: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString()
-        }
-      });
-    }
-
-    // Track usage
-    const usageType = isChatRequest ? 'chat' : (isItineraryRequest ? 'itinerary' : 'other');
-    if (usageType !== 'other') {
-      await db.prepare(
-        'INSERT INTO ai_usage (user_id, month, type, count) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, month, type) DO UPDATE SET count = count + 1'
-      ).run(req.userId, currentMonth, usageType);
-    }
-
+    await incrementAIDailyUsage(req.userId);
     next();
   } catch (error) {
     logger.error('AI limits middleware error:', error);
-    next(); // Allow on error
+    next(); // Allow on error to avoid blocking users
   }
 };
 

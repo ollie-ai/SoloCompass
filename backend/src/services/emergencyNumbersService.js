@@ -1,12 +1,38 @@
-import emergencyNumbers from '../data/emergencyNumbers.json' with { type: 'json' };
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import axios from 'axios';
 import logger from './logger.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_PATH = path.join(__dirname, '../data/emergencyNumbers.json');
+
+function readEmergencyNumbers() {
+  try {
+    const raw = fs.readFileSync(DATA_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
 const EMERGENCY_TYPES = ['police', 'ambulance', 'fire', 'general'];
+
+let emergencyNumbersData = emergencyNumbers;
+let refreshTimer = null;
+let refreshMetadata = {
+  source: 'static-json',
+  lastSuccessfulRefreshAt: null,
+  nextScheduledRefreshAt: null,
+  lastAttemptAt: null,
+  lastError: null,
+};
 
 function normalizeCountryCode(countryCode) {
   if (!countryCode) return null;
   const normalized = countryCode.toUpperCase().trim();
+  const emergencyNumbers = readEmergencyNumbers();
   if (emergencyNumbers[normalized]) {
     return normalized;
   }
@@ -94,11 +120,12 @@ export async function getEmergencyNumbers(countryCode) {
     normalizedCode = getCountryByName(countryCode);
   }
   
+  const emergencyNumbers = readEmergencyNumbers();
   if (!normalizedCode || !emergencyNumbers[normalizedCode]) {
     return null;
   }
   
-  const data = emergencyNumbers[normalizedCode];
+  const data = emergencyNumbersData[normalizedCode];
   
   return {
     countryCode: normalizedCode,
@@ -113,7 +140,7 @@ export async function getEmergencyNumbers(countryCode) {
 }
 
 export async function getAllEmergencyNumbers() {
-  return emergencyNumbers;
+  return readEmergencyNumbers();
 }
 
 export function isAvailable(countryCode) {
@@ -121,6 +148,7 @@ export function isAvailable(countryCode) {
   if (!normalizedCode) {
     normalizedCode = getCountryByName(countryCode);
   }
+  const emergencyNumbers = readEmergencyNumbers();
   return !!(normalizedCode && emergencyNumbers[normalizedCode]);
 }
 
@@ -152,6 +180,7 @@ export async function getEmergencyNumbersWithFallback(countryCode) {
   }
   
   // Check local data first
+  const emergencyNumbers = readEmergencyNumbers();
   if (normalizedCode && emergencyNumbers[normalizedCode]) {
     const data = emergencyNumbers[normalizedCode];
     return {

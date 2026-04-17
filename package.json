@@ -13,9 +13,14 @@
     "dev:frontend": "npm run dev -w solocompass-frontend",
     "dev:backend": "npm run dev -w solocompass-backend",
     "build": "npm run build -w solocompass-frontend",
-    "start": "npm run start -w solocompass-backend"
+    "start": "npm run start -w solocompass-backend",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,md}\" --ignore-path .gitignore",
+    "license:check": "license-checker --onlyAllow \"MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;0BSD;Python-2.0;CC0-1.0;Unlicense\" --excludePrivatePackages"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "license-checker": "^25.0.1",
+    "prettier": "^3.3.3"
   }
 }

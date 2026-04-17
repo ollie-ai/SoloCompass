@@ -1,9 +1,56 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import logger from '../services/logger.js';
+import helpArticles from '../data/helpArticles.json' with { type: 'json' };
 
 const router = express.Router();
+const supportTicketLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 25,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+const requireSupportLimiter = supportTicketLimiter;
+const featureRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const emergencyKeywords = ['sos', 'emergency', 'urgent', 'unsafe', 'danger'];
+
+const getEmergencyFlag = ({ subject = '', message = '', category = '' }) => {
+  if (String(category).toLowerCase() === 'sos') return true;
+  const text = `${subject} ${message}`.toLowerCase();
+  return emergencyKeywords.some((keyword) => text.includes(keyword));
+};
+
+const HELP_ARTICLES = [
+  {
+    id: 'getting-started',
+    title: 'Getting Started with SoloCompass',
+    category: 'Getting Started',
+    excerpt: 'Create your account, set up your profile, and plan your first solo trip.',
+    updatedAt: '2026-01-15T00:00:00.000Z',
+  },
+  {
+    id: 'safety-check-in-guide',
+    title: 'How Safety Check-Ins Work',
+    category: 'Safety',
+    excerpt: 'Learn how automatic check-ins, SOS alerts, and emergency contacts protect your journey.',
+    updatedAt: '2026-02-12T00:00:00.000Z',
+  },
+  {
+    id: 'billing-and-subscriptions',
+    title: 'Billing, Plans, and Subscription Management',
+    category: 'Billing',
+    excerpt: 'Understand available plans, renewals, invoices, and cancellation options.',
+    updatedAt: '2026-03-03T00:00:00.000Z',
+  },
+];
 
 /**
  * GET /api/help/faqs
@@ -81,6 +128,74 @@ router.get('/faqs', (req, res) => {
   });
 });
 
+
+/**
+ * GET /api/help/articles
+ * Returns help center articles for in-app support center
+ */
+router.get('/articles', (req, res) => {
+  logger.http(`[Help] GET /articles - Request ID: ${req.id}`);
+  res.json({ success: true, data: helpArticles, count: helpArticles.length });
+});
+
+/**
+ * GET /api/help/guides
+ * Returns structured getting-started guides
+ */
+router.get('/guides', (req, res) => {
+  const guides = [
+    {
+      id: 'guide-account-setup',
+      title: 'Set up your account',
+      category: 'Getting Started',
+      duration: '5 min',
+      steps: [
+        'Create your account and verify email',
+        'Complete your Travel DNA profile',
+        'Enable notifications for safety updates',
+      ],
+    },
+    {
+      id: 'guide-first-trip',
+      title: 'Create your first trip',
+      category: 'Trip Planning',
+      duration: '8 min',
+      steps: [
+        'Add destination and travel dates',
+        'Generate your first AI itinerary',
+        'Adjust activities, pace, and notes',
+      ],
+    },
+    {
+      id: 'guide-safety-basics',
+      title: 'Configure safety essentials',
+      category: 'Safety',
+      duration: '6 min',
+      steps: [
+        'Add emergency contacts',
+        'Set check-in reminders',
+        'Review SOS and escalation settings',
+      ],
+    },
+  ];
+
+  res.json({ success: true, data: guides });
+});
+
+/**
+ * GET /api/help/tutorials
+ * Returns video tutorial metadata
+ */
+router.get('/tutorials', (req, res) => {
+  const tutorials = [
+    { id: 'video-trip-setup', title: 'Trip setup walkthrough', duration: '3:24', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+    { id: 'video-safety-checkins', title: 'Using safety check-ins', duration: '4:10', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+    { id: 'video-itinerary-edits', title: 'Editing itinerary activities', duration: '2:52', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+  ];
+
+  res.json({ success: true, data: tutorials });
+});
+
 /**
  * GET /api/help/contact
  * Returns contact information
@@ -146,6 +261,45 @@ router.post('/contact', [
   } catch (error) {
     logger.error(`[Help] Contact form error: ${error.message}`);
     res.status(500).json({ success: false, error: 'Failed to submit contact form' });
+  }
+});
+
+/**
+ * POST /api/help/feedback
+ * Submit user feedback with rating/text and optional screenshot metadata
+ */
+router.post('/feedback', [
+  body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating must be between 1 and 5'),
+  body('message').trim().isLength({ min: 5 }).withMessage('Message must be at least 5 characters'),
+  body('email').optional().isEmail().withMessage('Email must be valid'),
+  body('screenshotName').optional().isString(),
+  body('screenshotDataUrl').optional().isString(),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { rating, message, email, screenshotName, screenshotDataUrl } = req.body;
+    const metadata = {
+      email: email || null,
+      screenshotName: screenshotName || null,
+      hasScreenshot: Boolean(screenshotDataUrl),
+    };
+
+    await db.run(
+      `INSERT INTO events (user_id, event_name, event_data, timestamp) VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+      null,
+      'support_feedback_submitted',
+      JSON.stringify({ rating, message, ...metadata })
+    );
+
+    logger.info(`[Help] Feedback submitted (rating=${rating}, screenshot=${metadata.hasScreenshot})`);
+    res.json({ success: true, message: 'Thanks for your feedback.' });
+  } catch (error) {
+    logger.error(`[Help] Feedback error: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to submit feedback' });
   }
 });
 

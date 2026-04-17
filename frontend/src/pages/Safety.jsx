@@ -1,17 +1,21 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../lib/api';
+import { triggerHaptic } from '../hooks/useHaptics';
 import toast from 'react-hot-toast';
 import DashboardShell from '../components/dashboard/DashboardShell';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../stores/authStore';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { 
   Shield, Bell, Lock, ShieldCheck, AlertTriangle, Phone, MapPin, Eye, Info, Check, Clock, Users, Send, History, 
-  PhoneCall, AlertOctagon, Calendar, X, Plus, Edit2, Trash2, XCircle, CheckCircle, Smartphone, Activity, Compass, Sparkles
+  PhoneCall, AlertOctagon, Calendar, X, Plus, Edit2, Trash2, XCircle, CheckCircle, Smartphone, Activity, Compass, Sparkles,
+  Map, FileText, Building
 } from 'lucide-react';
 import Button from '../components/Button';
 import APIErrorBoundary from '../components/APIErrorBoundary';
 import PlanGate from '../components/PlanGate';
+import SEO from '../components/SEO';
 
 const Skeleton = ({ className }) => (
   <div className={`bg-base-content/5 rounded-lg animate-pulse ${className}`} />
@@ -72,6 +76,12 @@ export default function Safety() {
   const [fakeCallCountdown, setFakeCallCountdown] = useState(0);
   const [fakeCallDelay, setFakeCallDelay] = useState(3);
   const [sosSliderValue, setSosSliderValue] = useState(0);
+  const [sosHoldActive, setSosHoldActive] = useState(false);
+  const [sosCountdown, setSosCountdown] = useState(3);
+  const [sosEventActive, setSosEventActive] = useState(false);
+  const [sosEventId, setSosEventId] = useState(null);
+  const [sosEventLocation, setSosEventLocation] = useState(null);
+  const sosHoldTimer = { interval: null, timeout: null };
 
   const [showScheduledForm, setShowScheduledForm] = useState(false);
   const [scheduleType, setScheduleType] = useState('one-time');
@@ -89,6 +99,19 @@ export default function Safety() {
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState(null);
   const [aiAdviceLoading, setAiAdviceLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
+
+  // New state for wired safety components
+  const [missedCheckIn, setMissedCheckIn] = useState(null);
+  const [trips, setTrips] = useState([]);
+  const [returnPlan, setReturnPlan] = useState(null);
+  const [guardianRelationships, setGuardianRelationships] = useState([]);
+  const [activeDestinationId, setActiveDestinationId] = useState(null);
+  const [embassyCountryCode, setEmbassyCountryCode] = useState('');
+  const [showGuardianInvite, setShowGuardianInvite] = useState(false);
+  const [showGuardianDashboard, setShowGuardianDashboard] = useState(false);
+
+  const { on: wsOn } = useWebSocket();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -104,12 +127,25 @@ export default function Safety() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Subscribe to WebSocket checkin_missed events
+  useEffect(() => {
+    const unsubscribe = wsOn('checkin_missed', (data) => {
+      if (data.scheduledCheckInId) {
+        const sci = scheduledCheckIns.find((s) => s.id === data.scheduledCheckInId);
+        setMissedCheckIn(sci || { id: data.scheduledCheckInId });
+      }
+    });
+    return unsubscribe;
+  }, [wsOn, scheduledCheckIns]);
+
   const fetchData = async () => {
     try {
-      const [contactsRes, checkInsRes, scheduledRes] = await Promise.all([
+      const [contactsRes, checkInsRes, scheduledRes, tripsRes, guardianRes] = await Promise.all([
         api.get('/emergency-contacts'),
         api.get('/checkin/history'),
-        api.get('/checkin/scheduled?activeOnly=true')
+        api.get('/checkin/scheduled?activeOnly=true'),
+        api.get('/trips').catch(() => null),
+        api.get('/guardian/list').catch(() => null)
       ]);
 
       if (contactsRes.data.success) {
@@ -124,6 +160,28 @@ export default function Safety() {
         const scheduledData = scheduledRes.data.data;
         setScheduledCheckIns(Array.isArray(scheduledData) ? scheduledData : (scheduledData?.scheduled || []));
       }
+      if (tripsRes?.data?.success) {
+        const tripsData = tripsRes.data.data;
+        const tripList = Array.isArray(tripsData) ? tripsData : (tripsData?.trips || []);
+        setTrips(tripList);
+        const activeTrip = tripList.find((t) => t.status === 'active') || tripList[0];
+        if (activeTrip) {
+          setActiveDestinationId(activeTrip.destination_id || activeTrip.id);
+        }
+      }
+      if (guardianRes?.data?.success) {
+        const rel = guardianRes.data.data?.relationships || guardianRes.data.data || [];
+        setGuardianRelationships(Array.isArray(rel) ? rel : []);
+      }
+      // Load return plan (no trip filter – get most recent)
+      api.get('/return-plan').then((res) => {
+        if (res.data?.success) {
+          const plans = res.data.data;
+          const plan = Array.isArray(plans) ? plans[0] || null : plans;
+          setReturnPlan(plan);
+          if (plan) offlineStorage.setReturnPlan(plan);
+        }
+      }).catch(() => null);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
@@ -192,8 +250,13 @@ export default function Safety() {
     }
   };
 
-  const handleDeleteContact = async (id) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+  const handleDeleteContact = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_contact', id });
+  };
+
+  const executeDeleteContact = async () => {
+    const id = confirmDialog.id;
+    setConfirmDialog({ open: false, action: null });
     try {
       const response = await api.delete(`/emergency-contacts/${id}`);
       if (response.data.success) {
@@ -233,8 +296,68 @@ export default function Safety() {
   };
 
   const handleCheckIn = async (type) => {
+    triggerHaptic(type === 'emergency' ? [120, 80, 120] : [35]);
     setCheckInType(type);
     setShowConfirmModal(true);
+  };
+
+  const sosHoldTimers = { interval: null, timeout: null };
+
+  const handleSosHoldStart = () => {
+    if (contacts.length === 0) return;
+    setSosHoldActive(true);
+    setSosCountdown(3);
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+    let count = 3;
+    sosHoldTimers.interval = setInterval(() => {
+      count -= 1;
+      setSosCountdown(count);
+    }, 1000);
+
+    sosHoldTimers.timeout = setTimeout(async () => {
+      clearInterval(sosHoldTimers.interval);
+      setSosHoldActive(false);
+      setSosCountdown(3);
+      try {
+        const payload = {
+          triggerType: 'manual',
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          address: location?.address || null
+        };
+        const res = await api.post('/sos/trigger', payload);
+        if (res.data?.success) {
+          setSosEventActive(true);
+          setSosEventId(res.data.data?.sosEventId);
+          setSosEventLocation(location);
+          if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
+          toast.error('🚨 SOS ACTIVE — Emergency contacts notified', { duration: 8000 });
+        }
+      } catch (err) {
+        toast.error('Failed to trigger SOS. Try again.');
+      }
+    }, 3000);
+  };
+
+  const handleSosHoldEnd = () => {
+    if (!sosHoldActive) return;
+    clearInterval(sosHoldTimers.interval);
+    clearTimeout(sosHoldTimers.timeout);
+    setSosHoldActive(false);
+    setSosCountdown(3);
+  };
+
+  const handleSosCancel = async () => {
+    try {
+      await api.post('/sos/cancel', { sosEventId });
+      setSosEventActive(false);
+      setSosEventId(null);
+      setSosEventLocation(null);
+      toast.success('SOS cancelled');
+    } catch (err) {
+      toast.error('Failed to cancel SOS');
+    }
   };
 
   const confirmCheckIn = async () => {
@@ -253,6 +376,7 @@ export default function Safety() {
       });
       
       if (response.data.success) {
+        triggerHaptic(checkInType === 'emergency' ? [200, 120, 200] : [45]);
         setSuccess(
           checkInType === 'emergency'
             ? 'Emergency alert sent — contacts notified'
@@ -395,9 +519,13 @@ export default function Safety() {
     }
   };
 
-  const handleCancelRecurringSchedule = async () => {
+  const handleCancelRecurringSchedule = () => {
     if (!activeRecurringSchedule) return;
-    if (!confirm('Cancel this recurring schedule?')) return;
+    setConfirmDialog({ open: true, action: 'cancel_schedule' });
+  };
+
+  const executeCancelSchedule = async () => {
+    setConfirmDialog({ open: false, action: null });
     try {
       const res = await api.delete(`/checkin/schedule/${activeRecurringSchedule.id}`);
       if (res.data.success) {
@@ -557,6 +685,21 @@ export default function Safety() {
 
   return (
     <DashboardShell>
+      <SEO
+        title="Safety Center"
+        description="Manage your emergency contacts, scheduled check-ins, and SOS settings on SoloCompass."
+      />
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={confirmDialog.action === 'delete_contact' ? executeDeleteContact : executeCancelSchedule}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title={confirmDialog.action === 'delete_contact' ? 'Delete Emergency Contact?' : 'Cancel Recurring Schedule?'}
+        description={confirmDialog.action === 'delete_contact'
+          ? 'This emergency contact will be permanently removed.'
+          : 'Your recurring check-in schedule will be cancelled.'}
+        confirmLabel={confirmDialog.action === 'delete_contact' ? 'Delete Contact' : 'Cancel Schedule'}
+        variant="danger"
+      />
       <APIErrorBoundary>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <PageHeader 
@@ -641,6 +784,15 @@ export default function Safety() {
         </motion.div>
       )}
 
+      {/* Missed Check-In Alert banner */}
+      {missedCheckIn && (
+        <MissedCheckInAlert
+          scheduledCheckIn={missedCheckIn}
+          onConfirm={() => setMissedCheckIn(null)}
+          onSnooze={() => setMissedCheckIn(null)}
+        />
+      )}
+
       {/* Navigation tabs */}
       <motion.div variants={itemVariants} className="mb-6">
          <div className="flex bg-base-200 border border-base-300/50 p-1 gap-1 rounded-xl">
@@ -648,6 +800,8 @@ export default function Safety() {
             { id: 'checkin', label: 'Check-In & SOS', icon: Send },
             { id: 'tools', label: 'Tools', icon: Compass },
             { id: 'contacts', label: 'Guardians', icon: Phone },
+            { id: 'returnplan', label: 'Return Plan', icon: FileText },
+            { id: 'safetymap', label: 'Safety Map', icon: Map },
             { id: 'history', label: 'History', icon: History }
           ].map((tab) => (
             <button
@@ -717,44 +871,69 @@ export default function Safety() {
                 </div>
               )}
 
-              {/* Slide to SOS */}
-              <div className={`relative h-16 bg-error/10 border-2 border-error/30 rounded-xl overflow-hidden flex items-center px-2 ${contacts.length === 0 ? 'opacity-50 pointer-events-none' : ''}`} role="slider" aria-label="Slide to activate SOS emergency alert" aria-valuemin={0} aria-valuemax={100} aria-valuenow={parseInt(sosSliderValue)} aria-valuetext={`${sosSliderValue}% slide to SOS`}>
-                <div className="absolute inset-0 bg-red-100 origin-left transition-transform duration-75" style={{ transform: `scaleX(${sosSliderValue / 100})` }}></div>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <p className="font-black text-error uppercase tracking-[0.2em] text-xs flex items-center gap-2">
-                    <AlertTriangle size={14} /> Slide for SOS
-                  </p>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={sosSliderValue}
-                  role="slider"
-                  aria-label="Slide to activate SOS emergency alert"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={sosSliderValue}
-                  aria-valuetext={sosSliderValue < 100 ? `${sosSliderValue}% — slide fully right to activate SOS` : 'SOS activated'}
-                  onChange={(e) => {
-                    setSosSliderValue(e.target.value);
-                    if (e.target.value === '100') {
-                      handleCheckIn('emergency');
-                      setTimeout(() => setSosSliderValue(0), 1000);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setSosSliderValue(0);
-                  }}
-                  onMouseUp={() => setSosSliderValue(0)}
-                  onTouchEnd={() => setSosSliderValue(0)}
-                  className="relative z-10 w-full h-full opacity-0 cursor-pointer"
+              {/* Hold to SOS */}
+              <div className={`relative ${contacts.length === 0 ? 'opacity-50 pointer-events-none' : ''}`}>
+                {sosHoldActive && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-error/90 rounded-xl">
+                    <span className="text-white font-black text-4xl tabular-nums">{sosCountdown}</span>
+                  </div>
+                )}
+                <button
+                  onMouseDown={handleSosHoldStart}
+                  onMouseUp={handleSosHoldEnd}
+                  onMouseLeave={handleSosHoldEnd}
+                  onTouchStart={handleSosHoldStart}
+                  onTouchEnd={handleSosHoldEnd}
                   disabled={contacts.length === 0}
-                />
-                <div className="absolute left-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-error/100 rounded-xl flex items-center justify-center text-white p-2 shadow-lg pointer-events-none transition-transform duration-75" style={{ transform: `translateX(calc(${sosSliderValue}% * 4.5))` }}>
-                  <Shield size={20} />
-                </div>
+                  aria-label="Hold 3 seconds to activate SOS emergency alert"
+                  className="w-full h-16 bg-error/10 border-2 border-error/30 rounded-xl flex items-center justify-center gap-3 select-none cursor-pointer active:bg-error/20 transition-colors"
+                >
+                  <Shield size={20} className="text-error" />
+                  <p className="font-black text-error uppercase tracking-[0.2em] text-xs">
+                    <AlertTriangle size={14} className="inline mr-1" />Hold for SOS
+                  </p>
+                </button>
               </div>
+
+              {/* SOS Active Overlay */}
+              {sosEventActive && (
+                <div className="fixed inset-0 z-50 bg-error flex flex-col items-center justify-center p-6 text-white">
+                  <div className="animate-pulse mb-4">
+                    <Shield size={64} className="text-white" />
+                  </div>
+                  <h2 className="text-3xl font-black uppercase tracking-widest mb-2">SOS ACTIVE</h2>
+                  <p className="text-lg font-bold mb-1">Help is on the way</p>
+                  <p className="text-sm opacity-80 mb-6">Your emergency contacts have been notified.</p>
+                  {sosEventLocation && (
+                    <div className="flex items-center gap-2 text-sm opacity-90 mb-6">
+                      <MapPin size={16} />
+                      <span>{sosEventLocation.address || `${sosEventLocation.latitude?.toFixed(4)}, ${sosEventLocation.longitude?.toFixed(4)}`}</span>
+                    </div>
+                  )}
+                  {/* Offline fallback: direct call to local emergency services */}
+                  <div className="mb-6 text-center">
+                    <p className="text-xs opacity-70 mb-2 uppercase tracking-wide font-bold">No signal? Call directly:</p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {[{ label: '112 (International)', number: '112' }, { label: '999 (UK)', number: '999' }, { label: '911 (US/CA)', number: '911' }, { label: '000 (AU)', number: '000' }].map(({ label, number }) => (
+                        <a
+                          key={number}
+                          href={`tel:${number}`}
+                          className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-3 py-2 rounded-lg border border-white/30 transition-colors"
+                        >
+                          <Phone size={12} />
+                          {label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSosCancel}
+                    className="bg-white text-error font-black px-8 py-3 rounded-xl uppercase tracking-wide text-sm hover:bg-red-50 transition-colors"
+                  >
+                    Cancel SOS
+                  </button>
+                </div>
+              )}
 
               {/* Fake Call */}
               <PlanGate
@@ -864,80 +1043,48 @@ export default function Safety() {
             )}
           </div>
 
-          {/* Scheduled Check-Ins */}
+          {/* Scheduled Check-Ins — CheckInReminder + CheckInStatus + CheckInScheduler */}
           <div className="glass-card p-6 rounded-3xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-black text-base-content text-base">Scheduled check-ins</h3>
-              <button
-                onClick={() => setShowScheduledForm(true)}
-                className="px-4 py-2 bg-brand-vibrant text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-colors flex items-center gap-1.5 shadow-md shadow-brand-vibrant/25"
-              >
-                <Plus size={14} /> Schedule
-              </button>
             </div>
 
-            {scheduledCheckIns.length === 0 && !activeRecurringSchedule ? (
-              <div className="text-center py-6">
-                <p className="text-base-content/60 text-sm font-medium mb-1">No scheduled check-ins</p>
-                <p className="text-base-content/40 text-xs max-w-xs mx-auto">Set up automatic check-ins so SoloCompass can monitor your safety on a schedule.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {scheduledCheckIns.map((scheduled) => (
-                  <div key={scheduled.id} className="flex items-center justify-between p-4 bg-base-200 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <Calendar className="text-brand-vibrant" size={20} />
-                      <div>
-                        <p className="font-bold text-base-content text-sm">{formatDateTime(scheduled.scheduledTime)}</p>
-                        <p className="text-xs text-base-content/40 font-medium">{getTimeUntil(scheduled.scheduledTime)}</p>
-                      </div>
-                    </div>
-                    <button onClick={() => handleCancelScheduled(scheduled.id)} className="text-base-content/40 hover:text-error transition-colors">
-                      <XCircle size={18} />
-                    </button>
-                  </div>
-                ))}
-
-                {activeRecurringSchedule && (
-                  <div className="p-4 bg-brand-vibrant/5 border border-brand-vibrant/20 rounded-xl">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${activeRecurringSchedule.status === 'paused' ? 'bg-warning/100' : 'bg-success/100 animate-pulse'}`} />
-                        <span className="font-bold text-base-content text-sm">
-                          {activeRecurringSchedule.status === 'paused' ? 'Paused' : 'Active'} — {INTERVAL_OPTIONS.find(o => o.value === activeRecurringSchedule.interval)?.label}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <p className="text-base-content/40">Next check-in</p>
-                        <p className="font-bold text-base-content">{activeRecurringSchedule.nextCheckIn ? formatDateTime(activeRecurringSchedule.nextCheckIn) : '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-base-content/40">Missed</p>
-                        <p className="font-bold text-base-content">{activeRecurringSchedule.missedCount || 0}</p>
-                      </div>
-                      <div>
-                        <p className="text-base-content/40">Last check-in</p>
-                        <p className="font-bold text-base-content">{activeRecurringSchedule.lastCheckIn ? formatDateTime(activeRecurringSchedule.lastCheckIn) : 'None'}</p>
-                      </div>
-                      <div>
-                        <p className="text-base-content/40">Last status</p>
-                        <p className="font-bold text-base-content">{activeRecurringSchedule.lastCheckInStatus || '—'}</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 mt-3">
-                      {activeRecurringSchedule.status === 'paused' ? (
-                        <button onClick={handleResumeRecurringSchedule} className="flex-1 py-2 bg-brand-vibrant text-white rounded-lg font-bold text-xs hover:bg-emerald-600 transition-colors">Resume</button>
-                      ) : (
-                        <button onClick={handlePauseRecurringSchedule} className="flex-1 py-2 bg-base-300 text-base-content/80 rounded-lg font-bold text-xs hover:bg-base-300 transition-colors">Pause</button>
-                      )}
-                      <button onClick={handleCancelRecurringSchedule} className="flex-1 py-2 bg-red-100 text-error rounded-lg font-bold text-xs hover:bg-red-200 transition-colors">Cancel</button>
-                    </div>
-                  </div>
-                )}
+            {/* Reminder banner for overdue check-in */}
+            {missedCheckIn && (
+              <div className="mb-4">
+                <CheckInReminder
+                  scheduledCheckIn={missedCheckIn}
+                  onDismiss={() => { setMissedCheckIn(null); fetchData(); }}
+                />
               </div>
             )}
+
+            {/* Live status of all scheduled check-ins */}
+            <div className="mb-4">
+              <CheckInStatus
+                tripId={trips.find((t) => t.status === 'active')?.id || trips[0]?.id}
+                onMissed={(ci) => setMissedCheckIn(ci)}
+              />
+            </div>
+
+            {/* Scheduler form — Guardian+ only */}
+            <PlanGate
+              minPlan="guardian"
+              title="Scheduled Check-Ins"
+              description="Upgrade to Guardian to set up automatic scheduled check-ins."
+            >
+              <details className="mt-3">
+                <summary className="cursor-pointer text-xs font-bold text-brand-vibrant hover:underline list-none flex items-center gap-1">
+                  <Plus size={12} /> Add new check-in schedule
+                </summary>
+                <div className="mt-3 border border-base-300/60 rounded-xl p-4">
+                  <CheckInScheduler
+                    trips={trips}
+                    onScheduled={() => fetchData()}
+                  />
+                </div>
+              </details>
+            </PlanGate>
           </div>
         </motion.div>
       )}
@@ -1055,7 +1202,13 @@ export default function Safety() {
                             <span className="text-[9px] font-bold text-warning bg-warning/10 px-1.5 py-0.5 rounded-full">Pending opt-in</span>
                           )}
                           {contact.isAccepted && (
-                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full">Verified</span>
+                            <span className="text-[9px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded-full">Guardian Active</span>
+                          )}
+                          {contact.verified && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓ Verified</span>
+                          )}
+                          {!contact.verified && (
+                            <span className="text-[9px] font-bold text-base-content/40 bg-base-200 px-1.5 py-0.5 rounded-full">Unverified</span>
                           )}
                         </div>
                       </div>
@@ -1081,6 +1234,180 @@ export default function Safety() {
               </div>
             )}
           </div>
+
+          {/* Guardian Invite Form */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-black text-base-content text-lg">Guardian Network</h3>
+                <p className="text-base-content/40 text-sm font-medium mt-1">Invite someone to watch over you while you travel</p>
+              </div>
+              <button
+                onClick={() => setShowGuardianInvite(!showGuardianInvite)}
+                className="px-3 py-2 bg-brand-vibrant text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-colors flex items-center gap-1.5"
+              >
+                <Plus size={14} />
+                {showGuardianInvite ? 'Cancel' : 'Invite'}
+              </button>
+            </div>
+
+            {showGuardianInvite && (
+              <div className="mb-4 border border-base-300/50 rounded-xl p-4">
+                <GuardianInviteForm
+                  trips={trips}
+                  onSuccess={() => {
+                    setShowGuardianInvite(false);
+                    fetchData();
+                  }}
+                />
+              </div>
+            )}
+
+            <GuardianList onInvite={() => setShowGuardianInvite(true)} />
+          </div>
+
+          {/* Guardian Dashboard (for users who are guardians themselves) */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-base-content text-lg">People I'm Guarding</h3>
+              <button
+                onClick={() => setShowGuardianDashboard(!showGuardianDashboard)}
+                className="text-xs font-bold text-brand-vibrant hover:underline"
+              >
+                {showGuardianDashboard ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showGuardianDashboard && <GuardianDashboard />}
+          </div>
+
+          {/* Embassy Finder */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="flex items-center gap-2 mb-4">
+              <Building size={18} className="text-brand-vibrant" />
+              <h3 className="font-black text-base-content text-lg">Embassy Finder</h3>
+            </div>
+            <p className="text-sm text-base-content/60 mb-4">Find your country's embassy at your destination.</p>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                maxLength={3}
+                value={embassyCountryCode}
+                onChange={(e) => setEmbassyCountryCode(e.target.value.toUpperCase())}
+                placeholder="e.g. TH, JP, FR"
+                className="flex-1 px-3 py-2.5 border border-base-300 rounded-xl bg-base-100 text-sm font-mono uppercase focus:outline-none focus:border-brand-vibrant"
+              />
+            </div>
+            {embassyCountryCode.length >= 2 && (
+              <EmbassyFinder countryCode={embassyCountryCode} />
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Return Plan Tab */}
+      {activeTab === 'returnplan' && (
+        <motion.div variants={itemVariants} className="space-y-6">
+          {/* Quick view card — always visible, offline-capable */}
+          {(returnPlan || offlineStorage.getReturnPlan()) && (
+            <ReturnPlanCard
+              plan={returnPlan}
+              onEdit={() => {}}
+              onActivate={(plan) => {
+                // EmergencyReturnActivation handles the confirm flow inline
+              }}
+            />
+          )}
+
+          {/* Emergency Return Activation */}
+          {returnPlan?.id && (
+            <div className="glass-card p-6 rounded-3xl">
+              <PlanGate minPlan="guardian" title="Emergency Activation" description="Requires Guardian plan.">
+                <EmergencyReturnActivation
+                  plan={returnPlan}
+                  onActivated={() => {
+                    api.get('/return-plan').then((res) => {
+                      if (res.data?.success) {
+                        const plans = res.data.data;
+                        const plan = Array.isArray(plans) ? plans[0] || null : plans;
+                        setReturnPlan(plan);
+                        if (plan) offlineStorage.setReturnPlan(plan);
+                      }
+                    }).catch(() => null);
+                  }}
+                />
+              </PlanGate>
+            </div>
+          )}
+
+          {/* Nearest Safe Locations */}
+          <div className="glass-card p-6 rounded-3xl">
+            <NearestSafeLocations />
+          </div>
+
+          {/* Edit / Create plan form */}
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="mb-6">
+              <h3 className="font-black text-base-content text-lg">
+                {returnPlan ? 'Edit Return Plan' : 'Create Return Plan'}
+              </h3>
+              <p className="text-sm text-base-content/60 mt-1">Document your embassy, hospital, flight, and accommodation details so your guardians can get you home safely.</p>
+            </div>
+            <PlanGate
+              minPlan="guardian"
+              title="Safe Return Planning"
+              description="Upgrade to Guardian to create a safe return plan that your guardians can use in an emergency."
+            >
+              <ReturnPlanSetup
+                tripId={trips.find((t) => t.status === 'active')?.id || trips[0]?.id}
+                existingPlan={returnPlan}
+                onSaved={() => {
+                  api.get('/return-plan').then((res) => {
+                    if (res.data?.success) {
+                      const plans = res.data.data;
+                      const plan = Array.isArray(plans) ? plans[0] || null : plans;
+                      setReturnPlan(plan);
+                      if (plan) offlineStorage.setReturnPlan(plan);
+                    }
+                  }).catch(() => null);
+                }}
+              />
+            </PlanGate>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Safety Map Tab */}
+      {activeTab === 'safetymap' && (
+        <motion.div variants={itemVariants} className="space-y-6">
+          {/* Emergency Services Card */}
+          {embassyCountryCode.length >= 2 && (
+            <div className="glass-card p-6 rounded-3xl">
+              <EmergencyServicesCard countryCode={embassyCountryCode} />
+            </div>
+          )}
+
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="mb-4">
+              <h3 className="font-black text-base-content text-lg">Nearby Hospitals</h3>
+            </div>
+            <NearbyHospitals />
+          </div>
+
+          <div className="glass-card p-6 rounded-3xl">
+            <div className="mb-6">
+              <h3 className="font-black text-base-content text-lg">Area Safety</h3>
+              <p className="text-sm text-base-content/60 mt-1">Community-sourced safety ratings for areas in your destination.</p>
+            </div>
+            {activeDestinationId ? (
+              <SafetyMapOverlay destinationId={activeDestinationId} />
+            ) : (
+              <div className="text-center py-8 text-base-content/50">
+                <Map size={36} className="mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No active trip destination found.</p>
+                <p className="text-xs mt-1">Add a trip to see safety area data.</p>
+              </div>
+            )}
+          </div>
         </motion.div>
       )}
 
@@ -1088,59 +1415,9 @@ export default function Safety() {
       {activeTab === 'history' && (
         <motion.div variants={itemVariants} className="glass-card p-6 rounded-3xl">
           <h3 className="font-black text-base-content text-lg mb-6">Check-in history</h3>
-          {checkIns.length === 0 ? (
-            <div className="text-center py-12">
-              <History className="w-12 h-12 text-base-content/20 mx-auto mb-3" />
-              <p className="text-base-content/60 font-medium mb-1">No check-in history</p>
-              <p className="text-base-content/40 text-sm mb-4">Send your first safety check-in to start building your record.</p>
-              <button
-                onClick={() => setActiveTab('checkin')}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm bg-brand-vibrant text-white shadow-md shadow-brand-vibrant/25 hover:bg-emerald-600 transition-colors"
-              >
-                Go to Check-In
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {checkIns.map((checkIn) => (
-                <div
-                  key={checkIn.id}
-                  className={`p-4 rounded-xl border ${
-                    checkIn.type === 'emergency'
-                      ? 'bg-error/10 border-error/30'
-                      : checkIn.type === 'scheduled'
-                      ? 'bg-warning/10 border-warning/30'
-                      : 'bg-success/10 border-success/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className={`font-bold text-sm ${
-                        checkIn.type === 'emergency' ? 'text-error' : 'text-success'
-                      }`}>
-                        {getCheckInTypeLabel(checkIn.type)}
-                      </span>
-                      {checkIn.address && (
-                        <p className="text-xs text-base-content/60 flex items-center mt-1">
-                          <MapPin size={12} className="mr-1" />
-                          {checkIn.address}
-                        </p>
-                      )}
-                      {checkIn.message && (
-                        <p className="text-xs text-base-content/60 mt-1">{checkIn.message}</p>
-                      )}
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-base-content/40">{formatDateTime(checkIn.createdAt)}</p>
-                      {checkIn.sentTo?.length > 0 && (
-                        <p className="text-xs text-base-content/30 mt-0.5">{checkIn.sentTo.length} notified</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <CheckInHistory
+            tripId={trips.find((t) => t.status === 'active')?.id || trips[0]?.id}
+          />
         </motion.div>
       )}
 

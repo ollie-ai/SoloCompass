@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom';
 import SEO from '../components/SEO';
 import { trackEvent } from '../lib/telemetry';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   Shield, Compass, Sparkles, MapPin, Users, Calendar, 
   Bell, Globe, Zap, ArrowRight, CheckCircle2,
   Heart, Lock, AlertTriangle, Smartphone, MessageSquare, Plane, FileText
 } from 'lucide-react';
+import api from '../lib/api';
 
 const features = [
   {
@@ -89,8 +90,12 @@ const productPrinciples = [
 ];
 
 const Features = () => {
+  const [planFeatures, setPlanFeatures] = useState([]);
   useEffect(() => {
     trackEvent('page_view', { page: 'features' });
+    api.get('/v1/features').then((response) => {
+      setPlanFeatures(response.data?.data?.plans || []);
+    }).catch(() => {});
   }, []);
 
   const handleCTAClick = (cta) => {
@@ -248,6 +253,24 @@ const Features = () => {
             </div>
           </div>
         </section>
+
+        {planFeatures.length > 0 && (
+          <section className="py-20 bg-base-100">
+            <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+              <h2 className="text-3xl font-black text-base-content mb-6 text-center">Feature availability by plan</h2>
+              <div className="grid md:grid-cols-3 gap-4">
+                {planFeatures.map((plan) => (
+                  <div key={plan.plan} className="border border-base-300 rounded-2xl p-5">
+                    <p className="font-black uppercase mb-3">{plan.plan}</p>
+                    <ul className="space-y-1 text-sm text-base-content/80">
+                      {plan.features.map((feature) => <li key={feature}>• {feature}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* CTA Section */}
         <section className="py-20 bg-base-200">

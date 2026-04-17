@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Wallet, Plus, Loader2, Trash2, Edit2, X, TrendingUp, TrendingDown } from 'lucide-react';
-import api from '../lib/api';
+import { Wallet, Plus, Loader2, Trash2, Edit2, X, TrendingUp, TrendingDown, Download, Receipt } from 'lucide-react';
+import api, { getBudgetSummary } from '../lib/api';
 import toast from 'react-hot-toast';
 import { getErrorMessage } from '../lib/utils';
+import BudgetOverview from './BudgetOverview';
 
 const CATEGORIES = [
   { key: 'accommodation', label: 'Accommodation', icon: '🏨' },
@@ -30,7 +31,8 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
     description: '',
     amount: '',
     currency: 'USD',
-    type: 'expense'
+    type: 'expense',
+    receipt_url: ''
   });
   const [budgetSettings, setBudgetSettings] = useState({
     totalBudget: '',
@@ -130,7 +132,8 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
         description: newItem.description,
         amount: parseFloat(newItem.amount),
         currency: newItem.currency,
-        type: newItem.type
+        type: newItem.type,
+        receipt_url: newItem.receipt_url || undefined
       });
       setBudget(prev => ({
         ...prev,
@@ -150,7 +153,8 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
         description: '',
         amount: '',
         currency: budget?.currency || 'USD',
-        type: 'expense'
+        type: 'expense',
+        receipt_url: ''
       });
       setShowAddExpense(false);
       toast.success(newItem.type === 'expense' ? 'Expense added!' : 'Income added!');
@@ -173,6 +177,20 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
     }
   };
 
+  const handleExportCSV = async () => {
+    try {
+      const blob = await exportBudgetCSV(tripId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(tripName || 'trip').replace(/\s+/g, '_')}_budget.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('Failed to export budget');
+    }
+  };
+
   const getCategoryInfo = (categoryKey) => {
     return CATEGORIES.find(c => c.key === categoryKey) || { key: categoryKey, label: categoryKey, icon: '📦' };
   };
@@ -184,6 +202,15 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
     }).format(amount);
+  };
+
+  const formatDualAmount = (item) => {
+    const converted = formatCurrency(item.amount, budget?.currency || 'GBP');
+    if (!item.originalAmount || !item.originalCurrency || item.originalCurrency === budget?.currency) {
+      return converted;
+    }
+    const original = formatCurrency(item.originalAmount, item.originalCurrency);
+    return `${original} (${converted})`;
   };
 
   const getProgressColor = () => {
@@ -206,11 +233,16 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
     return (
       <div className="bg-base-100 rounded-2xl p-8 max-w-lg mx-auto shadow-xl border border-base-200">
         <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-gradient-to-br from-brand-vibrant/20 to-brand-accent/20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-            <Wallet className="text-brand-vibrant" size={36} />
+          <div className="w-20 h-20 bg-gradient-to-br from-emerald-500/20 to-teal-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+            <Wallet className="text-emerald-500" size={36} />
           </div>
           <h2 className="text-2xl font-black text-base-content mb-2">Budget Tracker</h2>
-          <p className="text-base-content/60 font-medium">Set a budget to track your spending for {tripName}</p>
+          <p className="text-base-content/60 font-medium mb-4">Set a budget to track your spending for {tripName}</p>
+          <div className="flex flex-wrap justify-center gap-3 text-xs text-base-content/40 font-bold uppercase">
+            <span className="inline-flex items-center gap-1 px-2 py-1 bg-base-200 rounded-lg">💰 Track expenses</span>
+            <span className="inline-flex items-center gap-1 px-2 py-1 bg-base-200 rounded-lg">📊 Category breakdown</span>
+            <span className="inline-flex items-center gap-1 px-2 py-1 bg-base-200 rounded-lg">📥 CSV export</span>
+          </div>
         </div>
 
         <form onSubmit={createBudget} className="space-y-4">
@@ -250,6 +282,16 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
   }
 
   const spentPercent = Math.min((budget.totalSpent / budget.totalBudget) * 100, 100);
+  const categoryData = CATEGORIES.map((cat) => {
+    const catItems = budget.items?.filter((i) => i.category === cat.key && i.type === 'expense') || [];
+    const catTotal = catItems.reduce((sum, i) => sum + i.amount, 0);
+    return {
+      key: cat.key,
+      label: cat.label,
+      amount: catTotal,
+      icon: cat.icon,
+    };
+  }).filter((item) => item.amount > 0);
 
   return (
     <div className="bg-base-100 rounded-2xl p-8 max-w-lg mx-auto shadow-xl border border-base-200 max-h-[80vh] overflow-hidden flex flex-col">
@@ -259,6 +301,27 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
           <p className="text-sm text-base-content/60">{tripName}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              const data = budget;
+              const csv = [
+                ['Category', 'Description', 'Amount', 'Currency', 'Type'],
+                ...(data?.items || []).map(i => [i.category, i.description || '', i.amount, data.currency, i.type])
+              ].map(r => r.join(',')).join('\n');
+              const blob = new Blob([csv], { type: 'text/csv' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `budget-${tripName || 'trip'}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast.success('Budget exported!');
+            }}
+            className="p-2 text-base-content/40 hover:text-base-content hover:bg-base-200 rounded-xl transition-colors"
+            title="Export as CSV"
+          >
+            <Download size={18} />
+          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="p-2 text-base-content/40 hover:text-base-content hover:bg-base-200 rounded-xl transition-colors"
@@ -310,32 +373,7 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
         </div>
       )}
 
-      <div className="mb-4">
-        <h3 className="text-sm font-black text-base-content/70 mb-3 uppercase tracking-wider">Spending by Category</h3>
-        <div className="grid grid-cols-2 gap-2">
-          {CATEGORIES.map(cat => {
-            const catItems = budget.items?.filter(i => i.category === cat.key && i.type === 'expense') || [];
-            const catTotal = catItems.reduce((sum, i) => sum + i.amount, 0);
-            const catPercent = budget.totalSpent > 0 ? (catTotal / budget.totalSpent) * 100 : 0;
-            
-            return (
-              <div key={cat.key} className="p-3 bg-base-200 rounded-xl border border-base-200 hover:border-brand-vibrant/30 transition-colors">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg">{cat.icon}</span>
-                  <span className="text-sm font-bold text-base-content/70 truncate">{cat.label}</span>
-                </div>
-                <p className="text-lg font-black text-base-content">{formatCurrency(catTotal, budget.currency)}</p>
-                <div className="h-1.5 bg-base-300 rounded-full mt-2 overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-brand-vibrant to-brand-accent rounded-full"
-                    style={{ width: `${catPercent}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <BudgetOverview categoryData={categoryData} budget={budget} formatCurrency={formatCurrency} />
 
       <div className="flex-1 overflow-y-auto mb-4 pr-2">
         <h3 className="text-sm font-black text-base-content/70 mb-3 uppercase tracking-wider">Recent Transactions</h3>
@@ -354,8 +392,11 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
                 </div>
                 <div className="text-right">
                   <p className={`font-black ${item.type === 'income' ? 'text-emerald-500' : 'text-base-content'}`}>
-                    {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount, budget.currency)}
+                    {item.type === 'income' ? '+' : '-'}{formatDualAmount(item)}
                   </p>
+                  {item.exchangeRate && item.originalCurrency && item.originalCurrency !== budget.currency ? (
+                    <p className="text-[10px] text-base-content/40">rate {Number(item.exchangeRate).toFixed(4)}</p>
+                  ) : null}
                   <button
                     onClick={() => deleteItem(item.id)}
                     className="text-xs text-base-content/40 hover:text-error transition-colors"
@@ -436,6 +477,17 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
             placeholder="Description (optional)"
             className="w-full px-3 py-2.5 border-2 border-base-300 bg-base-100 rounded-lg text-sm font-medium focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant outline-none text-base-content"
           />
+
+          <div className="flex items-center gap-2">
+            <Receipt size={14} className="text-base-content/30 flex-shrink-0" />
+            <input
+              type="url"
+              value={newItem.receipt_url}
+              onChange={e => setNewItem(prev => ({ ...prev, receipt_url: e.target.value }))}
+              placeholder="Receipt URL (optional)"
+              className="w-full px-3 py-2.5 border-2 border-base-300 bg-base-100 rounded-lg text-sm font-medium focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant outline-none text-base-content"
+            />
+          </div>
           
           <div className="flex gap-2">
             <button

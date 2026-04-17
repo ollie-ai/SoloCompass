@@ -1,21 +1,26 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useAuthStore } from '../stores/authStore';
 import UserDropdown from './UserDropdown';
 import NotificationDropdown from './NotificationDropdown';
+import LanguageSelector from './LanguageSelector';
 import api from '../lib/api';
 import { trackEvent } from '../lib/telemetry';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useI18n } from '../i18n/I18nProvider';
 import { 
   Menu, X, Compass, LayoutDashboard, Shield, ShieldAlert, 
   Calendar, Users, ChevronRight as CaretRight, MapPin, Plus,
-  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle
+  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle,
+  Search,
 } from 'lucide-react';
 
 const PUBLIC_LINKS = [
   { name: 'Home', path: '/', label: 'home', icon: Home },
   { name: 'Features', path: '/features', label: 'features', icon: Sparkles },
+  { name: 'FAQ', path: '/faq', label: 'faq', icon: HelpCircle },
+  { name: 'Blog', path: '/blog', label: 'blog', icon: Book },
   { name: 'Safety', path: '/safety-info', label: 'safety', icon: Shield },
   { name: 'Help', path: '/help', label: 'help', icon: HelpCircle },
 ];
@@ -81,6 +86,70 @@ Logo.propTypes = {
   scrolled: PropTypes.bool,
 };
 
+const NavSearch = memo(({ navigate }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+  const inputRef = useRef(null);
+
+  const handleExpand = () => {
+    setExpanded(true);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    trackEvent('navbar_search', { query: q });
+    navigate(`/destinations?q=${encodeURIComponent(q)}`);
+    setQuery('');
+    setExpanded(false);
+  };
+
+  const handleBlur = () => {
+    // Small delay to allow focus to shift to a sibling element (e.g., submit button)
+    // before deciding to collapse, preventing premature collapse on keyboard navigation.
+    setTimeout(() => {
+      if (!query) setExpanded(false);
+    }, 150);
+  };
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={handleExpand}
+        className="p-2 rounded-xl text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
+        aria-label="Search destinations"
+      >
+        <Search size={18} />
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSearch} className="flex items-center">
+      <div className="relative">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40 pointer-events-none" />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="Search destinations…"
+          className="w-52 pl-9 pr-3 py-2 text-sm rounded-xl bg-base-200 border border-base-300 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium transition-all"
+          aria-label="Search destinations"
+        />
+      </div>
+    </form>
+  );
+});
+
+NavSearch.propTypes = {
+  navigate: PropTypes.func.isRequired,
+};
+
 const NavLink = memo(({ to, children, isActive, onClick, icon: Icon }) => (
   <Link to={to} onClick={onClick} className="relative">
     <motion.div
@@ -124,6 +193,7 @@ const Navbar = () => {
   const [activeTrip, setActiveTrip] = useState(null);
   const [hasNotifications, setHasNotifications] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
+  const { locale, setLocale, supportedLocales } = useI18n();
 
   const isPublicPage = ['/', '/login', '/register', '/about', '/features', '/safety-info', '/help', '/terms', '/privacy', '/cookies', '/contact', '/partnerships'].includes(location.pathname);
   const isAppPage = isAuthenticated && !isPublicPage;
@@ -190,6 +260,7 @@ const Navbar = () => {
       <motion.nav
         initial={{ y: -100 }}
         animate={{ y: 0 }}
+        aria-label="Main navigation"
         className={`fixed top-0 left-0 right-0 z-[60] transition-all duration-300 ${
           scrolled || !isPublicPage 
             ? 'bg-base-100 backdrop-blur-md border-b border-base-content/10 shadow-lg' 
@@ -267,13 +338,29 @@ const Navbar = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
+              {isAuthenticated && isAppPage && (
+                <NavSearch navigate={navigate} />
+              )}
               {isAuthenticated && isAppPage && (
                 <NotificationDropdown
                   unreadCount={notificationCount}
                   onCountChange={setNotificationCount}
                 />
               )}
+
+              {/* Language Switcher */}
+              <div className="hidden lg:flex items-center">
+                <button
+                  onClick={() => setLocale(locale === 'en' ? 'es' : 'en')}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-base-content/50 hover:text-base-content hover:bg-base-content/5 transition-colors"
+                  aria-label="Switch language"
+                  title={locale === 'en' ? 'Switch to Español' : 'Switch to English'}
+                >
+                  <Globe size={14} />
+                  <span className="uppercase">{locale}</span>
+                </button>
+              </div>
               {isAuthenticated ? (
                 <UserDropdown 
                   user={user} 
@@ -398,6 +485,13 @@ const Navbar = () => {
                       Help & Support
                       <CaretRight size={18} className="ml-auto opacity-40" />
                     </Link>
+                    <button
+                      onClick={() => { setLocale(locale === 'en' ? 'es' : 'en'); }}
+                      className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-base font-bold text-base-content/70 hover:bg-base-200"
+                    >
+                      <Globe size={20} />
+                      {locale === 'en' ? 'Switch to Español' : 'Switch to English'}
+                    </button>
                     <button
                       onClick={() => { handleLogout(); setIsOpen(false); }}
                       className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-base font-semibold text-error hover:bg-error/10 transition-colors"

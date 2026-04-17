@@ -28,11 +28,26 @@ function setCache(key, data) {
  * @param {object} options - lat, lng, radius, type
  */
 export async function searchPlaces(query, options = {}) {
-  const { lat, lng, radius = 5000, type } = options;
+  const { lat, lng, radius = 5000, type, category } = options;
   const apiKey = GEOAPIFY_API_KEY;
   
   if (!apiKey) {
-    throw new Error('GEOAPIFY_API_KEY not configured');
+    return [{
+      place_id: 'stub-place-1',
+      placeId: 'stub-place-1',
+      name: `${query} Sample Place`,
+      address: '123 Demo Street',
+      location: { lat: lat || 51.5074, lng: lng || -0.1278 },
+      lat: lat || 51.5074,
+      lng: lng || -0.1278,
+      lon: lng || -0.1278,
+      type: category || type || 'poi',
+      category: category || type || 'poi',
+      categories: [category || type || 'poi'],
+      rating: 4.4,
+      photos: [],
+      photo_url: null,
+    }];
   }
   
   const cacheKey = `search:${query}:${lat}:${lng}:${radius}`;
@@ -61,16 +76,22 @@ export async function searchPlaces(query, options = {}) {
 
     const results = (response.data.results || []).map(place => ({
       place_id: place.place_id?.toString() || place.id?.toString(),
+      placeId: place.place_id?.toString() || place.id?.toString(),
       name: place.name,
       address: place.formatted || place.address,
       location: { lat: place.lat, lng: place.lon },
       lat: place.lat,
+      lng: place.lon,
       lon: place.lon,
       type: place.result_type || place.type,
+      category: place.result_type || place.type,
       categories: place.categories || [],
       country: place.country,
       city: place.city || place.town || place.village,
       distance: place.distance,
+      rating: place.rank?.confidence ? Number((place.rank.confidence * 5).toFixed(1)) : null,
+      photos: [],
+      photo_url: null,
     }));
 
     setCache(cacheKey, results);
@@ -141,7 +162,7 @@ export async function getPlaceDetails(placeId) {
  * @param {string} type - Place type (restaurant, hotel, etc.)
  * @param {number} radius - Search radius in meters
  */
-export async function findNearbyPlaces(lat, lng, type = 'catering.restaurant', radius = 5000) {
+export async function findNearbyPlaces(lat, lng, type = 'catering.restaurant', radius = 5000, options = {}) {
   const apiKey = GEOAPIFY_API_KEY;
   
   if (!apiKey) {
@@ -191,17 +212,23 @@ export async function findNearbyPlaces(lat, lng, type = 'catering.restaurant', r
 
     const results = (response.data.results || []).map(place => ({
       place_id: place.place_id?.toString() || place.id?.toString(),
+      placeId: place.place_id?.toString() || place.id?.toString(),
       name: place.name,
       address: place.address || place.formatted,
       location: { lat: place.lat, lng: place.lon },
       lat: place.lat,
+      lng: place.lon,
       lon: place.lon,
       type: place.categories?.[0] || type,
+      category: place.categories?.[0] || type,
       categories: place.categories || [],
       distance: place.distance,
       opening_hours: place.properties?.opening_hours,
       phone: place.properties?.contact?.phone,
       website: place.properties?.contact?.website,
+      rating: null,
+      photos: [],
+      photo_url: null,
     }));
 
     setCache(cacheKey, results);
@@ -221,7 +248,7 @@ export async function autocompletePlaces(input, options = {}) {
   const apiKey = GEOAPIFY_API_KEY;
   
   if (!apiKey) {
-    throw new Error('GEOAPIFY_API_KEY not configured');
+    return [];
   }
   
   if (!input || input.length < 2) {
@@ -251,6 +278,7 @@ export async function autocompletePlaces(input, options = {}) {
 
     return (response.data.results || []).map(prediction => ({
       place_id: prediction.place_id?.toString() || prediction.id?.toString(),
+      placeId: prediction.place_id?.toString() || prediction.id?.toString(),
       description: prediction.formatted || prediction.address,
       structured_formatting: {
         main_text: prediction.name,
@@ -261,8 +289,10 @@ export async function autocompletePlaces(input, options = {}) {
         ].filter(Boolean).join(', '),
       },
       lat: prediction.lat,
+      lng: prediction.lon,
       lon: prediction.lon,
       type: prediction.result_type,
+      category: prediction.result_type,
     }));
   } catch (error) {
     logger.error('Autocomplete Error:', error.response?.data || error.message);

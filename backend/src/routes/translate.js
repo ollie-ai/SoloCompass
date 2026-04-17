@@ -3,6 +3,7 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../services/logger.js';
 import { authenticate } from '../middleware/auth.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ const router = express.Router();
  * @desc Translate text using Azure AI Translator
  * @access Private
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, requireFeature(FEATURES.QUICK_TRANSLATOR), async (req, res) => {
   const { text, to, from = null } = req.body;
   const apiKey = process.env.AZURE_TRANSLATOR_KEY;
   const endpoint = process.env.AZURE_TRANSLATOR_ENDPOINT || 'https://api.cognitive.microsofttranslator.com/';

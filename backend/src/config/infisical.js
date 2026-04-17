@@ -33,9 +33,17 @@ const initInfisical = async () => {
         
         console.log('[Infisical] Login successful!');
 
-        const environment = (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') 
-            ? (process.env.NODE_ENV === 'production' ? 'prod' : 'staging')
-            : 'dev';
+        const environment = (() => {
+            const envMap = {
+                production: 'prod',
+                staging: 'staging',
+                // 'preview' maps to the Infisical 'preview' environment.
+                // Ensure a 'preview' environment exists in your Infisical project.
+                preview: 'preview',
+                development: 'dev',
+            };
+            return envMap[process.env.NODE_ENV] || 'dev';
+        })();
         const projectId = process.env.INFISICAL_PROJECT_ID;
 
         // 2: Direct Secret Sync 

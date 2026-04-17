@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Check, Package, Loader2, Plus, Minus, Trash2, Copy } from 'lucide-react';
-import api, { duplicatePackingList } from '../lib/api';
+import { Check, Package, Loader2, Plus, Minus, Trash2, Copy, Share2 } from 'lucide-react';
+import api, { duplicatePackingList, sharePackingList } from '../lib/api';
 import toast from 'react-hot-toast';
 
 const CATEGORY_ICONS = {
@@ -65,6 +65,21 @@ const PackingList = ({ tripId, tripName, onClose }) => {
     }
   };
 
+  const handleShare = async () => {
+    if (!list?.id) return;
+    try {
+      const response = await sharePackingList(list.id);
+      if (response.data?.shareUrl) {
+        const url = `${window.location.origin}${response.data.shareUrl}`;
+        await navigator.clipboard.writeText(url);
+        toast.success('Share link copied to clipboard!');
+      }
+    } catch (error) {
+      console.error('Error sharing list:', error);
+      toast.error('Failed to share packing list');
+    }
+  };
+
   const fetchTemplates = async () => {
     try {
       const response = await api.get('/packing-lists/templates');
@@ -93,17 +108,26 @@ const PackingList = ({ tripId, tripName, onClose }) => {
   };
 
   const toggleItem = async (item) => {
+    // Optimistic update first
+    const newPacked = !item.isPacked;
+    setList(prev => ({
+      ...prev,
+      items: (prev.items || []).map(i =>
+        i.id === item.id ? { ...i, isPacked: newPacked } : i
+      )
+    }));
     try {
       await api.put(`/packing-lists/${list.id}/items/${item.id}`, {
-        isPacked: !item.isPacked
+        isPacked: newPacked
       });
+    } catch (error) {
+      // Rollback on failure
       setList(prev => ({
         ...prev,
-        items: (prev.items || []).map(i => 
-          i.id === item.id ? { ...i, isPacked: !i.isPacked } : i
+        items: (prev.items || []).map(i =>
+          i.id === item.id ? { ...i, isPacked: item.isPacked } : i
         )
       }));
-    } catch (error) {
       toast.error('Failed to update item');
     }
   };
@@ -278,6 +302,13 @@ const PackingList = ({ tripId, tripName, onClose }) => {
         >
           <Copy size={14} />
           Duplicate for Another Trip
+        </button>
+        <button
+          onClick={handleShare}
+          className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 bg-base-200 hover:bg-base-300 text-base-content/70 hover:text-base-content rounded-lg text-sm font-bold transition-colors"
+        >
+          <Share2 size={14} />
+          Share Packing List
         </button>
       </div>
 

@@ -207,16 +207,21 @@ async function initializeDatabase() {
         password TEXT NOT NULL,
         name TEXT,
         role TEXT DEFAULT 'user' CHECK(role IN ('user', 'viewer', 'admin')),
+        is_2fa_enabled BOOLEAN DEFAULT false,
         is_premium BOOLEAN DEFAULT false,
+        is_flagged BOOLEAN DEFAULT false,
         subscription_tier TEXT DEFAULT 'free',
         stripe_customer_id TEXT,
         premium_expires_at TIMESTAMP,
         reset_token TEXT,
         reset_token_expires TIMESTAMP,
-        is_verified BOOLEAN DEFAULT false,
+        email_verified BOOLEAN DEFAULT false,
         verification_token TEXT,
+        two_factor_secret TEXT,
+        two_factor_enabled BOOLEAN DEFAULT false,
         failed_attempts INTEGER DEFAULT 0,
         locked_until TIMESTAMP,
+        tour_seen BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -243,7 +248,9 @@ async function initializeDatabase() {
         preferred_climate TEXT,
         trip_duration INTEGER,
         solo_travel_experience TEXT,
+        pronouns TEXT,
         safety_priority TEXT,
+        gender_identity TEXT CHECK(gender_identity IN ('female', 'male', 'non_binary', 'prefer_not_to_say') OR gender_identity IS NULL),
         visible BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -266,6 +273,41 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity);
       CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token);
+
+      -- GDPR consent tracking
+      CREATE TABLE IF NOT EXISTS user_consents (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        consent_type TEXT NOT NULL,
+        consent_status TEXT NOT NULL CHECK(consent_status IN ('granted', 'denied', 'withdrawn')),
+        source TEXT DEFAULT 'web_app',
+        preferences JSONB,
+        ip_address TEXT,
+        user_agent TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        withdrawn_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_consents_user_type_created ON user_consents(user_id, consent_type, created_at DESC);
+
+      -- Support tickets
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        subject TEXT NOT NULL,
+        message TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'escalated', 'resolved', 'closed')),
+        priority TEXT DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        is_emergency BOOLEAN DEFAULT false,
+        sla_due_at TIMESTAMPTZ,
+        assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_status_priority ON support_tickets(status, priority, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_emergency ON support_tickets(is_emergency, created_at DESC);
 
       -- Categories table
       CREATE TABLE IF NOT EXISTS categories (
@@ -311,9 +353,35 @@ async function initializeDatabase() {
         summary TEXT,
         adventure_level TEXT,
         social_style TEXT,
+        travel_persona TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Dedicated refresh tokens table
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+        expires_at TIMESTAMP NOT NULL,
+        revoked BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+      CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+
+      -- Data export requests table (async GDPR export tracking)
+      CREATE TABLE IF NOT EXISTS data_export_requests (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'ready', 'failed', 'expired')),
+        file_url TEXT,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_data_export_requests_user_id ON data_export_requests(user_id);
 
       -- Countries table (AI-researched destination data)
       CREATE TABLE IF NOT EXISTS countries (
@@ -771,6 +839,32 @@ async function initializeDatabase() {
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+
+      -- Referral programme
+      CREATE TABLE IF NOT EXISTS referrals (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+        code TEXT NOT NULL UNIQUE,
+        invites INTEGER DEFAULT 0,
+        reward_points INTEGER DEFAULT 0,
+        is_suspended BOOLEAN DEFAULT false,
+        suspended_at TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Referral claim log (one row per claimer — idempotency key)
+      CREATE TABLE IF NOT EXISTS referral_uses (
+        id SERIAL PRIMARY KEY,
+        code TEXT NOT NULL,
+        referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        claimer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(claimer_user_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_referral_uses_code ON referral_uses(code);
+      CREATE INDEX IF NOT EXISTS idx_referral_uses_referrer ON referral_uses(referrer_user_id);
+
       -- Packing lists table
       CREATE TABLE IF NOT EXISTS packing_lists (
         id SERIAL PRIMARY KEY,
@@ -926,8 +1020,22 @@ async function initializeDatabase() {
         trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
         message TEXT,
         status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'declined', 'blocked')),
+        archived_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Buddy reports
+      CREATE TABLE IF NOT EXISTS buddy_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reason TEXT NOT NULL,
+        details TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TIMESTAMP,
+        reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
       );
 
       -- AI usage tracking
@@ -935,6 +1043,7 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         month TEXT NOT NULL,
+        day TEXT,
         type TEXT NOT NULL,
         count INTEGER DEFAULT 0,
         UNIQUE(user_id, month, type)
@@ -948,6 +1057,27 @@ async function initializeDatabase() {
         reason TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(blocker_id, blocked_id)
+      );
+
+      -- Buddy reports
+      CREATE TABLE IF NOT EXISTS buddy_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        reported_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        connection_id INTEGER REFERENCES buddy_requests(id) ON DELETE SET NULL,
+        category TEXT DEFAULT 'other' CHECK(category IN (
+          'harassment',
+          'spam',
+          'scam',
+          'inappropriate_content',
+          'safety_concern',
+          'other'
+        )),
+        reason TEXT NOT NULL,
+        details TEXT,
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_review', 'resolved', 'dismissed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       -- Budgets (trip-level totals)
@@ -974,8 +1104,89 @@ async function initializeDatabase() {
         amount REAL NOT NULL,
         original_currency TEXT DEFAULT 'USD',
         original_amount REAL,
+        converted_amount REAL,
+        exchange_rate REAL DEFAULT 1,
         type TEXT DEFAULT 'expense' CHECK(type IN ('expense', 'income')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Expenses table (trip-level spending, includes receipt support)
+      CREATE TABLE IF NOT EXISTS expenses (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category TEXT NOT NULL DEFAULT 'other',
+        description TEXT,
+        amount NUMERIC NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        expense_date DATE DEFAULT CURRENT_DATE,
+        receipt_url TEXT,
+        merchant TEXT,
+        ocr_data TEXT,
+        split_with_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        split_ratio NUMERIC DEFAULT 0.5,
+        is_recurring BOOLEAN DEFAULT false,
+        recurring_frequency TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Optional user-defined budget/expense categories per trip
+      CREATE TABLE IF NOT EXISTS expense_categories (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        color TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (trip_id, user_id, name)
+      );
+
+      -- Journal entries for trips
+      CREATE TABLE IF NOT EXISTS journal_entries (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        content TEXT,
+        template_type TEXT DEFAULT 'daily_log' CHECK(template_type IN ('daily_log','highlight','food_review','freeform')),
+        location_name TEXT,
+        latitude NUMERIC,
+        longitude NUMERIC,
+        weather_summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Public sharing for journals
+      CREATE TABLE IF NOT EXISTS journal_shares (
+        id SERIAL PRIMARY KEY,
+        journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+        share_id TEXT UNIQUE NOT NULL,
+        created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Trip templates for quick planning
+      CREATE TABLE IF NOT EXISTS trip_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        itinerary_json TEXT NOT NULL DEFAULT '[]',
+        destination_type TEXT DEFAULT 'city',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Links between saved places and itinerary activities
+      CREATE TABLE IF NOT EXISTS itinerary_place_links (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+        trip_place_id INTEGER NOT NULL REFERENCES trip_places(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (activity_id, trip_place_id)
       );
 
       -- Notifications table
@@ -1055,6 +1266,14 @@ async function initializeDatabase() {
         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Weather cache (DB-backed 30-minute TTL, survives process restarts)
+      CREATE TABLE IF NOT EXISTS weather_cache (
+        cache_key TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL
+      );
+
       -- Analytics sessions
       CREATE TABLE IF NOT EXISTS analytics_sessions (
         id SERIAL PRIMARY KEY,
@@ -1132,6 +1351,34 @@ async function initializeDatabase() {
         ended_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Buddy meetups
+      CREATE TABLE IF NOT EXISTS buddy_meetups (
+        id SERIAL PRIMARY KEY,
+        organizer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        destination TEXT NOT NULL,
+        location_name TEXT,
+        meetup_date TIMESTAMP NOT NULL,
+        max_attendees INTEGER DEFAULT 10 CHECK(max_attendees BETWEEN 3 AND 50),
+        is_public BOOLEAN DEFAULT true,
+        safety_notes TEXT,
+        status TEXT DEFAULT 'open' CHECK(status IN ('open', 'full', 'cancelled', 'completed')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Buddy meetup RSVPs
+      CREATE TABLE IF NOT EXISTS buddy_meetup_rsvps (
+        id SERIAL PRIMARY KEY,
+        meetup_id INTEGER NOT NULL REFERENCES buddy_meetups(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'going' CHECK(status IN ('going', 'maybe', 'not_going')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(meetup_id, user_id)
+      );
     `);
 
     // Create indexes
@@ -1146,6 +1393,7 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_emergency_contacts_user_id ON emergency_contacts(user_id);
       CREATE INDEX IF NOT EXISTS idx_check_ins_user_id ON check_ins(user_id);
       CREATE INDEX IF NOT EXISTS idx_scheduled_check_ins_user_id ON scheduled_check_ins(user_id);
+      CREATE INDEX IF NOT EXISTS idx_checkins_scheduled ON scheduled_check_ins(scheduled_time);
       CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_itinerary_cache(destination, days, pace, solo_vibe);
       
       -- Destination filtering
@@ -1187,6 +1435,9 @@ async function initializeDatabase() {
       
       -- Buddy block indexes
       CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocker ON buddy_blocks(blocker_id);
+      CREATE INDEX IF NOT EXISTS idx_buddy_blocks_blocked ON buddy_blocks(blocked_id);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reported_status ON buddy_reports(reported_id, status);
+      CREATE INDEX IF NOT EXISTS idx_buddy_reports_reporter_created ON buddy_reports(reporter_id, created_at DESC);
 
       -- Buddy messages indexes
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON buddy_messages(conversation_id, created_at DESC);
@@ -1198,6 +1449,12 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_budgets_trip ON budgets(trip_id);
       CREATE INDEX IF NOT EXISTS idx_budget_items_budget ON budget_items(budget_id);
       CREATE INDEX IF NOT EXISTS idx_budget_items_category ON budget_items(category);
+      CREATE INDEX IF NOT EXISTS idx_expenses_trip_user ON expenses(trip_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_journal_entries_trip_user ON journal_entries(trip_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_journal_shares_share_id ON journal_shares(share_id);
+      CREATE INDEX IF NOT EXISTS idx_trip_templates_destination_type ON trip_templates(destination_type);
+      CREATE INDEX IF NOT EXISTS idx_itinerary_place_links_trip ON itinerary_place_links(trip_id);
       
       -- Extra performance indexes
       CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token);
@@ -1233,6 +1490,14 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_calls_receiver ON buddy_calls(receiver_id);
       CREATE INDEX IF NOT EXISTS idx_calls_conversation ON buddy_calls(conversation_id);
       CREATE INDEX IF NOT EXISTS idx_calls_status ON buddy_calls(status);
+
+      -- Buddy meetup indexes
+      CREATE INDEX IF NOT EXISTS idx_meetups_organizer ON buddy_meetups(organizer_id);
+      CREATE INDEX IF NOT EXISTS idx_meetups_destination ON buddy_meetups(destination);
+      CREATE INDEX IF NOT EXISTS idx_meetups_date ON buddy_meetups(meetup_date);
+      CREATE INDEX IF NOT EXISTS idx_meetups_status ON buddy_meetups(status);
+      CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_meetup ON buddy_meetup_rsvps(meetup_id);
+      CREATE INDEX IF NOT EXISTS idx_meetup_rsvps_user ON buddy_meetup_rsvps(user_id);
     `);
 
     // Migration for existing tables: Add status and source to destinations
@@ -1252,13 +1517,87 @@ async function initializeDatabase() {
             ALTER TABLE destinations ADD COLUMN source TEXT DEFAULT 'manual';
             ALTER TABLE destinations ADD CONSTRAINT dest_source_check CHECK (source IN ('manual', 'ai'));
           END IF;
+
+          -- solo_score alias column (backward-compatible mirror of solo_friendly_rating)
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'destinations' AND column_name = 'solo_score') THEN
+            ALTER TABLE destinations ADD COLUMN solo_score INTEGER;
+          END IF;
+
+          -- cost_level alias column (backward-compatible mirror of budget_level)
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'destinations' AND column_name = 'cost_level') THEN
+            ALTER TABLE destinations ADD COLUMN cost_level TEXT;
+          END IF;
         END $$;
       `);
       
       // Ensure existing data is marked as live
       await p.query("UPDATE destinations SET status = 'live' WHERE status IS NULL");
+      // Sync alias columns from canonical columns
+      await p.query(`
+        UPDATE destinations SET solo_score = solo_friendly_rating WHERE solo_score IS NULL AND solo_friendly_rating IS NOT NULL;
+        UPDATE destinations SET cost_level = budget_level WHERE cost_level IS NULL AND budget_level IS NOT NULL;
+      `);
     } catch (migErr) {
       logger.warn('[DB] destinations migration note:', migErr.message);
+    }
+
+    // Migration: add missing columns to existing tables
+    try {
+      await p.query(`
+        DO $$
+        BEGIN
+          -- reviews: add destination_id FK for referential integrity
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'reviews' AND column_name = 'destination_id') THEN
+            ALTER TABLE reviews ADD COLUMN destination_id INTEGER REFERENCES destinations(id) ON DELETE SET NULL;
+          END IF;
+
+          -- places: add status and rating columns
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'places' AND column_name = 'status') THEN
+            ALTER TABLE places ADD COLUMN status TEXT DEFAULT 'saved' CHECK(status IN ('saved', 'visited', 'skipped'));
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'places' AND column_name = 'rating') THEN
+            ALTER TABLE places ADD COLUMN rating NUMERIC CHECK(rating >= 0 AND rating <= 5);
+          END IF;
+
+          -- ai_usage: add per-query cost column
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_usage' AND column_name = 'cost_usd') THEN
+            ALTER TABLE ai_usage ADD COLUMN cost_usd NUMERIC;
+          END IF;
+
+          -- itinerary_versions: add diff column
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'itinerary_versions' AND column_name = 'diff') THEN
+            ALTER TABLE itinerary_versions ADD COLUMN diff TEXT;
+          END IF;
+
+          -- packing_items: add weight_grams and status columns
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'packing_items' AND column_name = 'weight_grams') THEN
+            ALTER TABLE packing_items ADD COLUMN weight_grams NUMERIC;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'packing_items' AND column_name = 'status') THEN
+            ALTER TABLE packing_items ADD COLUMN status TEXT DEFAULT 'unpacked' CHECK(status IN ('unpacked', 'packed', 'left_behind'));
+          END IF;
+        END $$;
+      `);
+    } catch (migErr) {
+      logger.warn('[DB] column migration note:', migErr.message);
+    }
+
+    // Create trip_places view as spec-compliant alias for the places table
+    // Only create view if no trip_places table already exists (e.g. from add_trip_data.sql migration)
+    try {
+      await p.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'trip_places' AND table_type = 'BASE TABLE'
+          ) THEN
+            EXECUTE 'CREATE OR REPLACE VIEW trip_places AS SELECT * FROM places';
+          END IF;
+        END $$;
+      `);
+    } catch (migErr) {
+      logger.warn('[DB] trip_places view note:', migErr.message);
     }
 
     logger.info('[DB] PostgreSQL database initialized successfully');
@@ -2033,7 +2372,205 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
+  // --- Migration v028: P0 security + consent + support tables ---
+  if (!await hasMigration('v028_p0_security_consent_support')) {
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_2fa_enabled BOOLEAN DEFAULT false`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_consents (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          consent_type TEXT NOT NULL,
+          consent_status TEXT NOT NULL CHECK(consent_status IN ('granted', 'denied', 'withdrawn')),
+          source TEXT DEFAULT 'web_app',
+          preferences JSONB,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          withdrawn_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_consents_user_type_created ON user_consents(user_id, consent_type, created_at DESC)`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS support_tickets (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          subject TEXT NOT NULL,
+          message TEXT NOT NULL,
+          category TEXT DEFAULT 'general',
+          status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'escalated', 'resolved', 'closed')),
+          priority TEXT DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+          is_emergency BOOLEAN DEFAULT false,
+          sla_due_at TIMESTAMPTZ,
+          assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          resolved_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_status_priority ON support_tickets(status, priority, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_emergency ON support_tickets(is_emergency, created_at DESC)`);
+      logger.info('[Migration v028] P0 security/consent/support schema applied');
+    } catch (error) {
+      logger.warn('[Migration v028] skipped:', error.message);
+    }
+    await markMigration('v028_p0_security_consent_support');
+  }
+
+  // --- Migration v029: reports, faq_articles, onboarding_progress ---
+  if (!await hasMigration('v029_reports_faq_onboarding')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS reports (
+          id SERIAL PRIMARY KEY,
+          reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          reported_entity_type TEXT NOT NULL CHECK(reported_entity_type IN ('user', 'trip', 'destination', 'review', 'content')),
+          entity_id INTEGER NOT NULL,
+          reason TEXT NOT NULL,
+          details TEXT,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'under_review', 'resolved', 'dismissed')),
+          resolution_note TEXT,
+          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          reviewed_at TIMESTAMPTZ,
+          metadata JSONB,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_entity ON reports(reported_entity_type, entity_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_id)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS faq_articles (
+          id SERIAL PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          category TEXT NOT NULL,
+          display_order INTEGER DEFAULT 0,
+          active BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_faq_articles_category_order ON faq_articles(category, display_order)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS onboarding_progress (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          step TEXT NOT NULL,
+          completed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          metadata JSONB,
+          UNIQUE(user_id, step)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_onboarding_user ON onboarding_progress(user_id)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS changelog_entries (
+          id SERIAL PRIMARY KEY,
+          version TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          type TEXT DEFAULT 'feature' CHECK(type IN ('feature', 'improvement', 'fix', 'security', 'breaking')),
+          published BOOLEAN DEFAULT false,
+          published_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_changelog_published ON changelog_entries(published, published_at DESC)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ticket_ratings (
+          id SERIAL PRIMARY KEY,
+          ticket_id INTEGER NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+          comment TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS feature_requests (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT DEFAULT 'submitted' CHECK(status IN ('submitted', 'under_review', 'planned', 'in_progress', 'done', 'declined')),
+          votes INTEGER DEFAULT 1,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_feature_requests_status ON feature_requests(status, votes DESC)`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS waitlist_entries (
+          id SERIAL PRIMARY KEY,
+          email TEXT NOT NULL,
+          feature TEXT,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(email, feature)
+        )
+      `);
+
+      logger.info('[Migration v029] reports/faq/onboarding/changelog/ratings/feature_requests tables created');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_reports_faq_onboarding');
+  }
+
   logger.info('[Migration] All migrations complete');
+}
+
+// Seed embassy data for top nationality/destination combinations
+async function seedEmbassies() {
+  const p = getPool();
+  if (!p) return;
+  try {
+    const existing = await p.query('SELECT COUNT(*) as count FROM embassies');
+    if (parseInt(existing.rows[0]?.count || '0') > 0) return; // already seeded
+
+    const embassies = [
+      // UK embassies abroad
+      { country: 'TH', nat: 'GB', name: 'British Embassy Bangkok', city: 'Bangkok', address: '14 Wireless Road, Lumpini, Pathum Wan, Bangkok 10330', phone: '+66 2 305 8333', emergency: '+66 2 305 8333', website: 'https://www.gov.uk/world/organisations/british-embassy-bangkok', email: 'ukinbangkok@fcdo.gov.uk' },
+      { country: 'JP', nat: 'GB', name: 'British Embassy Tokyo', city: 'Tokyo', address: '1 Ichiban-cho, Chiyoda-ku, Tokyo 102-8381', phone: '+81 3 5211 1100', emergency: '+81 3 5211 1100', website: 'https://www.gov.uk/world/organisations/british-embassy-tokyo', email: null },
+      { country: 'FR', nat: 'GB', name: 'British Embassy Paris', city: 'Paris', address: '35 rue du Faubourg St Honoré, 75383 Paris Cedex 08', phone: '+33 1 44 51 31 00', emergency: '+33 1 44 51 31 00', website: 'https://www.gov.uk/world/organisations/british-embassy-paris', email: null },
+      { country: 'ES', nat: 'GB', name: 'British Embassy Madrid', city: 'Madrid', address: 'Calle Fernando el Santo 16, 28010 Madrid', phone: '+34 91 714 6300', emergency: '+34 91 714 6300', website: 'https://www.gov.uk/world/organisations/british-embassy-madrid', email: null },
+      { country: 'IT', nat: 'GB', name: 'British Embassy Rome', city: 'Rome', address: 'Via XX Settembre 80/A, 00187 Rome', phone: '+39 06 4220 0001', emergency: '+39 06 4220 2900', website: 'https://www.gov.uk/world/organisations/british-embassy-rome', email: null },
+      // US embassies abroad
+      { country: 'TH', nat: 'US', name: 'US Embassy Bangkok', city: 'Bangkok', address: '95 Wireless Road, Bangkok 10330', phone: '+66 2 205 4000', emergency: '+66 2 205 4000', website: 'https://th.usembassy.gov', email: 'acsbkk@state.gov' },
+      { country: 'JP', nat: 'US', name: 'US Embassy Tokyo', city: 'Tokyo', address: '1-10-5 Akasaka, Minato-ku, Tokyo 107-8420', phone: '+81 3 3224 5000', emergency: '+81 3 3224 5000', website: 'https://jp.usembassy.gov', email: null },
+      { country: 'FR', nat: 'US', name: 'US Embassy Paris', city: 'Paris', address: '4 avenue Gabriel, 75008 Paris', phone: '+33 1 43 12 22 22', emergency: '+33 1 43 12 22 22', website: 'https://fr.usembassy.gov', email: null },
+      { country: 'ES', nat: 'US', name: 'US Embassy Madrid', city: 'Madrid', address: 'Calle Serrano 75, 28006 Madrid', phone: '+34 91 587 2200', emergency: '+34 91 587 2240', website: 'https://es.usembassy.gov', email: null },
+      { country: 'MX', nat: 'US', name: 'US Embassy Mexico City', city: 'Mexico City', address: 'Paseo de la Reforma 305, Cuauhtémoc, 06500 Mexico City', phone: '+52 55 5080 2000', emergency: '+52 55 5080 2000', website: 'https://mx.usembassy.gov', email: null },
+      // Australian embassies abroad
+      { country: 'TH', nat: 'AU', name: 'Australian Embassy Bangkok', city: 'Bangkok', address: '181 Wireless Road, Lumpini, Bangkok 10330', phone: '+66 2 344 6300', emergency: '+66 2 344 6300', website: 'https://thailand.embassy.gov.au', email: 'consular.bangkok@dfat.gov.au' },
+      { country: 'JP', nat: 'AU', name: 'Australian Embassy Tokyo', city: 'Tokyo', address: '2-1-14 Mita, Minato-ku, Tokyo 108-8361', phone: '+81 3 5232 4111', emergency: '+81 3 5232 4111', website: 'https://japan.embassy.gov.au', email: null },
+      { country: 'ID', nat: 'AU', name: 'Australian Embassy Jakarta', city: 'Jakarta', address: 'Jl. H.R. Rasuna Said Kav. C15-16, Kuningan, Jakarta 12940', phone: '+62 21 2550 5555', emergency: '+62 21 2550 5555', website: 'https://indonesia.embassy.gov.au', email: null },
+      // Canadian embassies abroad
+      { country: 'TH', nat: 'CA', name: 'Canadian Embassy Bangkok', city: 'Bangkok', address: '15th Floor, Abdulrahim Place, 990 Rama IV Road, Bangrak, Bangkok 10500', phone: '+66 2 636 0540', emergency: '+66 2 636 0540', website: 'https://www.canadainternational.gc.ca/thailand-thailande', email: 'bngkk@international.gc.ca' },
+      { country: 'FR', nat: 'CA', name: 'Canadian Embassy Paris', city: 'Paris', address: '35 avenue Montaigne, 75008 Paris', phone: '+33 1 44 43 29 00', emergency: '+33 1 44 43 29 00', website: 'https://www.canadainternational.gc.ca/france', email: null },
+      // New Zealand embassies abroad
+      { country: 'TH', nat: 'NZ', name: 'New Zealand Embassy Bangkok', city: 'Bangkok', address: 'M Thai Tower, All Seasons Place, 87 Wireless Road, Bangkok 10330', phone: '+66 2 254 2530', emergency: '+66 2 254 2530', website: 'https://www.mfat.govt.nz/en/countries-and-regions/south-east-asia/thailand', email: 'nzebangkok@mfat.govt.nz' },
+      { country: 'JP', nat: 'NZ', name: 'New Zealand Embassy Tokyo', city: 'Tokyo', address: '20-40 Kamiyamacho, Shibuya-ku, Tokyo 150-0047', phone: '+81 3 3467 2271', emergency: '+81 3 3467 2271', website: 'https://www.mfat.govt.nz/en/countries-and-regions/north-asia/japan', email: null },
+    ];
+
+    for (const e of embassies) {
+      await p.query(`
+        INSERT INTO embassies (country_code, nationality_code, embassy_name, city, address, phone, emergency_phone, website, email)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `, [e.country, e.nat, e.name, e.city, e.address, e.phone, e.emergency, e.website, e.email]);
+    }
+
+    logger.info(`[DB] Seeded ${embassies.length} embassy records`);
+  } catch (err) {
+    logger.warn('[DB] Embassy seed skipped:', err.message);
+  }
 }
 
 // Auto-initialize sequence
@@ -2081,6 +2618,7 @@ async function init() {
       // 2. Initialize schema and migrations
       await initializeDatabase();
       await runMigrations();
+      await seedEmbassies();
       
       isInitialized = true;
       logger.info('[DB] Database fully initialized');

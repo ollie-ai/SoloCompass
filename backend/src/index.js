@@ -54,7 +54,10 @@ async function bootstrap() {
     const { default: logger } = await import('./services/logger.js');
     const { initWebSocketServer } = await import('./services/websocket.js');
     const { startScheduledCheckInMonitor } = await import('./services/checkinMonitor.js');
+    const { startCriticalEventQueue } = await import('./services/criticalEventQueue.js');
     const { generateSitemap } = await import('./services/sitemapService.js');
+    const { startEmergencyDataRefreshSchedule } = await import('./services/emergencyDataRefreshService.js');
+    const { captureBackendError } = await import('./services/errorTrackingService.js');
 
     // route imports
     const { default: authRoutes } = await import('./routes/auth.js');
@@ -79,31 +82,44 @@ async function bootstrap() {
     const { default: flightRoutes } = await import('./routes/flights.js');
     const { default: currencyRoutes } = await import('./routes/currency.js');
     const { default: placesRoutes } = await import('./routes/places.js');
+    const { default: journalRoutes } = await import('./routes/journal.js');
     const { default: directionsRoutes } = await import('./routes/directions.js');
+    const { default: mapsRoutes } = await import('./routes/maps.js');
+    const { default: contentRoutes } = await import('./routes/content.js');
     const { default: affiliateRoutes } = await import('./routes/affiliates.js');
     const { default: matchingRoutes } = await import('./routes/matching.js');
     const { default: messagesRoutes } = await import('./routes/messages.js');
+    const { default: buddyConnectionsRoutes } = await import('./routes/buddyConnections.js');
     const { default: emergencyContactsRoutes } = await import('./routes/emergencyContacts.js');
     const { default: emergencyNumbersRoutes } = await import('./routes/emergencyNumbers.js');
     const { default: emergencyRoutes } = await import('./routes/emergency.js');
     const { default: smsWebhookRoutes } = await import('./routes/smsWebhook.js');
     const { default: checkinRoutes } = await import('./routes/checkin.js');
     const { default: analyticsRoutes } = await import('./routes/analytics.js');
+    const { default: dashboardRoutes } = await import('./routes/dashboard.js');
     const { default: adminRoutes } = await import('./routes/admin.js');
     const { default: safetyRoutes } = await import('./routes/safety.js');
     const { default: aiRoutes } = await import('./routes/ai.js');
+    const { default: atlasRoutes } = await import('./routes/atlas.js');
+    const { default: featureFlagRoutes } = await import('./routes/featureFlags.js');
+    const { default: searchRoutes } = await import('./routes/search.js');
     const { default: translateRoutes } = await import('./routes/translate.js');
     const { default: helpRoutes } = await import('./routes/help.js');
+    const { default: featuresRoutes } = await import('./routes/features.js');
+    const { default: appVersionRoutes } = await import('./routes/appVersion.js');
     const { default: webhookRoutes } = await import('./routes/webhooks.js');
     const { default: notificationRoutes } = await import('./routes/notifications.js');
     const { default: verificationRoutes } = await import('./routes/verification.js');
-const { default: countriesRoutes } = await import('./routes/countries.js');
+    const { default: countriesRoutes } = await import('./routes/countries.js');
     const { default: citiesRoutes } = await import('./routes/cities.js');
+    const { default: sessionsRoutes } = await import('./routes/sessions.js');
+    const { default: accountRoutes } = await import('./routes/account.js');
     const { default: errorRoutes } = await import('./routes/errors.js');
     const { default: checklistRoutes } = await import('./routes/checklist.js');
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
+    const { default: supportRoutes } = await import('./routes/support.js');
 
     const app = express();
     const server = createServer(app);
@@ -157,6 +173,8 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     // routes (applying core ones)
     app.use('/api/auth', authRoutes);
     app.use('/api/ai', aiRoutes);
+    app.use('/api/v1/atlas', atlasRoutes);
+    app.use('/api/v1/feature-flags', featureFlagRoutes);
     app.use('/api/trips', tripRoutes);
     app.use('/api/accommodations', accommodationsRoutes);
     app.use('/api/bookings', bookingsRoutes);
@@ -171,18 +189,42 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/emergency-numbers', emergencyNumbersRoutes);
     app.use('/api/emergency', emergencyRoutes);
     app.use('/api/billing', billingRoutes);
+    app.use('/api/v1/billing', billingRoutes);
+
+    // Dedicated Stripe webhook endpoint with raw body parsing
+    app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+      const sig = req.headers['stripe-signature'];
+      if (!sig) return res.status(400).json({ error: 'Missing Stripe-Signature header' });
+      try {
+        const { handleStripeWebhook } = await import('./services/stripe.js');
+        const result = await handleStripeWebhook(req.body, sig);
+        if (result.alreadyHandled) return res.json({ received: true, status: 'already_processed' });
+        res.json({ received: true, status: 'processed', eventId: result.eventId });
+      } catch (error) {
+        logger.error('[Webhook] Stripe error:', error.message);
+        res.status(400).json({ error: error.message });
+      }
+    });
     app.use('/api/admin', adminRoutes);
     app.use('/api/analytics', analyticsRoutes);
+    app.use('/api/dashboard', dashboardRoutes);
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/help', helpRoutes);
+    app.use('/api/features', featuresRoutes);
+    app.use('/api/v1/app', appVersionRoutes);
     app.use('/api/currency', currencyRoutes);
     app.use('/api/weather', weatherRoutes);
     app.use('/api/matching', matchingRoutes);
     app.use('/api/messages', messagesRoutes);
+    app.use('/api/v1/buddy/connections', buddyConnectionsRoutes);
     app.use('/api/reviews', reviewsRoutes);
     app.use('/api/quiz', quizRoutes);
     app.use('/api/places', placesRoutes);
+    app.use('/api/journal', journalRoutes);
     app.use('/api/directions', directionsRoutes);
+    app.use('/api/v1/maps', mapsRoutes);
+    app.use('/api/v1/content', contentRoutes);
+    app.use('/api/search', searchRoutes);
     app.use('/api/exchange', exchangeRoutes);
     app.use('/api/packing-lists', packingListsRoutes);
     app.use('/api/categories', categoryRoutes);
@@ -199,9 +241,13 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/guardian', guardianRoutes);
     app.use('/api/calls', callsRoutes);
     app.use('/api/esim', esimRoutes);
+    app.use('/api/v1/settings', settingsRoutes);
     app.use('/api/translate', translateRoutes);
+    app.use('/api/features', featuresRoutes);
+    app.use('/api/referrals', referralsRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
+    app.use('/api/support', supportRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {
@@ -250,6 +296,39 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     // health - generic status only
     app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
+    // Serve sitemap.xml and robots.txt (P2 requirements)
+    app.get('/sitemap.xml', async (req, res) => {
+      try {
+        const sitemap = await generateSitemap();
+        res.set('Content-Type', 'application/xml');
+        if (sitemap && typeof sitemap === 'string') {
+          return res.send(sitemap);
+        }
+        // Fall back to path-based serving if generateSitemap returns a file path
+        const sitemapPath = typeof sitemap === 'object' && sitemap?.path ? sitemap.path : null;
+        if (sitemapPath) {
+          return res.sendFile(sitemapPath);
+        }
+        res.status(503).send('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
+      } catch (err) {
+        logger.warn('[Sitemap] Failed:', err.message);
+        res.status(503).send('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
+      }
+    });
+
+    app.get('/robots.txt', (req, res) => {
+      res.type('text/plain');
+      const siteUrl = process.env.FRONTEND_URL || 'https://solocompass.app';
+      res.send([
+        'User-agent: *',
+        'Allow: /',
+        'Disallow: /admin',
+        'Disallow: /api/',
+        '',
+        `Sitemap: ${siteUrl}/sitemap.xml`,
+      ].join('\n'));
+    });
+
     // 404 handler for unknown API routes
     app.use('/api', (req, res) => {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'API endpoint not found' } });
@@ -258,6 +337,7 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     // global error handler
     app.use((err, req, res, next) => {
         logger.error(`[Error] ${req.id} - ${err.message}\n${err.stack}`);
+        captureBackendError(err, { requestId: req.id, path: req.originalUrl, method: req.method }).catch(() => {});
         res.status(err.status || 500).json({ success: false, error: { message: 'Something went wrong', requestId: req.id } });
     });
 
@@ -265,6 +345,7 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
         console.log(`\x1b[32m SoloCompass Core Online :: Listening on Port ${PORT} \x1b[0m`);
         initWebSocketServer(server);
         startScheduledCheckInMonitor();
+        startEmergencyDataRefreshSchedule();
         generateSitemap().catch(err => logger.error(`[SEO] Sitemap fail: ${err.message}`));
         
         // Automated Production Seeding (Phase 5) - Development only

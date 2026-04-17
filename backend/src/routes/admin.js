@@ -719,6 +719,26 @@ router.get('/system-health', ...adminGuard, async (req, res) => {
     }
 
     health.server.totalResponseTime = Date.now() - startTime;
+
+    // Error-rate metrics — count error events in the last 1 h and 24 h
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const errorsLastHour = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneHourAgo
+      );
+      const errorsLastDay = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneDayAgo
+      );
+      health.server.errorRates = {
+        lastHour: errorsLastHour?.count ?? 0,
+        last24h: errorsLastDay?.count ?? 0,
+      };
+    } catch (e) {
+      health.server.errorRates = { lastHour: null, last24h: null, note: 'unavailable' };
+    }
     
     res.json({ success: true, data: health });
   } catch (error) {

@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useAuthStore } from './stores/authStore';
@@ -366,6 +366,10 @@ function App() {
             <Route path="/guardian/acknowledge/:token" element={<GuardianAcknowledge />} />
             <Route path="/guardian/decline/:token" element={<GuardianDecline />} />
             <Route path="/trips/shared/:shareCode" element={<SharedTrip />} />
+            {/* Deep links — canonical URL aliases that open specific in-app views */}
+            <Route path="/verify" element={<VerifyDeepLink />} />
+            <Route path="/join/:shareCode" element={<JoinDeepLink />} />
+            <Route path="/invite/:token" element={<InviteDeepLink />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
@@ -374,6 +378,26 @@ function App() {
       </BrowserRouter>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Deep-link helpers — resolve URL params and redirect to the correct in-app view.
+ * These routes are the canonical landing points for links sent by email / SMS.
+ */
+function VerifyDeepLink() {
+  const { search } = useLocation();
+  // /verify?token=XXX  →  /login?verify=1&token=XXX  (Login page reads token and calls verify API)
+  return <Navigate to={`/login${search}`} replace />;
+}
+
+function JoinDeepLink() {
+  const { shareCode } = useParams();
+  return <Navigate to={`/trips/shared/${shareCode}`} replace />;
+}
+
+function InviteDeepLink() {
+  const { token } = useParams();
+  return <Navigate to={`/buddies?invite=${token}`} replace />;
 }
 
 function PageTracker() {

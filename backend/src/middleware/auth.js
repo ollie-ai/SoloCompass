@@ -102,7 +102,7 @@ export const authenticate = async (req, res, next) => {
 };
 
 export const requireAuth = authenticate;
-export const VALID_USER_ROLES = ['user', 'viewer', 'admin'];
+export const VALID_USER_ROLES = ['user', 'viewer', 'admin', 'support_agent'];
 
 // Admin role levels: 'support', 'moderator', 'super_admin'
 // All admin roles have basic admin access
@@ -167,6 +167,22 @@ export const requireViewerOrAbove = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Viewer access required' }
+      });
+    }
+    next();
+  });
+};
+
+/**
+ * Support agent — can read tickets, post replies, and update ticket status.
+ * Accepts both the dedicated `support_agent` role and any admin role.
+ */
+export const requireSupportAgent = async (req, res, next) => {
+  await authenticate(req, res, () => {
+    if (req.userRole !== 'support_agent' && req.userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Support agent access required' }
       });
     }
     next();

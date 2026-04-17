@@ -170,6 +170,133 @@ router.post('/cancel-subscription', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/billing/change-plan
+ * Schedule a plan change (upgrade or downgrade).
+ * - Upgrades are applied immediately with proration.
+ * - Downgrades are scheduled at the end of the current billing period
+ *   so the user retains access until they have paid for.
+ */
+router.post('/change-plan', requireAuth, async (req, res) => {
+  try {
+    const { planId } = req.body;
+    const userId = req.userId;
+
+    if (!planId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'MISSING_PLAN', message: 'planId is required' }
+      });
+    }
+
+    const newPriceId = PLAN_PRICE_IDS[planId];
+    if (planId !== 'explorer' && !newPriceId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PLAN', message: `Unknown or unconfigured plan: ${planId}` }
+      });
+    }
+
+    if (!stripe) {
+      return res.status(503).json({
+        success: false,
+        error: { code: 'STRIPE_UNAVAILABLE', message: 'Payment service not configured' }
+      });
+    }
+
+    const user = await db.prepare(
+      'SELECT stripe_customer_id, subscription_tier FROM users WHERE id = ?'
+    ).get(userId);
+
+    if (!user?.stripe_customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'NO_SUBSCRIPTION', message: 'No active Stripe subscription found' }
+      });
+    }
+
+    // Retrieve the active subscription for this customer
+    const subscriptions = await stripe.subscriptions.list({
+      customer: user.stripe_customer_id,
+      status: 'active',
+      limit: 1,
+    });
+
+    const subscription = subscriptions.data[0];
+    if (!subscription) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'NO_ACTIVE_SUBSCRIPTION', message: 'No active subscription to change' }
+      });
+    }
+
+    const currentItem = subscription.items.data[0];
+    const PLAN_ORDER = ['explorer', 'guardian', 'navigator'];
+    const currentIdx = PLAN_ORDER.indexOf(user.subscription_tier || 'explorer');
+    const newIdx = PLAN_ORDER.indexOf(planId);
+    const isDowngrade = newIdx < currentIdx;
+
+    if (planId === 'explorer') {
+      // Downgrade to free — cancel at period end
+      await stripe.subscriptions.update(subscription.id, {
+        cancel_at_period_end: true,
+      });
+      await createNotification(
+        userId,
+        'subscription_downgrade_scheduled',
+        'Plan Change Scheduled',
+        `Your plan will change to Explorer at the end of your current billing period.`,
+        { planId }
+      );
+      return res.json({
+        success: true,
+        data: { scheduled: true, effectiveDate: new Date(subscription.current_period_end * 1000).toISOString() }
+      });
+    }
+
+    // Paid-to-paid change
+    const updateParams = {
+      items: [{ id: currentItem.id, price: newPriceId }],
+    };
+
+    if (isDowngrade) {
+      // Schedule downgrade at period end — no proration, no immediate charge
+      updateParams.proration_behavior = 'none';
+      updateParams.billing_cycle_anchor = 'unchanged';
+    } else {
+      // Upgrade immediately with proration
+      updateParams.proration_behavior = 'create_prorations';
+    }
+
+    await stripe.subscriptions.update(subscription.id, updateParams);
+
+    const notifTitle = isDowngrade ? 'Plan Downgrade Scheduled' : 'Plan Upgraded';
+    const notifMsg = isDowngrade
+      ? `Your plan will change to ${planId} at the end of your current billing period.`
+      : `Your plan has been upgraded to ${planId}.`;
+
+    await createNotification(userId, 'subscription_changed', notifTitle, notifMsg, { planId });
+
+    res.json({
+      success: true,
+      data: {
+        planId,
+        immediate: !isDowngrade,
+        scheduled: isDowngrade,
+        effectiveDate: isDowngrade
+          ? new Date(subscription.current_period_end * 1000).toISOString()
+          : new Date().toISOString(),
+      }
+    });
+  } catch (error) {
+    logger.error(`[Billing] Change plan failed: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: { code: 'CHANGE_PLAN_ERROR', message: 'Failed to change plan' }
+    });
+  }
+});
+
 router.get('/subscription-status', requireAuth, async (req, res) => {
   try {
     const userId = req.userId;

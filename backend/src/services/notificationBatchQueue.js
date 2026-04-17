@@ -53,14 +53,18 @@ export function setFlushCallback(fn) {
 
 /**
  * Determine whether a notification type should be batched.
- * Only P3_INFO types that are USER_CONTROLLED are batched.
+ * Batches:
+ *   - All P3_INFO types (informational low-priority)
+ *   - Any type that explicitly sets batchable: true in the registry
+ *     (covers P2 types like buddy_request and trip_reminder)
  *
  * @param {string} type
  * @returns {boolean}
  */
 export function shouldBatch(type) {
   const def = NOTIFICATION_TYPES[type];
-  return def?.priority === PRIORITY.P3_INFO;
+  if (!def) return false;
+  return def.priority === PRIORITY.P3_INFO || def.batchable === true;
 }
 
 /**

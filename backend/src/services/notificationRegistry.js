@@ -114,6 +114,7 @@ export const NOTIFICATION_TYPES = {
     channels: [CHANNEL.IN_APP, CHANNEL.EMAIL, CHANNEL.PUSH],
     controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
     preferenceKey: 'tripReminders',
+    batchable: true,
   },
   itinerary_ready: {
     name: 'AI Itinerary Ready',
@@ -162,6 +163,7 @@ export const NOTIFICATION_TYPES = {
     channels: [CHANNEL.IN_APP, CHANNEL.PUSH],
     controlLevel: CONTROL_LEVEL.USER_CONTROLLED,
     preferenceKey: 'buddyRequests',
+    batchable: true,
   },
   buddy_accepted: {
     name: 'Buddy Request Accepted',

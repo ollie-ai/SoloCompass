@@ -4,6 +4,7 @@ import StepCards from '../components/marketing/StepCards';
 import TrustedSources from '../components/marketing/TrustedSources';
 import FeatureGrid from '../components/marketing/FeatureGrid';
 import FoundingExplorer from '../components/marketing/FoundingExplorer';
+import TestimonialsSection from '../components/marketing/TestimonialsSection';
 import PricingSection from '../components/marketing/PricingSection';
 import FAQAccordion from '../components/marketing/FAQAccordion';
 import FinalCTA from '../components/marketing/FinalCTA';
@@ -23,6 +24,7 @@ const Home = () => {
         <TrustedSources />
         <FeatureGrid />
         <FoundingExplorer />
+        <TestimonialsSection />
         <PricingSection />
         <FAQAccordion />
         <FinalCTA />

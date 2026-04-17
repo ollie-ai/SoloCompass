@@ -62,7 +62,7 @@ import PackingList from '../components/PackingList';
 import BudgetTracker from '../components/BudgetTracker';
 import SafetyCheckIn from '../components/SafetyCheckIn';
 import SoloSafetyHub from '../components/SoloSafetyHub';
-import ConfirmDialog from '../components/ConfirmDialog';
+import PlaceCard from '../components/PlaceCard';
 import { FEATURES } from '../config/features';
 // import TripItinerary from '../components/trip/TripItinerary';
 // import TripSidebar from '../components/trip/TripSidebar';
@@ -153,6 +153,16 @@ function TripDetail() {
   const [documents, setDocuments] = useState([]);
   const [savedPlaces, setSavedPlaces] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
+
+  useEffect(() => {
+    if (!navigator?.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { maximumAge: 600000, timeout: 5000 }
+    );
+  }, []);
 
   // ConfirmDialog state — action: 'delete_activity' | 'delete_accommodation' | 'delete_booking' | 'delete_document' | 'delete_place' | 'regenerate'
   const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, targetId: null });
@@ -1677,45 +1687,13 @@ function TripDetail() {
               {savedPlaces.length > 0 ? (
                 <div className="space-y-4">
                   {savedPlaces.map(place => (
-                    <div key={place.id} className="glass-card p-6 rounded-xl border border-base-content/5 hover:shadow-lg transition-all">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-4">
-                          <button 
-                            onClick={() => togglePlaceVisited(place.id)}
-                            className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${place.status === 'visited' ? 'bg-success/20 text-success' : 'bg-violet-50 text-violet-600 hover:bg-violet-100'}`}
-                          >
-                            {place.status === 'visited' ? <CheckCircle2 size={24} /> : getPlaceIcon(place.category)}
-                          </button>
-                          <div>
-                            <h4 className={`text-lg font-black ${place.status === 'visited' ? 'text-base-content/40 line-through' : 'text-base-content'}`}>{place.name}</h4>
-                            {place.address && (
-                              <p className="text-sm text-base-content/40 font-medium flex items-center gap-1 mt-1">
-                                <MapPin size={14} /> {place.address}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-violet-100 text-violet-700">{place.category}</span>
-                              {place.status && place.status !== 'want_to_visit' && (
-                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${place.status === 'visited' ? 'bg-success/20 text-success' : place.status === 'skipped' ? 'bg-base-300 text-base-content/40' : 'bg-amber-100 text-amber-700'}`}>
-                                  {place.status.replace('_', ' ')}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => deletePlace(place.id)}
-                          className="p-2 text-base-content/20 hover:text-error hover:bg-error/10 rounded-lg transition-all"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                      {place.notes && (
-                        <div className="mt-4 pt-4 border-t border-base-content/5">
-                          <p className="text-sm text-base-content/60 font-medium">{place.notes}</p>
-                        </div>
-                      )}
-                    </div>
+                    <PlaceCard
+                      key={place.id}
+                      place={place}
+                      userLocation={userLocation}
+                      onToggleVisited={() => togglePlaceVisited(place.id)}
+                      onDelete={() => deletePlace(place.id)}
+                    />
                   ))}
                 </div>
               ) : (

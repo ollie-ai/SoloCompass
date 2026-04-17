@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import * as Accordion from '@radix-ui/react-accordion';
-import { ChevronDown, Mail, Book, Shield, User, CreditCard, MapPin, AlertTriangle, ArrowRight, Search, Lock, Globe, Star, HelpCircle } from 'lucide-react';
+import { ChevronDown, Mail, Book, Shield, User, CreditCard, MapPin, AlertTriangle, ArrowRight, Search, Lock, Globe, Star, HelpCircle, Video } from 'lucide-react';
 import api from '../lib/api';
 import { trackEvent } from '../lib/telemetry';
 import SEO from '../components/SEO';
@@ -17,31 +17,116 @@ const resolveIcon = (icon) => {
   return icon; // Already a component reference
 };
 
+const DEFAULT_GUIDES = [
+  {
+    id: 'guide-1',
+    category: 'Getting Started',
+    title: 'Set up your first trip in 5 minutes',
+    duration: '5 min',
+    steps: [
+      'Sign up or log in to your SoloCompass account',
+      'Click "New Trip" and enter your destination and dates',
+      'Let AI generate a personalised daily itinerary',
+      'Add emergency contacts in the Safety tab',
+      'You\'re ready to go — check in when you arrive!',
+    ],
+  },
+  {
+    id: 'guide-2',
+    category: 'Safety',
+    title: 'Configure safety check-ins',
+    duration: '3 min',
+    steps: [
+      'Open your trip and go to the Safety tab',
+      'Add at least one emergency contact (name + phone)',
+      'Set your check-in interval (e.g. every 12 hours)',
+      'Enable SMS alerts so contacts are notified if you miss a check-in',
+      'Use the SOS slider for immediate emergency escalation',
+    ],
+  },
+  {
+    id: 'guide-3',
+    category: 'Planning',
+    title: 'Customise your AI itinerary',
+    duration: '4 min',
+    steps: [
+      'After AI generates your itinerary, click any day to expand it',
+      'Drag activities to reorder them',
+      'Click an activity to edit name, time, location or cost',
+      'Add custom activities with the "+ Add" button',
+      'Use the Budget Tracker tab to track your spending',
+    ],
+  },
+  {
+    id: 'guide-4',
+    category: 'Community',
+    title: 'Find a travel buddy',
+    duration: '3 min',
+    steps: [
+      'Go to the Buddies page from the navigation',
+      'Complete your Travel DNA profile if you haven\'t already',
+      'Browse the Discovery tab for travellers heading to similar destinations',
+      'Send a connection request and introduce yourself',
+      'Once connected, you can share trip details via the Messages page',
+    ],
+  },
+];
+
+const DEFAULT_TUTORIALS = [
+  {
+    id: 'tutorial-1',
+    title: 'Getting started with SoloCompass',
+    duration: '3:12',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  },
+  {
+    id: 'tutorial-2',
+    title: 'Safety check-ins & SOS walkthrough',
+    duration: '2:45',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  },
+  {
+    id: 'tutorial-3',
+    title: 'AI itinerary generation',
+    duration: '4:30',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  },
+];
+
 const Help = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [faqs, setFaqs] = useState([]);
+  const [guides, setGuides] = useState(DEFAULT_GUIDES);
+  const [tutorials, setTutorials] = useState(DEFAULT_TUTORIALS);
+  const [feedback, setFeedback] = useState({ rating: 0, message: '', email: '', screenshotName: '', screenshotDataUrl: '' });
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     trackEvent('page_view', { page: 'help' });
-    const fetchFaqs = async () => {
+    const fetchHelpContent = async () => {
       try {
         setLoading(true);
-        const response = await api.get('/help/faqs');
-        if (response.data?.data) {
-          setFaqs(response.data.data);
-        } else if (response.data?.faqs) {
-          setFaqs(response.data.faqs);
-        } else if (Array.isArray(response.data)) {
-          setFaqs(response.data);
-        }
+        const [faqResponse, guidesResponse, tutorialsResponse] = await Promise.all([
+          api.get('/help/faqs').catch(() => ({ data: {} })),
+          api.get('/help/guides').catch(() => ({ data: {} })),
+          api.get('/help/tutorials').catch(() => ({ data: {} })),
+        ]);
+
+        const faqData = faqResponse.data?.data || faqResponse.data?.faqs || (Array.isArray(faqResponse.data) ? faqResponse.data : []);
+        const guidesData = guidesResponse.data?.data || [];
+        const tutorialsData = tutorialsResponse.data?.data || [];
+
+        setFaqs(Array.isArray(faqData) ? faqData : []);
+        setGuides(Array.isArray(guidesData) && guidesData.length > 0 ? guidesData : DEFAULT_GUIDES);
+        setTutorials(Array.isArray(tutorialsData) && tutorialsData.length > 0 ? tutorialsData : DEFAULT_TUTORIALS);
       } catch (err) {
-        console.error('Failed to fetch FAQs:', err);
+        console.error('Failed to fetch help content:', err);
       } finally {
         setLoading(false);
       }
     };
-    fetchFaqs();
+    fetchHelpContent();
   }, []);
 
   const defaultFaqs = [
@@ -106,8 +191,44 @@ const Help = () => {
       })).filter(section => section.questions.length > 0)
     : displayFaqs;
 
+  const normalizedSearch = searchQuery.toLowerCase();
+  const filteredGuides = normalizedSearch
+    ? guides.filter((guide) => `${guide.title} ${guide.category} ${(guide.steps || []).join(' ')}`.toLowerCase().includes(normalizedSearch))
+    : guides;
+  const filteredTutorials = normalizedSearch
+    ? tutorials.filter((tutorial) => `${tutorial.title} ${tutorial.duration}`.toLowerCase().includes(normalizedSearch))
+    : tutorials;
+
   const handleContactClick = (method) => {
     trackEvent('contact_support', { method });
+  };
+
+  const handleFeedbackSubmit = async (e) => {
+    e.preventDefault();
+    if (!feedback.rating || !feedback.message.trim()) return;
+    try {
+      setSubmittingFeedback(true);
+      await api.post('/help/feedback', feedback);
+      setFeedback({ rating: 0, message: '', email: '', screenshotName: '', screenshotDataUrl: '' });
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  };
+
+  const handleScreenshotChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setFeedback((prev) => ({
+        ...prev,
+        screenshotName: file.name,
+        screenshotDataUrl: String(reader.result || ''),
+      }));
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -194,6 +315,45 @@ const Help = () => {
             </div>
           </div>
 
+          {/* Getting Started Guides */}
+          {filteredGuides.length > 0 && (
+            <div className="mb-12">
+              <h2 className="text-2xl font-black text-base-content mb-4">Getting started guides</h2>
+              <div className="grid md:grid-cols-2 gap-4">
+                {filteredGuides.map((guide) => (
+                  <div key={guide.id} className="glass-card rounded-xl p-5 border border-base-300/60">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-brand-vibrant">{guide.category}</span>
+                      <span className="text-xs text-base-content/50">{guide.duration}</span>
+                    </div>
+                    <h3 className="font-bold text-base-content mb-3">{guide.title}</h3>
+                    <ul className="space-y-1 text-sm text-base-content/60">
+                      {(guide.steps || []).map((step, idx) => <li key={`${guide.id}-step-${idx}`}>• {step}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Video tutorials */}
+          {filteredTutorials.length > 0 && (
+            <div className="mb-12">
+              <h2 className="text-2xl font-black text-base-content mb-4">Video tutorials</h2>
+              <div className="grid md:grid-cols-3 gap-4">
+                {filteredTutorials.map((tutorial) => (
+                  <a key={tutorial.id} href={tutorial.url} target="_blank" rel="noreferrer" className="glass-card rounded-xl p-5 border border-base-300/60 hover:border-brand-vibrant/30 transition-colors group">
+                    <div className="w-10 h-10 bg-brand-vibrant/10 rounded-xl flex items-center justify-center text-brand-vibrant mb-3 group-hover:scale-110 transition-transform">
+                      <Video size={18} />
+                    </div>
+                    <h3 className="font-bold text-base-content mb-1">{tutorial.title}</h3>
+                    <p className="text-sm text-base-content/50">{tutorial.duration}</p>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* FAQ Accordion */}
           <Accordion.Root type="multiple" className="space-y-4">
             {filteredFaqs.length > 0 ? filteredFaqs.map((section) => {
@@ -242,6 +402,45 @@ const Help = () => {
               </div>
             )}
           </Accordion.Root>
+
+          {/* Feedback form */}
+          <div className="mt-16 p-8 bg-base-100 rounded-2xl border border-base-300">
+            <h3 className="text-xl font-black text-base-content mb-4">Send product feedback</h3>
+            <form onSubmit={handleFeedbackSubmit} className="space-y-4">
+              <div>
+                <p className="text-sm font-bold text-base-content mb-2">Rating</p>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <button type="button" key={`rating-${value}`} onClick={() => setFeedback((prev) => ({ ...prev, rating: value }))}>
+                      <Star size={20} className={value <= feedback.rating ? 'text-amber-500 fill-amber-500' : 'text-base-300'} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <textarea
+                value={feedback.message}
+                onChange={(e) => setFeedback((prev) => ({ ...prev, message: e.target.value }))}
+                rows={4}
+                placeholder="What should we improve?"
+                className="w-full px-4 py-3 rounded-xl border border-base-300 bg-base-100"
+                required
+              />
+              <input
+                type="email"
+                value={feedback.email}
+                onChange={(e) => setFeedback((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="Email (optional)"
+                className="w-full px-4 py-3 rounded-xl border border-base-300 bg-base-100"
+              />
+              <div>
+                <input type="file" accept="image/*" onChange={handleScreenshotChange} className="file-input file-input-bordered w-full" />
+                {feedback.screenshotName && <p className="text-xs text-base-content/50 mt-1">Attached: {feedback.screenshotName}</p>}
+              </div>
+              <button type="submit" disabled={submittingFeedback} className="btn-brand rounded-xl">
+                {submittingFeedback ? 'Sending...' : 'Submit feedback'}
+              </button>
+            </form>
+          </div>
 
           {/* Contact Support Block */}
           <div className="mt-16 p-8 bg-base-200 rounded-2xl border border-base-300 text-center">

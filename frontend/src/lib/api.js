@@ -220,6 +220,28 @@ export const duplicatePackingList = async (listId) => {
   return response.data
 }
 
+export const getDashboardActivity = async ({ page = 1, limit = 20, type } = {}) => {
+  const params = { page, limit }
+  if (type) params.type = type
+  const response = await api.get('/dashboard/activity', { params, headers: getAuthHeaders() })
+  return response.data
+}
+
+export const getTripTimeline = async (tripId) => {
+  const response = await api.get(`/trips/${tripId}/timeline`, { headers: getAuthHeaders() })
+  return response.data
+}
+
+export const getTripPackingList = async (tripId) => {
+  const response = await api.get(`/trips/${tripId}/packing-list`, { headers: getAuthHeaders() })
+  return response.data
+}
+
+export const getAdminAnalytics = async (period = '30d') => {
+  const response = await api.get('/admin/analytics', { params: { period }, headers: getAuthHeaders() })
+  return response.data
+}
+
 export const downloadTripDocument = async (documentId) => {
   const response = await api.get(`/trip-documents/${documentId}/download`, { 
     headers: getAuthHeaders(),

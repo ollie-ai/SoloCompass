@@ -95,6 +95,7 @@ async function bootstrap() {
     const { default: smsWebhookRoutes } = await import('./routes/smsWebhook.js');
     const { default: checkinRoutes } = await import('./routes/checkin.js');
     const { default: analyticsRoutes } = await import('./routes/analytics.js');
+    const { default: dashboardRoutes } = await import('./routes/dashboard.js');
     const { default: adminRoutes } = await import('./routes/admin.js');
     const { default: safetyRoutes } = await import('./routes/safety.js');
     const { default: aiRoutes } = await import('./routes/ai.js');
@@ -207,6 +208,7 @@ async function bootstrap() {
     });
     app.use('/api/admin', adminRoutes);
     app.use('/api/analytics', analyticsRoutes);
+    app.use('/api/dashboard', dashboardRoutes);
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/help', helpRoutes);
     app.use('/api/features', featuresRoutes);
@@ -252,6 +254,11 @@ async function bootstrap() {
     app.use('/api/v1/help', helpRoutes);
     app.use('/api/v1/features', featuresRoutes);
     app.use('/api/v1/emergency-numbers', emergencyNumbersRoutes);
+
+    // Versioned aliases for API compatibility
+    app.use('/api/v1/admin', adminRoutes);
+    app.use('/api/v1/trips', tripRoutes);
+    app.use('/api/v1/dashboard', dashboardRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {

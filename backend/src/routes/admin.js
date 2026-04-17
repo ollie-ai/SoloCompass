@@ -105,10 +105,18 @@ router.post('/emails/test', ...adminGuard, async (req, res) => {
   }
 });
 
-router.get('/analytics/overview', ...adminGuard, async (req, res) => {
+const PLAN_PRICES_GBP = {
+  explorer: 0,
+  guardian: 4.99,
+  navigator: 9.99,
+};
+
+const getAnalyticsOverview = async (req, res) => {
   try {
     const period = req.query.period || '30d';
-    const days = parseInt(period) || 30;
+    const daysMatch = String(period).match(/\d+/);
+    const days = Math.max(1, Math.min(365, parseInt(daysMatch?.[0] || '30', 10)));
+    const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     let totalUsers = { count: 0 };
     let activeTrips = { count: 0 };
@@ -118,6 +126,15 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
     let popularDestinations = [];
     let usersLast30Days = { count: 0 };
     let usersLast60Days = { count: 0 };
+    let usersTimeSeries = [];
+    let tripsTimeSeries = [];
+    let engagementTimeSeries = [];
+    let topEvents = [];
+    let activeUsers7d = { count: 0 };
+    let activeUsers30d = { count: 0 };
+    let activityEvents = { count: 0 };
+    let revenueByTier = [];
+    let paidUsers = { count: 0 };
 
     try {
       const totalUsersRes = await db.get('SELECT COUNT(*) as count FROM users');
@@ -150,6 +167,17 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
     } catch (e) { logger.warn('[Admin] Subscription stats failed:', e.message); subscriptionStats = []; }
 
     try {
+      revenueByTier = await db.all(`
+        SELECT COALESCE(LOWER(subscription_tier), 'explorer') as tier, COUNT(*)::int as users
+        FROM users
+        GROUP BY COALESCE(LOWER(subscription_tier), 'explorer')
+      `);
+      if (!Array.isArray(revenueByTier)) revenueByTier = [];
+      const paidUsersRes = await db.get(`SELECT COUNT(*) as count FROM users WHERE is_premium = true`);
+      paidUsers = paidUsersRes || { count: 0 };
+    } catch (e) { logger.warn('[Admin] Revenue breakdown failed:', e.message); }
+
+    try {
       popularDestinations = await db.all(`
         SELECT destination as name, COUNT(*) as trip_count FROM trips
         GROUP BY destination ORDER BY trip_count DESC LIMIT 10
@@ -166,9 +194,93 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
       usersLast60Days = u60 || { count: 0 };
     } catch (e) { logger.warn('[Admin] User growth stats failed:', e.message); }
 
+    try {
+      usersTimeSeries = await db.all(`
+        SELECT DATE(created_at) as day, COUNT(*)::int as value
+        FROM users
+        WHERE created_at >= ?
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(usersTimeSeries)) usersTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] User time series failed:', e.message); usersTimeSeries = []; }
+
+    try {
+      tripsTimeSeries = await db.all(`
+        SELECT DATE(created_at) as day, COUNT(*)::int as value
+        FROM trips
+        WHERE created_at >= ?
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(tripsTimeSeries)) tripsTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] Trip time series failed:', e.message); tripsTimeSeries = []; }
+
+    try {
+      engagementTimeSeries = await db.all(`
+        SELECT DATE(timestamp) as day, COUNT(*)::int as events, COUNT(DISTINCT user_id)::int as active_users
+        FROM events
+        WHERE timestamp >= ?
+        GROUP BY DATE(timestamp)
+        ORDER BY day ASC
+      `, sinceDate);
+      if (!Array.isArray(engagementTimeSeries)) engagementTimeSeries = [];
+    } catch (e) { logger.warn('[Admin] Engagement time series failed:', e.message); engagementTimeSeries = []; }
+
+    try {
+      topEvents = await db.all(`
+        SELECT event_name, COUNT(*)::int as count
+        FROM events
+        WHERE timestamp >= ?
+        GROUP BY event_name
+        ORDER BY count DESC
+        LIMIT 8
+      `, sinceDate);
+      if (!Array.isArray(topEvents)) topEvents = [];
+      const a7 = await db.get(`SELECT COUNT(DISTINCT user_id) as count FROM events WHERE timestamp >= ?`, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      const a30 = await db.get(`SELECT COUNT(DISTINCT user_id) as count FROM events WHERE timestamp >= ?`, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+      const ev = await db.get(`SELECT COUNT(*) as count FROM events WHERE timestamp >= ?`, sinceDate);
+      activeUsers7d = a7 || { count: 0 };
+      activeUsers30d = a30 || { count: 0 };
+      activityEvents = ev || { count: 0 };
+    } catch (e) { logger.warn('[Admin] Engagement metrics failed:', e.message); }
+
     const churnRate = usersLast60Days.count > 0
       ? Math.max(0, ((usersLast60Days.count - usersLast30Days.count) / usersLast60Days.count) * 100)
       : 0;
+
+    const startDate = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
+    const dayKeys = Array.from({ length: days }, (_, i) => {
+      const d = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+      return d.toISOString().slice(0, 10);
+    });
+
+    const mapSeries = (rows, valueKey = 'value') => {
+      const byDay = new Map((rows || []).map((r) => [String(r.day).slice(0, 10), Number(r[valueKey] || 0)]));
+      return dayKeys.map((day) => ({ day, value: byDay.get(day) || 0 }));
+    };
+
+    const mapEngagementSeries = () => {
+      const byDay = new Map((engagementTimeSeries || []).map((r) => [String(r.day).slice(0, 10), { events: Number(r.events || 0), activeUsers: Number(r.active_users || 0) }]));
+      return dayKeys.map((day) => {
+        const row = byDay.get(day) || { events: 0, activeUsers: 0 };
+        return { day, events: row.events, activeUsers: row.activeUsers };
+      });
+    };
+
+    const revenueBreakdown = (revenueByTier || []).map((tier) => {
+      const normalizedTier = String(tier.tier || 'explorer').toLowerCase();
+      const unitPrice = PLAN_PRICES_GBP[normalizedTier] ?? 0;
+      const users = Number(tier.users || 0);
+      return {
+        tier: normalizedTier,
+        users,
+        unitPrice,
+        mrr: Number((users * unitPrice).toFixed(2)),
+      };
+    }).sort((a, b) => b.mrr - a.mrr);
+
+    const estimatedMrr = revenueBreakdown.reduce((sum, row) => sum + row.mrr, 0);
 
     res.json({
       success: true,
@@ -190,12 +302,79 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
           tripCount: d.trip_count
         })) : [],
         churnRate: Math.round(churnRate * 10) / 10,
+        revenueBreakdown: {
+          currency: 'GBP',
+          estimatedMrr: Number(estimatedMrr.toFixed(2)),
+          paidUsers: Number(paidUsers.count || 0),
+          byTier: revenueBreakdown,
+        },
+        engagement: {
+          activeUsers7d: Number(activeUsers7d.count || 0),
+          activeUsers30d: Number(activeUsers30d.count || 0),
+          eventsInPeriod: Number(activityEvents.count || 0),
+          avgEventsPerActiveUser: Number(activeUsers30d.count ? (Number(activityEvents.count || 0) / Number(activeUsers30d.count || 1)).toFixed(2) : 0),
+          topEventTypes: (topEvents || []).map((e) => ({ event: e.event_name, count: Number(e.count || 0) })),
+        },
+        timeSeries: {
+          users: mapSeries(usersTimeSeries),
+          trips: mapSeries(tripsTimeSeries),
+          engagement: mapEngagementSeries(),
+        },
         period: `${days}d`
       }
     });
   } catch (error) {
     logger.error(`[Admin] Analytics overview failed: ${error.message}`);
     res.status(500).json({ error: 'Failed to get analytics overview' });
+  }
+};
+
+router.get('/analytics', ...adminGuard, getAnalyticsOverview);
+router.get('/analytics/overview', ...adminGuard, getAnalyticsOverview);
+
+/**
+ * GET /api/admin/analytics/revenue
+ * Dedicated revenue breakdown endpoint: MRR by tier, paid user counts, churn rate.
+ */
+router.get('/analytics/revenue', ...adminGuard, async (req, res) => {
+  try {
+    const PLAN_PRICES = { explorer: 0, guardian: 4.99, navigator: 9.99 };
+
+    const [revenueByTier, paidUsersRow, totalUsersRow, recentSignupsRow] = await Promise.all([
+      db.all(`
+        SELECT COALESCE(LOWER(subscription_tier), 'explorer') AS tier,
+               COUNT(*)::int AS users
+        FROM users
+        GROUP BY COALESCE(LOWER(subscription_tier), 'explorer')
+      `).catch(() => []),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE is_premium = true`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE created_at >= ?`, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).catch(() => ({ count: 0 })),
+    ]);
+
+    const tiers = (Array.isArray(revenueByTier) ? revenueByTier : []).map((row) => {
+      const tier = String(row.tier || 'explorer').toLowerCase();
+      const users = Number(row.users || 0);
+      const unitPrice = PLAN_PRICES[tier] ?? 0;
+      return { tier, users, unitPrice, mrr: Number((users * unitPrice).toFixed(2)) };
+    }).sort((a, b) => b.mrr - a.mrr);
+
+    const estimatedMrr = tiers.reduce((sum, r) => sum + r.mrr, 0);
+
+    res.json({
+      success: true,
+      data: {
+        currency: 'GBP',
+        estimatedMrr: Number(estimatedMrr.toFixed(2)),
+        paidUsers: Number(paidUsersRow?.count ?? 0),
+        totalUsers: Number(totalUsersRow?.count ?? 0),
+        newUsersLast30d: Number(recentSignupsRow?.count ?? 0),
+        byTier: tiers,
+      },
+    });
+  } catch (error) {
+    logger.error(`[Admin] Revenue breakdown failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to get revenue breakdown' });
   }
 });
 

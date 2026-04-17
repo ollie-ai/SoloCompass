@@ -16,7 +16,7 @@ import LiveTripDashboard from '../components/dashboard/states/LiveTripDashboard'
 import CompletedDashboard from '../components/dashboard/states/CompletedDashboard';
 import SubscriptionBanner from '../components/dashboard/SubscriptionBanner';
 import APIErrorBoundary from '../components/APIErrorBoundary';
-import ActivityFeedWidget from '../components/dashboard/widgets/ActivityFeedWidget';
+import SafetyStatusIndicator from '../components/SafetyStatusIndicator';
 
 // Stable selector for user - prevents unnecessary re-renders
 const selectUser = (state) => state.user;
@@ -266,6 +266,10 @@ const Dashboard = () => {
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         >
           <DashboardShell>
+            <main id="dashboard-main" aria-label="Dashboard">
+            <div className="flex items-center justify-end mb-3">
+              <SafetyStatusIndicator safetyData={safetyData} />
+            </div>
             {isDev && (
               <div className="mb-4 p-2 bg-amber-500/5 border border-amber-500/20 rounded-xl flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -289,7 +293,7 @@ const Dashboard = () => {
             <SubscriptionBanner />
             <ActivityFeedWidget activity={activityFeed} loading={activityLoading} />
             {renderState()}
-            <PushPermissionPrompt trigger={trips.length > 0 ? 'trip_created' : 'default'} />
+            </main>
           </DashboardShell>
         </motion.div>
       </AnimatePresence>

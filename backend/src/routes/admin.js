@@ -249,38 +249,20 @@ const getAnalyticsOverview = async (req, res) => {
       ? Math.max(0, ((usersLast60Days.count - usersLast30Days.count) / usersLast60Days.count) * 100)
       : 0;
 
-    const startDate = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
-    const dayKeys = Array.from({ length: days }, (_, i) => {
-      const d = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
-      return d.toISOString().slice(0, 10);
-    });
-
-    const mapSeries = (rows, valueKey = 'value') => {
-      const byDay = new Map((rows || []).map((r) => [String(r.day).slice(0, 10), Number(r[valueKey] || 0)]));
-      return dayKeys.map((day) => ({ day, value: byDay.get(day) || 0 }));
-    };
-
-    const mapEngagementSeries = () => {
-      const byDay = new Map((engagementTimeSeries || []).map((r) => [String(r.day).slice(0, 10), { events: Number(r.events || 0), activeUsers: Number(r.active_users || 0) }]));
-      return dayKeys.map((day) => {
-        const row = byDay.get(day) || { events: 0, activeUsers: 0 };
-        return { day, events: row.events, activeUsers: row.activeUsers };
-      });
-    };
-
-    const revenueBreakdown = (revenueByTier || []).map((tier) => {
-      const normalizedTier = String(tier.tier || 'explorer').toLowerCase();
-      const unitPrice = PLAN_PRICES_GBP[normalizedTier] ?? 0;
-      const users = Number(tier.users || 0);
-      return {
-        tier: normalizedTier,
-        users,
-        unitPrice,
-        mrr: Number((users * unitPrice).toFixed(2)),
-      };
-    }).sort((a, b) => b.mrr - a.mrr);
-
-    const estimatedMrr = revenueBreakdown.reduce((sum, row) => sum + row.mrr, 0);
+    // Daily new user signups for the selected period (for the bar chart)
+    let newUsersByDay = [];
+    try {
+      const dateFilter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const rows = await db.all(
+        `SELECT DATE(created_at) as day, COUNT(*) as count
+         FROM users
+         WHERE created_at >= ?
+         GROUP BY DATE(created_at)
+         ORDER BY day ASC`,
+        dateFilter
+      );
+      newUsersByDay = Array.isArray(rows) ? rows.map(r => ({ day: r.day, count: r.count || 0 })) : [];
+    } catch (e) { logger.warn('[Admin] newUsersByDay query failed:', e.message); }
 
     res.json({
       success: true,
@@ -302,24 +284,8 @@ const getAnalyticsOverview = async (req, res) => {
           tripCount: d.trip_count
         })) : [],
         churnRate: Math.round(churnRate * 10) / 10,
-        revenueBreakdown: {
-          currency: 'GBP',
-          estimatedMrr: Number(estimatedMrr.toFixed(2)),
-          paidUsers: Number(paidUsers.count || 0),
-          byTier: revenueBreakdown,
-        },
-        engagement: {
-          activeUsers7d: Number(activeUsers7d.count || 0),
-          activeUsers30d: Number(activeUsers30d.count || 0),
-          eventsInPeriod: Number(activityEvents.count || 0),
-          avgEventsPerActiveUser: Number(activeUsers30d.count ? (Number(activityEvents.count || 0) / Number(activeUsers30d.count || 1)).toFixed(2) : 0),
-          topEventTypes: (topEvents || []).map((e) => ({ event: e.event_name, count: Number(e.count || 0) })),
-        },
-        timeSeries: {
-          users: mapSeries(usersTimeSeries),
-          trips: mapSeries(tripsTimeSeries),
-          engagement: mapEngagementSeries(),
-        },
+        newUsersLastPeriod: usersLast30Days.count || 0,
+        newUsersByDay,
         period: `${days}d`
       }
     });
@@ -994,6 +960,26 @@ router.get('/system-health', ...adminGuard, async (req, res) => {
     }
 
     health.server.totalResponseTime = Date.now() - startTime;
+
+    // Error-rate metrics — count error events in the last 1 h and 24 h
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const errorsLastHour = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneHourAgo
+      );
+      const errorsLastDay = await db.get(
+        `SELECT COUNT(*) as count FROM events WHERE event_name LIKE 'error%' AND timestamp > ?`,
+        oneDayAgo
+      );
+      health.server.errorRates = {
+        lastHour: errorsLastHour?.count ?? 0,
+        last24h: errorsLastDay?.count ?? 0,
+      };
+    } catch (e) {
+      health.server.errorRates = { lastHour: null, last24h: null, note: 'unavailable' };
+    }
     
     res.json({ success: true, data: health });
   } catch (error) {

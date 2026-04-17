@@ -5,6 +5,7 @@ import { sanitizeAll } from '../middleware/validate.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 import { createNotification } from '../services/notificationService.js';
+import { sendTemplateEmail } from '../services/resendClient.js';
 
 const router = express.Router();
 
@@ -80,6 +81,30 @@ router.post('/:tripId/bookings', requireAuth, sanitizeAll(['provider', 'departur
     );
 
     const booking = await db.prepare('SELECT id, trip_id, type, provider, confirmation_number, booking_reference, booking_date, travel_date, return_date, departure_location, arrival_location, departure_datetime, arrival_datetime, cost, currency, reference, notes, status, created_at, updated_at FROM bookings WHERE id = ?').get(result.lastInsertRowid);
+
+    // Send booking confirmation email (fire-and-forget)
+    try {
+      const userRow = await db.prepare('SELECT email, name FROM users WHERE id = ?').get(req.userId);
+      const tripRow = await db.prepare('SELECT name, destination FROM trips WHERE id = ?').get(tripId);
+      if (userRow?.email) {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        await sendTemplateEmail(userRow.email, 'booking_confirmation', {
+          name: userRow.name || 'Traveller',
+          tripName: tripRow?.name || 'your trip',
+          bookingType: type,
+          provider: provider || 'N/A',
+          departureLocation: departure_location || 'N/A',
+          arrivalLocation: arrival_location || 'N/A',
+          departureDate: departure_datetime ? new Date(departure_datetime).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'N/A',
+          confirmationNumber: reference || '',
+          tripUrl: `${frontendUrl}/trips/${tripId}`,
+          year: new Date().getFullYear().toString(),
+          unsubscribeUrl: `${frontendUrl}/settings?tab=notifications`,
+        });
+      }
+    } catch (emailErr) {
+      logger.warn(`[Bookings] Confirmation email failed: ${emailErr.message}`);
+    }
 
     res.json({
       success: true,

@@ -3,6 +3,7 @@ import db from '../db.js';
 import logger from './logger.js';
 import { FROM_EMAIL, FROM_NAME, getResendClient } from './resendClient.js';
 import { broadcastToUser } from './websocket.js';
+import { shouldBatch, enqueueP3Notification, setFlushCallback } from './notificationBatchQueue.js';
 
 function getUnsubscribeUrl(token = 'pending-token') {
   const apiBase = process.env.BACKEND_URL || 'http://localhost:3005';
@@ -304,6 +305,12 @@ async function shouldSuppressForDND(userId, priority) {
 
 // ... the rest of the db methods stay same ...
 export async function createNotification(userId, type, title, message, data = null, relatedId = null) {
+  // P3 (informational) notifications are batched into a digest to reduce noise.
+  if (shouldBatch(type)) {
+    enqueueP3Notification(userId, type, title, message, data);
+    return null;
+  }
+
   try {
     const notificationData = data ? { ...data } : {};
 
@@ -336,6 +343,24 @@ export async function createNotification(userId, type, title, message, data = nu
     return null;
   }
 }
+
+// Wire the batch queue's flush callback now that createNotification is defined.
+// Uses the direct (non-batched) DB write to avoid re-entering the queue.
+setFlushCallback(async (userId, type, title, message, data) => {
+  try {
+    const result = await db.prepare(
+      `INSERT INTO notifications (user_id, type, title, message, data, is_read, related_id)
+       VALUES (?, ?, ?, ?, ?, false, NULL)`
+    ).run(userId, type, title, message, data ? JSON.stringify(data) : null);
+
+    broadcastToUser(userId, {
+      type: 'notification',
+      notification: { userId, type, title, message, data, id: result.lastInsertRowid, created_at: new Date().toISOString() },
+    });
+  } catch (err) {
+    logger.error('[NotifBatch] Flush write failed:', err.message);
+  }
+});
 
 export async function getUserNotifications(userId, { limit = 50, offset = 0, unreadOnly = false } = {}) {
     try {

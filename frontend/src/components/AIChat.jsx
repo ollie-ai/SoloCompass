@@ -1,101 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { MessageCircle, X, Send, Sparkles, Zap, Shield, Compass, User, MapPin, Smile } from 'lucide-react';
+import { X, Send, Sparkles, Zap, Shield, Compass, MapPin } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../stores/authStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router-dom';
-import DOMPurify from 'dompurify';
-
-const UserIcon = User;
-
-const formatMessage = (content, isUser) => {
-  if (!content) return '';
-  
-  const textColor = isUser ? 'text-white' : 'text-base-content';
-  const boldColor = isUser ? 'text-white' : 'text-base-content';
-  const subColor = isUser ? 'text-emerald-100' : 'text-base-content/80';
-  
-  const sections = [];
-  const paragraphs = content.split(/\n\n+/);
-  
-  paragraphs.forEach((paragraph, paraIndex) => {
-    const lines = paragraph.split('\n');
-    let hasSection = false;
-    
-    lines.forEach((line, lineIndex) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      
-      const boldHeaderMatch = trimmed.match(/^\*\*(.+?)\*\*[:\-]?\s*(.*)$/);
-      if (boldHeaderMatch) {
-        hasSection = true;
-        sections.push(
-          <p key={`sec-${paraIndex}-${lineIndex}`} className={`font-bold mt-4 mb-2 text-base ${boldColor}`}>
-            {boldHeaderMatch[1]}
-            {boldHeaderMatch[2] && <span className={`font-normal ${subColor} text-sm ml-1`}>{boldHeaderMatch[2]}</span>}
-          </p>
-        );
-        return;
-      }
-      
-      const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
-      if (headingMatch) {
-        hasSection = true;
-        const level = headingMatch[1].length;
-        const classes = level === 1 ? `font-bold ${textColor} mt-5 mb-2` : 
-                       level === 2 ? `font-semibold ${textColor} mt-4 mb-1.5` : 
-                       `font-medium ${subColor} mt-3 mb-1 uppercase tracking-wide`;
-        sections.push(<p key={`h-${paraIndex}-${lineIndex}`} className={classes}>{headingMatch[2]}</p>);
-        return;
-      }
-      
-      const bulletMatch = trimmed.match(/^[•\-\*]\s+(.+)$/);
-      if (bulletMatch) {
-        sections.push(
-          <li key={`li-${paraIndex}-${lineIndex}`} className={`ml-4 list-disc list-inside mb-1.5 ${isUser ? 'text-emerald-50' : 'text-base-content/80'}`}>
-            {bulletMatch[1]}
-          </li>
-        );
-        return;
-      }
-      
-      const numberMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
-      if (numberMatch) {
-        sections.push(
-          <li key={`num-${paraIndex}-${lineIndex}`} className={`ml-4 list-decimal list-inside mb-1.5 ${isUser ? 'text-emerald-50' : 'text-base-content/80'}`}>
-            {numberMatch[2]}
-          </li>
-        );
-        return;
-      }
-      
-      const boldMatch = trimmed.match(/\*\*(.+?)\*\*/g);
-      let displayText = trimmed;
-      if (boldMatch) {
-        boldMatch.forEach(bold => {
-          const boldContent = bold.replace(/\*\*/g, '');
-          displayText = displayText.replace(bold, `<strong class="font-bold ${boldColor}">${boldContent}</strong>`);
-        });
-      }
-      
-      if (displayText !== trimmed) {
-        sections.push(
-          <p key={`b-${paraIndex}-${lineIndex}`} className={`mb-2 ${isUser ? 'text-emerald-50' : 'text-base-content/80'}`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(displayText) }} />
-        );
-        return;
-      }
-      
-      sections.push(
-        <p key={`p-${paraIndex}-${lineIndex}`} className={`mb-2 ${isUser ? 'text-emerald-50' : 'text-base-content/80'} ${hasSection ? 'ml-2' : ''}`}>
-          {trimmed}
-        </p>
-      );
-    });
-  });
-  
-  return sections;
-};
+import AtlasMessage from './atlas/AtlasMessage';
+import AtlasTypingIndicator from './atlas/AtlasTypingIndicator';
+import AtlasSuggestionChips from './atlas/AtlasSuggestionChips';
+import AtlasChatBubble from './atlas/AtlasChatBubble';
 
 const AIChat = () => {
   const { isAuthenticated } = useAuthStore();
@@ -121,6 +34,12 @@ const AIChat = () => {
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  useEffect(() => {
+    const openAtlas = () => setIsOpen(true);
+    window.addEventListener('atlas:open', openAtlas);
+    return () => window.removeEventListener('atlas:open', openAtlas);
   }, []);
 
   const isPublicPage = ['/', '/login', '/register', '/about', '/features', '/safety-info', '/help', '/terms', '/privacy'].includes(location.pathname);
@@ -194,14 +113,11 @@ const AIChat = () => {
 
   if (!isOpen) {
     return (
-      <motion.button 
+      <AtlasChatBubble
+        bottomOffset={bottomOffset}
+        horizontalPos={horizontalPos}
         onClick={() => setIsOpen(true)}
-        className={`fixed ${bottomOffset} ${horizontalPos} z-[90] w-12 h-12 lg:w-14 lg:h-14 bg-brand-vibrant text-white rounded-full flex items-center justify-center shadow-lg hover:shadow-xl hover:shadow-brand-vibrant/40 transition-all group`}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-      >
-         <Sparkles size={20} className="group-hover:rotate-12 transition-transform" />
-      </motion.button>
+      />
     );
   }
 
@@ -239,79 +155,21 @@ const AIChat = () => {
       <div role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 overflow-y-auto p-4 space-y-4 bg-base-200/50">
         <AnimatePresence>
           {messages.map((msg, i) => (
-            <motion.div 
-              key={`msg-${i}`}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`flex items-start gap-2 max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                  msg.role === 'user' 
-                    ? 'bg-gradient-to-br from-brand-vibrant to-brand-accent' 
-                    : 'bg-base-300 border border-base-300'
-                }`}>
-                  {msg.role === 'user' ? (
-                    <User size={14} className="text-white" />
-                  ) : (
-                    <Smile size={14} className="text-base-content/80" />
-                  )}
-                </div>
-                <div className={`p-3 rounded-2xl text-sm font-medium leading-relaxed ${
-                  msg.role === 'user' 
-                    ? 'bg-success/100 text-white rounded-br-md shadow-lg' 
-                    : 'bg-base-100 border border-base-300 text-base-content rounded-bl-md shadow-sm'
-                }`}>
-                  {formatMessage(msg.content, msg.role === 'user')}
-                </div>
-              </div>
-            </motion.div>
+            <AtlasMessage key={`msg-${i}`} message={msg} />
           ))}
         </AnimatePresence>
         
-        {loading && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start"
-          >
-            <div className="flex items-start gap-2">
-              <div className="w-7 h-7 rounded-lg bg-base-300 border border-base-300 flex items-center justify-center">
-                <Smile size={14} className="text-base-content/80" />
-              </div>
-              <div className="bg-base-100 border border-base-300 p-3 rounded-2xl rounded-bl-md shadow-sm flex gap-1">
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-              </div>
-            </div>
-          </motion.div>
-        )}
+        {loading && <AtlasTypingIndicator />}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Quick Prompts */}
       <div className="px-4 py-2 border-t border-base-300/50 bg-base-100">
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          {promptsLoading ? (
-            <div className="flex gap-2">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={`skeleton-prompt-${i}`} className="px-3 py-2 rounded-xl bg-base-200 animate-pulse h-8 w-20 flex-shrink-0"></div>
-              ))}
-            </div>
-          ) : quickPrompts.slice(0, 4).map((p, i) => (
-            <motion.button 
-              key={`prompt-${i}`}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => handleSend(p.label)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-base-200 hover:bg-brand-vibrant/10 hover:text-brand-vibrant text-base-content/80 text-[11px] font-bold uppercase tracking-wide whitespace-nowrap transition-all border border-base-300/50 flex-shrink-0"
-            >
-              <p.icon size={12} /> {p.label}
-            </motion.button>
-          ))}
-        </div>
+        <AtlasSuggestionChips
+          prompts={quickPrompts}
+          loading={promptsLoading}
+          onSelect={handleSend}
+        />
       </div>
 
       {/* Input */}

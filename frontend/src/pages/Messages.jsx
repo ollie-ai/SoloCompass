@@ -368,7 +368,7 @@ const Messages = () => {
                   {otherUser?.avatarUrl ? (
                     <img
                       src={otherUser.avatarUrl}
-                      alt={otherUser.name}
+                      alt={`${otherUser.name}'s profile photo`}
                       className="w-10 h-10 rounded-xl object-cover"
                     />
                   ) : (
@@ -515,7 +515,7 @@ const Messages = () => {
                     {otherUser?.avatarUrl ? (
                       <img
                         src={otherUser.avatarUrl}
-                        alt={otherUser.name}
+                        alt={`${otherUser.name}'s profile photo`}
                         className="w-20 h-20 rounded-full object-cover border-4 border-brand-vibrant/20"
                       />
                     ) : (

@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { 
-  ArrowLeft, Search, Copy, Check, Volume2, AlertTriangle, 
-  Globe, Languages, AlertOctagon, Send
+  ArrowLeft, AlertTriangle, Globe, AlertOctagon
 } from 'lucide-react';
-import Button from '../components/Button';
 import SEO from '../components/SEO';
+import PhraseList from '../components/PhraseList';
 
 export default function EmergencyPhrases() {
   const navigate = useNavigate();
@@ -169,45 +168,12 @@ export default function EmergencyPhrases() {
               </div>
 
               {/* Phrases List */}
-              <div className="space-y-3">
-                {phraseKeys.map(({ key, label }) => (
-                  <div 
-                    key={key} 
-                    className="p-4 bg-base-200 rounded-xl border border-base-300"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <p className="text-[10px] font-bold text-base-content/40 uppercase tracking-wider mb-1">
-                          {label}
-                        </p>
-                        <p className="text-base-content font-medium text-lg">
-                          {phrases?.[key] || '...'}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleSpeak(phrases?.[key])}
-                          className="p-2 hover:bg-base-300 rounded-lg transition-colors"
-                          title="Speak"
-                        >
-                          <Volume2 size={16} className="text-base-content/60" />
-                        </button>
-                        <button
-                          onClick={() => handleCopy(key, phrases?.[key])}
-                          className="p-2 hover:bg-base-300 rounded-lg transition-colors"
-                          title="Copy"
-                        >
-                          {copiedPhrase === key ? (
-                            <Check size={16} className="text-success" />
-                          ) : (
-                            <Copy size={16} className="text-base-content/60" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <PhraseList
+                phrases={phraseKeys.map(({ key, label }) => ({ key, label, text: phrases?.[key] || '...' }))}
+                copiedKey={copiedPhrase}
+                onCopy={handleCopy}
+                onSpeak={handleSpeak}
+              />
 
               {/* Emergency Note */}
               <div className="mt-8 p-4 bg-error/10 border border-error/20 rounded-xl">

@@ -11,7 +11,7 @@
 
 import logger from './logger.js';
 import db from '../db.js';
-import { callAzureOpenAI, callOpenAIDirect, callAnthropic, getFallbackResponse, getFallbackItinerary } from './aiService.js';
+import { callAzureOpenAI, callOpenAIDirect, callClaude, getFallbackResponse, getFallbackItinerary } from './aiService.js';
 import { getPromptTemplate } from './promptTemplates.js';
 
 // ---------------------------------------------------------------------------
@@ -103,22 +103,23 @@ export async function callAI(useCase, messages, options = {}) {
   let response;
   let source = 'azure_openai';
 
-  // 4. Try providers in fallback chain: Azure → OpenAI Direct → Anthropic → static
+  // 4. Try providers in order: Azure → OpenAI direct → Claude → heuristic
   try {
     response = await callAzureOpenAI(finalMessages, { max_tokens: maxTokens, json: requireJson });
-    source = 'azure_openai';
   } catch (azureErr) {
     logger.warn(`[AI Orchestrator] Azure OpenAI failed for '${useCase}': ${azureErr.message}`);
+
     try {
       response = await callOpenAIDirect(finalMessages, { max_tokens: maxTokens, json: requireJson });
       source = 'openai_direct';
     } catch (openaiErr) {
-      logger.warn(`[AI Orchestrator] OpenAI Direct failed for '${useCase}': ${openaiErr.message}`);
+      logger.warn(`[AI Orchestrator] OpenAI direct failed for '${useCase}': ${openaiErr.message}`);
+
       try {
-        response = await callAnthropic(finalMessages, { max_tokens: maxTokens });
-        source = 'anthropic';
-      } catch (anthropicErr) {
-        logger.warn(`[AI Orchestrator] Anthropic failed for '${useCase}': ${anthropicErr.message}`);
+        response = await callClaude(finalMessages, { max_tokens: maxTokens });
+        source = 'claude';
+      } catch (claudeErr) {
+        logger.warn(`[AI Orchestrator] Claude failed for '${useCase}': ${claudeErr.message}`);
         const fallbackHandler = FALLBACK_HANDLERS[useCase];
         response = fallbackHandler ? fallbackHandler(messages, ctx) : getFallbackResponse('');
         source = 'fallback';

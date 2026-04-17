@@ -1,63 +1,63 @@
+/**
+ * Badge / Tag — standalone component
+ * Replaces ad-hoc inline DaisyUI `.badge` patterns across the app.
+ */
 import PropTypes from 'prop-types';
 
-const variants = {
-  default:  'bg-base-200 text-base-content/80 border border-base-300',
-  primary:  'bg-primary/10 text-primary border border-primary/20',
-  success:  'bg-success/10 text-success border border-success/20',
-  warning:  'bg-warning/10 text-warning border border-warning/20',
-  error:    'bg-error/10 text-error border border-error/20',
-  info:     'bg-info/10 text-info border border-info/20',
-  accent:   'bg-accent/10 text-accent border border-accent/20',
-  outline:  'bg-transparent border border-base-content/30 text-base-content/70',
+const VARIANT_MAP = {
+  primary:  'bg-primary/10  text-primary  border border-primary/20',
+  success:  'bg-success/10  text-success  border border-success/20',
+  warning:  'bg-warning/10  text-warning  border border-warning/20',
+  error:    'bg-error/10    text-error    border border-error/20',
+  info:     'bg-info/10     text-info     border border-info/20',
+  neutral:  'bg-base-200   text-base-content border border-base-300',
+  accent:   'bg-accent/10  text-accent   border border-accent/20',
 };
 
-const sizes = {
-  sm: 'px-1.5 py-0.5 text-[10px]',
-  md: 'px-2.5 py-0.5 text-xs',
-  lg: 'px-3 py-1 text-sm',
+const SIZE_MAP = {
+  sm: 'px-1.5 py-0.5 text-[10px] leading-4',
+  md: 'px-2.5 py-1   text-xs      leading-4',
+  lg: 'px-3   py-1.5 text-sm      leading-5',
 };
 
-/**
- * Badge — inline label for statuses, tags, and counts.
- *
- * @example
- * <Badge variant="success">Active</Badge>
- * <Badge variant="warning" size="sm">Beta</Badge>
- * <Badge variant="error" dot>Alert</Badge>
- */
-const Badge = ({
+export default function Badge({
   children,
-  variant = 'default',
+  variant = 'neutral',
   size = 'md',
   dot = false,
+  icon: Icon,
   className = '',
-  ...props
-}) => {
-  const variantClasses = variants[variant] || variants.default;
-  const sizeClasses    = sizes[size]    || sizes.md;
+}) {
+  const variantClass = VARIANT_MAP[variant] ?? VARIANT_MAP.neutral;
+  const sizeClass = SIZE_MAP[size] ?? SIZE_MAP.md;
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full font-bold ${sizeClasses} ${variantClasses} ${className}`}
-      {...props}
+      className={`inline-flex items-center gap-1 rounded-full font-bold tracking-wide ${variantClass} ${sizeClass} ${className}`}
     >
       {dot && (
         <span
-          className="w-1.5 h-1.5 rounded-full bg-current opacity-80 flex-shrink-0"
+          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+            variant === 'neutral' ? 'bg-base-content/40' : `bg-current opacity-70`
+          }`}
           aria-hidden="true"
         />
       )}
+      {Icon && <Icon size={12} aria-hidden="true" />}
       {children}
     </span>
   );
-};
+}
 
 Badge.propTypes = {
-  children:  PropTypes.node.isRequired,
-  variant:   PropTypes.oneOf(Object.keys(variants)),
-  size:      PropTypes.oneOf(Object.keys(sizes)),
-  dot:       PropTypes.bool,
+  children: PropTypes.node.isRequired,
+  /** Colour variant */
+  variant: PropTypes.oneOf(['primary', 'success', 'warning', 'error', 'info', 'neutral', 'accent']),
+  /** Size */
+  size: PropTypes.oneOf(['sm', 'md', 'lg']),
+  /** Show a leading dot indicator */
+  dot: PropTypes.bool,
+  /** Optional Lucide icon component */
+  icon: PropTypes.elementType,
   className: PropTypes.string,
 };
-
-export default Badge;

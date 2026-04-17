@@ -264,7 +264,7 @@ const PlacesSearch = ({ destination, onPlaceSelect, compact = false }) => {
             {selectedPlace.photos?.[0] && (
               <img 
                 src={selectedPlace.photos[0]} 
-                alt={selectedPlace.name}
+                alt={`Photo of ${selectedPlace.name}`}
                 className="w-full h-48 object-cover"
               />
             )}

@@ -4,7 +4,7 @@ import Button from '../Button';
 import WeatherWidget from '../WeatherWidget';
 import CurrencyConverter from '../CurrencyConverter';
 import PlacesSearch from '../PlacesSearch';
-import TransitDirections from '../TransitDirections';
+import DirectionsPanel from '../DirectionsPanel';
 import AffiliateLinks from '../AffiliateLinks';
 import FlightStatusWidget from '../FlightStatus';
 import FeatureGate from '../FeatureGate';
@@ -234,7 +234,7 @@ function TripSidebar({
 
       {/* Transit Directions */}
       <div className="mt-6">
-        <TransitDirections destination={trip?.destination} />
+        <DirectionsPanel destination={trip?.destination} />
       </div>
 
       {/* Affiliate Links */}

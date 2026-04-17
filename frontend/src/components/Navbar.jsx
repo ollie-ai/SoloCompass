@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useAuthStore } from '../stores/authStore';
 import UserDropdown from './UserDropdown';
@@ -12,7 +12,8 @@ import { useI18n } from '../i18n/I18nProvider';
 import { 
   Menu, X, Compass, LayoutDashboard, Shield, ShieldAlert, 
   Calendar, Users, ChevronRight as CaretRight, MapPin, Plus,
-  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle, Globe
+  Sparkles, HelpCircle, ChevronDown, Home, ChevronRight, MessageCircle,
+  Search,
 } from 'lucide-react';
 
 const PUBLIC_LINKS = [
@@ -83,6 +84,70 @@ const Logo = memo(({ scrolled }) => (
 
 Logo.propTypes = {
   scrolled: PropTypes.bool,
+};
+
+const NavSearch = memo(({ navigate }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+  const inputRef = useRef(null);
+
+  const handleExpand = () => {
+    setExpanded(true);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    trackEvent('navbar_search', { query: q });
+    navigate(`/destinations?q=${encodeURIComponent(q)}`);
+    setQuery('');
+    setExpanded(false);
+  };
+
+  const handleBlur = () => {
+    // Small delay to allow focus to shift to a sibling element (e.g., submit button)
+    // before deciding to collapse, preventing premature collapse on keyboard navigation.
+    setTimeout(() => {
+      if (!query) setExpanded(false);
+    }, 150);
+  };
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={handleExpand}
+        className="p-2 rounded-xl text-base-content/60 hover:bg-base-200 hover:text-base-content transition-colors"
+        aria-label="Search destinations"
+      >
+        <Search size={18} />
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSearch} className="flex items-center">
+      <div className="relative">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40 pointer-events-none" />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onBlur={handleBlur}
+          placeholder="Search destinations…"
+          className="w-52 pl-9 pr-3 py-2 text-sm rounded-xl bg-base-200 border border-base-300 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-medium transition-all"
+          aria-label="Search destinations"
+        />
+      </div>
+    </form>
+  );
+});
+
+NavSearch.propTypes = {
+  navigate: PropTypes.func.isRequired,
 };
 
 const NavLink = memo(({ to, children, isActive, onClick, icon: Icon }) => (
@@ -273,8 +338,10 @@ const Navbar = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-6">
-              <LanguageSelector />
+            <div className="flex items-center gap-3">
+              {isAuthenticated && isAppPage && (
+                <NavSearch navigate={navigate} />
+              )}
               {isAuthenticated && isAppPage && (
                 <NotificationDropdown
                   unreadCount={notificationCount}

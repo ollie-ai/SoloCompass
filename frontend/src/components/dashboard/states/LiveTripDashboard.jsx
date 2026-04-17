@@ -18,6 +18,7 @@ import AdvisorySummaryWidget from '../widgets/AdvisorySummaryWidget'
 import DashboardSkeleton from '../DashboardSkeleton'
 import EsimWidget from '../../EsimWidget'
 import { formatFreshness, getDataFreshness, DATA_HEALTH_STATUS } from '../../../lib/dashboardStatusSystem'
+import QuickActionsBar from '../../QuickActionsBar'
 
 // Widget configuration for the management panel
 const WIDGET_CONFIG = {
@@ -120,6 +121,12 @@ const LiveTripDashboard = ({ trip = null, alerts = [], stats = {}, safetyData = 
           </div>
         }
         tripState="live_trip"
+      />
+
+      {/* Quick actions bar */}
+      <QuickActionsBar
+        onSOS={() => window.location.assign('/safety')}
+        onCheckIn={() => window.location.assign('/safety')}
       />
 
       {/* Widget Management Panel */}

@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { AlertCircle, RefreshCw, Home, ShieldAlert } from 'lucide-react';
 import Button from './Button';
+import { reportError } from '../lib/errorCollector';
 
 class APIErrorBoundary extends React.Component {
   constructor(props) {
@@ -16,6 +17,10 @@ class APIErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     console.error('API Error Boundary caught:', error, errorInfo);
     this.setState({ errorInfo });
+    reportError(error, {
+      context: 'APIErrorBoundary',
+      componentStack: errorInfo?.componentStack,
+    });
   }
 
   handleRetry = () => {

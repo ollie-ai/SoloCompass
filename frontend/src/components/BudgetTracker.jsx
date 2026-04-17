@@ -3,8 +3,7 @@ import { Wallet, Plus, Loader2, Trash2, Edit2, X, TrendingUp, TrendingDown, Down
 import api, { getBudgetSummary } from '../lib/api';
 import toast from 'react-hot-toast';
 import { getErrorMessage } from '../lib/utils';
-import BudgetAlertBanner from './trip/BudgetAlertBanner';
-import DailySpendCard from './trip/DailySpendCard';
+import BudgetOverview from './BudgetOverview';
 
 const CATEGORIES = [
   { key: 'accommodation', label: 'Accommodation', icon: '🏨' },
@@ -283,6 +282,16 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
   }
 
   const spentPercent = Math.min((budget.totalSpent / budget.totalBudget) * 100, 100);
+  const categoryData = CATEGORIES.map((cat) => {
+    const catItems = budget.items?.filter((i) => i.category === cat.key && i.type === 'expense') || [];
+    const catTotal = catItems.reduce((sum, i) => sum + i.amount, 0);
+    return {
+      key: cat.key,
+      label: cat.label,
+      amount: catTotal,
+      icon: cat.icon,
+    };
+  }).filter((item) => item.amount > 0);
 
   return (
     <div className="bg-base-100 rounded-2xl p-8 max-w-lg mx-auto shadow-xl border border-base-200 max-h-[80vh] overflow-hidden flex flex-col">
@@ -364,54 +373,7 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
         </div>
       )}
 
-      {/* Budget Alert Banner */}
-      <div className="mb-4">
-        <BudgetAlertBanner
-          totalBudget={budget.totalBudget}
-          totalSpent={budget.totalSpent}
-          currency={budget.currency}
-        />
-      </div>
-
-      {/* Daily Spend Card */}
-      {(budget.dailyAverage !== null || budget.dailyTarget !== null) && (
-        <div className="mb-4">
-          <DailySpendCard
-            dailyAverage={budget.dailyAverage}
-            dailyTarget={budget.dailyTarget}
-            currency={budget.currency}
-            daysElapsed={budget.daysElapsed}
-            tripDays={budget.tripDays}
-          />
-        </div>
-      )}
-
-      <div className="mb-4">
-        <h3 className="text-sm font-black text-base-content/70 mb-3 uppercase tracking-wider">Spending by Category</h3>
-        <div className="grid grid-cols-2 gap-2">
-          {CATEGORIES.map(cat => {
-            const catItems = budget.items?.filter(i => i.category === cat.key && i.type === 'expense') || [];
-            const catTotal = catItems.reduce((sum, i) => sum + i.amount, 0);
-            const catPercent = budget.totalSpent > 0 ? (catTotal / budget.totalSpent) * 100 : 0;
-            
-            return (
-              <div key={cat.key} className="p-3 bg-base-200 rounded-xl border border-base-200 hover:border-brand-vibrant/30 transition-colors">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg">{cat.icon}</span>
-                  <span className="text-sm font-bold text-base-content/70 truncate">{cat.label}</span>
-                </div>
-                <p className="text-lg font-black text-base-content">{formatCurrency(catTotal, budget.currency)}</p>
-                <div className="h-1.5 bg-base-300 rounded-full mt-2 overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-brand-vibrant to-brand-accent rounded-full"
-                    style={{ width: `${catPercent}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <BudgetOverview categoryData={categoryData} budget={budget} formatCurrency={formatCurrency} />
 
       <div className="flex-1 overflow-y-auto mb-4 pr-2">
         <h3 className="text-sm font-black text-base-content/70 mb-3 uppercase tracking-wider">Recent Transactions</h3>

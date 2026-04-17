@@ -294,32 +294,22 @@ function AdminStats({ period = '30d' }) {
         </div>
       </div>
 
-      {/* Engagement metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top event types */}
+      {/* User Growth Bar Chart */}
+      {stats?.newUsersByDay?.length > 0 && (
         <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6">
-          <h3 className="text-sm font-black text-base-content/60 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <Zap size={14} /> Top engagement events
-          </h3>
-          {topEvents.length > 0 ? (
-            <div className="space-y-2">
-              {topEvents.map((e, idx) => (
-                <div key={idx} className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-base-content/50 w-4 text-right">{idx + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-bold text-base-content truncate">{e.event}</span>
-                      <span className="text-xs font-black text-base-content/60 ml-2 flex-shrink-0">{e.count.toLocaleString()}</span>
-                    </div>
-                    <div className="h-1 bg-base-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-brand-vibrant rounded-full"
-                        style={{ width: `${Math.round((e.count / maxEventCount) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+          <h3 className="text-lg font-black text-base-content mb-1 tracking-tight">New User Signups</h3>
+          <p className="text-xs text-muted mb-5">Daily signups over the selected period</p>
+          <UserGrowthChart data={stats.newUsersByDay} />
+        </div>
+      )}
+
+      <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6">
+        <h3 className="text-lg font-black text-base-content mb-4 tracking-tight">Financial Pulse</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 bg-success/5 rounded-xl border border-success/10 group hover:bg-success/10 transition-all">
+            <div className="text-xs font-bold text-success uppercase tracking-widest flex items-center gap-2">
+               <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></div>
+               Total Revenue
             </div>
           ) : (
             <p className="text-sm text-base-content/40">No event data for this period</p>
@@ -358,23 +348,71 @@ function AdminStats({ period = '30d' }) {
         </div>
       </div>
 
-      {/* Engagement summary row */}
-      <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6">
-        <h3 className="text-sm font-black text-base-content/60 uppercase tracking-widest mb-4 flex items-center gap-2">
-          <Activity size={14} /> Engagement summary
-        </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[
-            { label: 'Active 7d', value: (stats?.engagement?.activeUsers7d ?? 0).toLocaleString(), color: 'text-info' },
-            { label: 'Active 30d', value: (stats?.engagement?.activeUsers30d ?? 0).toLocaleString(), color: 'text-primary' },
-            { label: `Events (${stats?.period ?? analyticsPeriod})`, value: (stats?.engagement?.eventsInPeriod ?? 0).toLocaleString(), color: 'text-warning' },
-            { label: 'Avg events/user', value: stats?.engagement?.avgEventsPerActiveUser ?? 0, color: 'text-success' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="p-4 bg-base-200/40 rounded-xl border border-base-300/50 text-center">
-              <p className={`text-xl font-black ${color}`}>{value}</p>
-              <p className="text-[10px] text-base-content/50 uppercase tracking-widest mt-1 font-bold">{label}</p>
+function UserGrowthChart({ data }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data.map(d => d.count), 1);
+  const barCount = data.length;
+
+  return (
+    <div className="w-full" aria-label="User signups bar chart">
+      <div className="flex items-end gap-0.5 h-24" role="img" aria-label={`Daily signups: max ${max} users/day over ${barCount} days`}>
+        {data.map((d, i) => {
+          const pct = Math.max((d.count / max) * 100, 2);
+          return (
+            <div key={d.day ?? i} className="flex-1 flex flex-col items-center justify-end group relative h-full">
+              <div
+                className="w-full rounded-t-sm bg-primary/70 group-hover:bg-primary transition-all duration-200"
+                style={{ height: `${pct}%` }}
+                aria-hidden="true"
+              />
+              {/* Tooltip on hover */}
+              <div className="absolute bottom-full mb-1 hidden group-hover:flex flex-col items-center pointer-events-none z-10">
+                <div className="bg-base-content text-base-100 text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
+                  {d.count} new{d.day ? ` · ${d.day}` : ''}
+                </div>
+              </div>
             </div>
-          ))}
+          );
+        })}
+      </div>
+      {/* X-axis: show first, middle, and last label */}
+      {data.length >= 2 && (
+        <div className="flex justify-between mt-1.5">
+          <span className="text-[9px] text-muted">{data[0].day}</span>
+          {data.length > 4 && (
+            <span className="text-[9px] text-muted">{data[Math.floor(data.length / 2)]?.day}</span>
+          )}
+          <span className="text-[9px] text-muted">{data[data.length - 1].day}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ title, value, icon, subtitle, trend, color = 'primary' }) {
+  const getIconBg = () => {
+    switch(color) {
+      case 'success': return 'bg-success/10 text-success';
+      case 'warning': return 'bg-warning/10 text-warning';
+      case 'error': return 'bg-error/10 text-error';
+      case 'info': return 'bg-info/10 text-info';
+      default: return 'bg-primary/10 text-primary';
+    }
+  };
+
+  return (
+    <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6 hover:shadow-md transition-all group">
+      <div className="flex items-center justify-between">
+        <div className="flex-1">
+          <p className="text-[10px] font-black text-base-content/40 uppercase tracking-widest mb-1">{title}</p>
+          <div className="flex items-baseline gap-2">
+             <p className="text-2xl font-black text-base-content tracking-tight">{value}</p>
+             {trend && <span className="text-[10px] font-bold text-success">+{trend}</span>}
+          </div>
+          {subtitle && <p className="text-xs text-base-content/50 mt-1 font-medium">{subtitle}</p>}
+        </div>
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl transition-transform group-hover:scale-110 ${getIconBg()}`}>
+          {icon}
         </div>
       </div>
     </div>

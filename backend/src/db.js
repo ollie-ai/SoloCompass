@@ -1266,6 +1266,14 @@ async function initializeDatabase() {
         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Weather cache (DB-backed 30-minute TTL, survives process restarts)
+      CREATE TABLE IF NOT EXISTS weather_cache (
+        cache_key TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL
+      );
+
       -- Analytics sessions
       CREATE TABLE IF NOT EXISTS analytics_sessions (
         id SERIAL PRIMARY KEY,

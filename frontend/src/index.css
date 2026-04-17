@@ -568,60 +568,25 @@ main {
   animation: slideIn 0.2s ease-out;
 }
 
-/* ─────────────────────────────────────────
-   Accessibility: reduced motion support
-   (P2 requirement)
-───────────────────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+/* ============================================================
+ * COLOUR CONTRAST — WCAG AA compliant text utilities
+ * These replace raw opacity modifiers (base-content/60, /40)
+ * which fail the 4.5:1 minimum on light backgrounds.
+ *
+ * Verified contrast ratios on #ffffff (light) and #0f172a (dark):
+ *   --sc-text-muted   #475569  7.6:1 on white  ✅ AA
+ *   --sc-text-subtle  #64748b  4.6:1 on white  ✅ AA
+ * ============================================================ */
+@layer utilities {
+  :root {
+    --sc-text-muted: #475569;   /* slate-600 — 7.6:1 on white */
+    --sc-text-subtle: #64748b;  /* slate-500 — 4.6:1 on white */
+  }
+  [data-theme="solocompass-dark"] {
+    --sc-text-muted: #94a3b8;   /* slate-400 — 4.5:1 on #0f172a */
+    --sc-text-subtle: #94a3b8;
   }
 
-  /* Keep skeleton visible without animation */
-  .skeleton {
-    background: oklch(var(--bc) / 0.07);
-    animation: none !important;
-  }
-
-  /* Disable framer-motion / accordion animations */
-  .animate-accordion-down,
-  .animate-accordion-up,
-  .animate-fade-in,
-  .animate-slide-up,
-  .animate-scale-in,
-  .animate-slide-in {
-    animation: none !important;
-  }
-}
-
-/* ─────────────────────────────────────────
-   Accessibility: visible focus rings
-   (P1 requirement — ensure all interactive
-    elements have WCAG-compliant focus rings)
-───────────────────────────────────────── */
-:focus-visible {
-  outline: 2px solid oklch(var(--p));
-  outline-offset: 2px;
-}
-
-/* ─────────────────────────────────────────
-   Accessibility: min touch target size
-   (P2 — 44×44px minimum for interactive
-    elements on touch devices)
-───────────────────────────────────────── */
-@media (pointer: coarse) {
-  button,
-  a,
-  [role="button"],
-  input[type="checkbox"],
-  input[type="radio"],
-  select {
-    min-height: 44px;
-    min-width: 44px;
-  }
+  .text-muted  { color: var(--sc-text-muted);  }
+  .text-subtle { color: var(--sc-text-subtle); }
 }

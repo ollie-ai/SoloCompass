@@ -119,9 +119,7 @@ async function bootstrap() {
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
-    const { default: featuresRoutes } = await import('./routes/features.js');
-    const { default: referralsRoutes } = await import('./routes/referrals.js');
-    const { default: apiV1Routes } = await import('./routes/apiV1.js');
+    const { default: supportRoutes } = await import('./routes/support.js');
 
     const app = express();
     const server = createServer(app);
@@ -249,7 +247,7 @@ async function bootstrap() {
     app.use('/api/referrals', referralsRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
-    app.use('/api/v1', apiV1Routes);
+    app.use('/api/support', supportRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {

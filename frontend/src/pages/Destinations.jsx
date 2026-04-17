@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import api, { createCancelToken, isCancel } from '../lib/api';
 import Loading from '../components/Loading';
 import SEO from '../components/SEO';
@@ -8,7 +7,8 @@ import PageHeader from '../components/PageHeader';
 import CountryCard from '../components/destinations/CountryCard';
 import CityCard from '../components/destinations/CityCard';
 import SafetyFilterBar from '../components/destinations/SafetyFilterBar';
-import { Globe, MapPin, Sparkles, ChevronRight, ShieldCheck } from 'lucide-react';
+import DestinationGrid from '../components/destinations/DestinationGrid';
+import { Globe, MapPin, Sparkles, ShieldCheck } from 'lucide-react';
 
 // --- Featured group config ---
 const FEATURED_GROUPS = [
@@ -100,8 +100,6 @@ export default function Destinations() {
 
   const countries = filtered.filter(d => d.destination_level === 'country');
   const cities = filtered.filter(d => d.destination_level !== 'country');
-  const hasLevelFilter = filters.level === 'all';
-
   const isFiltered = filters.search || filters.level !== 'all' || filters.advisory !== 'all' || filters.budget !== 'all';
 
   return (
@@ -174,24 +172,15 @@ export default function Destinations() {
                     </h2>
                     <span className="text-xs text-base-content/40 font-medium">{groupDests.length} picks</span>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    <AnimatePresence mode="popLayout">
-                      {groupDests.slice(0, 4).map(dest => (
-                        <motion.div
-                          key={dest.id}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95 }}
-                          transition={{ duration: 0.3 }}
-                        >
-                          {dest.destination_level === 'country'
-                            ? <CountryCard destination={dest} />
-                            : <CityCard destination={dest} />
-                          }
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                  </div>
+                  <DestinationGrid
+                    destinations={groupDests.slice(0, 4)}
+                    className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
+                    renderCard={(dest) => (
+                      dest.destination_level === 'country'
+                        ? <CountryCard destination={dest} />
+                        : <CityCard destination={dest} />
+                    )}
+                  />
                 </section>
               );
             })}
@@ -215,21 +204,11 @@ export default function Destinations() {
                     <span className="text-xs text-base-content/40 font-medium">{countries.length} countries</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  <AnimatePresence mode="popLayout">
-                    {countries.map((dest, i) => (
-                      <motion.div
-                        key={dest.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.3, delay: i * 0.03 }}
-                      >
-                        <CountryCard destination={dest} />
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
+                <DestinationGrid
+                  destinations={countries}
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"
+                  renderCard={(dest) => <CountryCard destination={dest} />}
+                />
               </section>
             )}
 
@@ -247,21 +226,11 @@ export default function Destinations() {
                     <span className="text-xs text-base-content/40 font-medium">{cities.length} cities</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                  <AnimatePresence mode="popLayout">
-                    {cities.map((dest, i) => (
-                      <motion.div
-                        key={dest.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.3, delay: i * 0.02 }}
-                      >
-                        <CityCard destination={dest} />
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
+                <DestinationGrid
+                  destinations={cities}
+                  className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
+                  renderCard={(dest) => <CityCard destination={dest} />}
+                />
               </section>
             )}
 

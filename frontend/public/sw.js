@@ -1,6 +1,15 @@
 /**
  * SoloCompass Service Worker
  * Handles offline caching and provides offline fallback pages
+ *
+ * Caching strategy per resource type:
+ *   Static assets (JS/CSS/fonts/images)  → Cache-first (long-lived)
+ *   HTML pages                           → Network-first, offline fallback
+ *   API: stable data (destinations,      → Network-first, 30-min TTL cache
+ *         advisories, countries)
+ *   API: volatile data (safety, trips,   → Network-first, 5-min TTL cache
+ *         notifications, analytics)
+ *   API: mutation requests (POST/PUT…)   → Network-only (never cached)
  */
 
 const CACHE_NAME = 'solocompass-v2';
@@ -8,6 +17,22 @@ const STATIC_CACHE = 'solocompass-static-v2';
 const DYNAMIC_CACHE = 'solocompass-dynamic-v2';
 const OFFLINE_PAGE = '/offline.html';
 const IS_DEV = self.location.hostname === 'localhost' || self.location.hostname === '127.0.0.1';
+
+// ─── TTL configuration (ms) ───────────────────────────────────────────────
+
+/** Stable endpoints: destination data, advisories, country guides */
+const STABLE_API_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Volatile endpoints: trips, safety, notifications, user profile */
+const VOLATILE_API_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** URL path prefixes treated as "stable" (cache for longer) */
+const STABLE_API_PATTERNS = [
+  '/api/destinations',
+  '/api/advisories',
+  '/api/emergency-numbers',
+  '/api/help',
+];
 
 // Assets to cache immediately on install
 const STATIC_ASSETS = IS_DEV ? [] : [
@@ -53,11 +78,16 @@ self.addEventListener('activate', (event) => {
             })
         )
       })
-      .then(() => self.clients.claim())
+      .then(() => {
+        // Prune stale dynamic-cache entries on activation
+        pruneStaleCache();
+        return self.clients.claim();
+      })
   );
 });
 
-// Fetch event - handle requests
+// ─── Fetch event — routing table ──────────────────────────────────────────
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -68,9 +98,19 @@ self.addEventListener('fetch', (event) => {
   // Skip Chrome extensions and dev tools
   if (url.protocol === 'chrome-extension:') return;
 
-  // API requests - network first, fallback to cache
+  // API requests — routing based on method + path
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirstStrategy(request));
+    // Never cache mutation requests (POST, PUT, PATCH, DELETE)
+    if (request.method !== 'GET') return; // fall through to default browser behaviour
+
+    // Stable endpoints get a 30-minute TTL
+    if (STABLE_API_PATTERNS.some(prefix => url.pathname.startsWith(prefix))) {
+      event.respondWith(timedNetworkFirstStrategy(request, STABLE_API_TTL_MS));
+      return;
+    }
+
+    // All other GET API calls — volatile 5-minute TTL
+    event.respondWith(timedNetworkFirstStrategy(request, VOLATILE_API_TTL_MS));
     return;
   }
 
@@ -95,7 +135,72 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(networkFirstStrategy(request));
 });
 
-// Network First Strategy
+// ─── Caching strategies ───────────────────────────────────────────────────
+
+/**
+ * Network-first with TTL-aware cache fallback.
+ * Stores a `sw-cached-at` header alongside each response so stale entries
+ * can be detected and re-fetched on subsequent visits.
+ *
+ * @param {Request} request
+ * @param {number} ttlMs  Maximum age of a cached response in milliseconds
+ */
+async function timedNetworkFirstStrategy(request, ttlMs) {
+  const cache = await caches.open(DYNAMIC_CACHE);
+
+  try {
+    const networkResponse = await fetch(request);
+
+    if (networkResponse.ok) {
+      // Clone and inject a timestamp header so we can check TTL on cache hit
+      const timestampedResponse = await injectTimestamp(networkResponse.clone());
+      cache.put(request, timestampedResponse);
+    }
+
+    return networkResponse;
+  } catch (_networkError) {
+    // Network failed — try cache, respecting TTL
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+      const cachedAt = parseInt(cachedResponse.headers.get('sw-cached-at') || '0', 10);
+      if (Date.now() - cachedAt < ttlMs) {
+        return cachedResponse;
+      }
+      // Entry is stale — delete it so next visit triggers a fresh fetch
+      cache.delete(request);
+    }
+
+    // Return offline JSON stub for API requests
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'offline',
+        message: 'You are currently offline. Some features may be limited.',
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+}
+
+/**
+ * Clone a response and add a `sw-cached-at` header (epoch ms).
+ * Required because Response headers are immutable, so we rebuild.
+ */
+async function injectTimestamp(response) {
+  const body = await response.arrayBuffer();
+  const headers = new Headers(response.headers);
+  headers.set('sw-cached-at', String(Date.now()));
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/** Original network-first (no TTL, used for non-API fallback) */
 async function networkFirstStrategy(request) {
   try {
     const networkResponse = await fetch(request);
@@ -220,6 +325,35 @@ async function htmlStrategy(request) {
   }
 }
 
+// ─── Cache maintenance ────────────────────────────────────────────────────
+
+/**
+ * Evict any dynamic-cache entries whose `sw-cached-at` timestamp is older
+ * than the longest TTL we use (30 minutes). This keeps the cache lean across
+ * activations without manual intervention.
+ */
+async function pruneStaleCache() {
+  try {
+    const cache = await caches.open(DYNAMIC_CACHE);
+    const keys = await cache.keys();
+    const now = Date.now();
+    const MAX_AGE_MS = STABLE_API_TTL_MS;
+
+    for (const request of keys) {
+      const cached = await cache.match(request);
+      if (!cached) continue;
+      const cachedAt = parseInt(cached.headers.get('sw-cached-at') || '0', 10);
+      if (cachedAt && now - cachedAt > MAX_AGE_MS) {
+        cache.delete(request);
+      }
+    }
+  } catch (_) {
+    // Cache maintenance errors are non-fatal
+  }
+}
+
+// ─── Message handler ──────────────────────────────────────────────────────
+
 // Handle messages from the main app
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') {
@@ -237,7 +371,9 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Background sync event — replay queued push notifications when back online
+// ─── Background sync ──────────────────────────────────────────────────────
+
+// Background sync for offline actions
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-checkins') {
     event.waitUntil(syncPendingCheckins());
@@ -251,9 +387,11 @@ async function syncPendingCheckins() {
   console.log('[SW] Syncing pending check-ins...');
 }
 
-// ─── Offline push queue ────────────────────────────────────────────────────
-// When a push arrives and the device is offline (or no clients are visible)
-// we store it in IndexedDB so it can be replayed when connectivity returns.
+// ─── Push notifications ───────────────────────────────────────────────────
+
+// Push notifications
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
 
 const DB_NAME = 'solocompass-push-queue';
 const DB_STORE = 'pending';

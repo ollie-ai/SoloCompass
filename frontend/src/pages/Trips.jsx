@@ -342,6 +342,7 @@ function Trips() {
         description="Plan and manage all your solo travel adventures on SoloCompass."
       />
       <APIErrorBoundary>
+        <main id="trips-main" aria-label="Your trips">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <PageHeader 
           title={<>Your <span className="text-gradient">Adventures</span></>}
@@ -593,6 +594,7 @@ function Trips() {
           </motion.div>
         )}
       </div>
+      </main>
       </APIErrorBoundary>
 
       <AnimatePresence>

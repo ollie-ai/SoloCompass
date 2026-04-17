@@ -14,6 +14,8 @@ import DestinationTrustStrip from '../components/destinations/DestinationTrustSt
 import DestinationChat from '../components/DestinationChat';
 import PlanGate from '../components/PlanGate';
 import Button from '../components/Button';
+import TravelAdvisoryBanner from '../components/destinations/TravelAdvisoryBanner';
+import Skeleton from '../components/Skeleton';
 import {
   MapPin, ShieldCheck, AlertTriangle, Globe, ArrowLeft, CheckCircle,
   ExternalLink, Sparkles, Sun, Moon, Navigation, BookmarkPlus, Plus
@@ -72,7 +74,33 @@ export default function CityHub() {
     }
   };
 
-  if (loading) return <DashboardShell><div className="flex justify-center py-20"><Loading /></div></DashboardShell>;
+  if (loading) return (
+    <DashboardShell>
+      {/* Skeleton hero */}
+      <div className="skeleton h-64 md:h-72 w-full rounded-none" />
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+        {/* Breadcrumb + title */}
+        <div className="space-y-3">
+          <Skeleton className="h-3 w-48" />
+          <Skeleton className="h-8 w-72" />
+          <Skeleton className="h-4 w-full max-w-xl" />
+          <Skeleton className="h-4 w-4/5 max-w-xl" />
+        </div>
+        {/* Main 3-column grid */}
+        <div className="grid md:grid-cols-3 gap-8">
+          <div className="md:col-span-2 space-y-6">
+            <Skeleton className="h-40 rounded-xl" />
+            <Skeleton className="h-32 rounded-xl" />
+            <Skeleton className="h-48 rounded-xl" />
+          </div>
+          <div className="space-y-4">
+            <Skeleton className="h-56 rounded-xl" />
+            <Skeleton className="h-36 rounded-xl" />
+          </div>
+        </div>
+      </div>
+    </DashboardShell>
+  );
   if (error || !destination) {
     return (
       <DashboardShell>
@@ -150,31 +178,13 @@ export default function CityHub() {
 
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-10">
         {/* Advisory warning */}
-        {advisory_stance && advisory_stance !== 'normal' && (
-          <div className={`p-4 rounded-xl border flex items-start gap-3 text-sm font-medium ${
-            advisory_stance === 'advise_against_all'
-              ? 'border-red-400/40 bg-red-500/5 text-red-700 dark:text-red-400'
-              : advisory_stance === 'advise_against'
-                ? 'border-orange-400/40 bg-orange-500/5 text-orange-700 dark:text-orange-400'
-                : 'border-yellow-400/40 bg-yellow-500/5 text-yellow-700 dark:text-yellow-400'
-          }`}>
-            <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-black uppercase tracking-wide text-xs mb-1">
-                {advisory_stance === 'advise_against_all' ? 'FCDO advises against all travel'
-                  : advisory_stance === 'advise_against' ? 'FCDO advises against some travel'
-                    : 'FCDO: Exercise increased caution'}
-              </p>
-              {advisory_summary && <p className="opacity-90">{advisory_summary}</p>}
-              {fcdo_slug && (
-                <a href={`https://www.gov.uk/foreign-travel-advice/${fcdo_slug}`} target="_blank" rel="noopener noreferrer"
-                  className="underline mt-1 inline-flex items-center gap-1 text-xs">
-                  Full FCDO advisory <ExternalLink size={11} />
-                </a>
-              )}
-            </div>
-          </div>
-        )}
+        <TravelAdvisoryBanner
+          advisoryStance={advisory_stance}
+          advisorySummary={advisory_summary}
+          advisoryCheckedAt={advisory_checked_at}
+          fcdoSlug={fcdo_slug}
+          dismissable
+        />
 
         <div className="grid md:grid-cols-3 gap-8">
           {/* Main content */}

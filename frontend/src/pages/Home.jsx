@@ -17,7 +17,7 @@ const Home = () => {
         title="SoloCompass — Your AI Solo Travel Companion"
         description="Plan safer, smarter solo trips with AI-powered itineraries, real-time safety alerts, and personalized travel guides."
       />
-      <div className="min-h-screen">
+      <main id="home-main">
         <HomeHero />
         <CapabilityChips />
         <StepCards />
@@ -28,7 +28,7 @@ const Home = () => {
         <PricingSection />
         <FAQAccordion />
         <FinalCTA />
-      </div>
+      </main>
     </>
   );
 };

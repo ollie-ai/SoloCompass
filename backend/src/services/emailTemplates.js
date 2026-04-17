@@ -708,7 +708,83 @@ Want to change your email preferences? Manage notifications: ${BRAND.unsubscribe
 © ${new Date().getFullYear()} SoloCompass. All rights reserved.
 Unsubscribe: ${BRAND.unsubscribeUrl}`;
     }
-  }
+  },
+
+  booking_confirmation: {
+    subject: 'Your booking is confirmed — SoloCompass',
+    getHtml: (vars) => {
+      const {
+        name, tripName, bookingType, provider, departureLocation, arrivalLocation,
+        departureDate, confirmationNumber, tripUrl, year = new Date().getFullYear(), unsubscribeUrl = BRAND.unsubscribeUrl,
+      } = vars;
+      const title = [bookingType, provider].filter(Boolean).join(' · ');
+      const checkedSubject = title || 'Booking';
+      return getHeader() + `
+              <h2 style="color: #1e293b; margin: 0 0 8px 0; font-size: 22px; font-weight: 800;">
+                ✈️ Booking Confirmed!
+              </h2>
+              <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                Hi ${name || 'there'}, your <strong>${checkedSubject}</strong> booking for
+                <strong>${tripName || 'your trip'}</strong> has been added to SoloCompass.
+              </p>
+
+              <!-- Booking summary card -->
+              <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin: 0 0 24px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                  ${bookingType ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px; width: 40%;">Booking type</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px; font-weight: 600;">${bookingType}</td>
+                  </tr>` : ''}
+                  ${provider ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px;">Provider</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px; font-weight: 600;">${provider}</td>
+                  </tr>` : ''}
+                  ${departureLocation ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px;">From</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px;">${departureLocation}</td>
+                  </tr>` : ''}
+                  ${arrivalLocation ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px;">To</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px;">${arrivalLocation}</td>
+                  </tr>` : ''}
+                  ${departureDate ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px;">Date</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px; font-weight: 600;">${departureDate}</td>
+                  </tr>` : ''}
+                  ${confirmationNumber ? `<tr>
+                    <td style="padding: 6px 0; color: #64748b; font-size: 13px;">Confirmation ref</td>
+                    <td style="padding: 6px 0; color: #1e293b; font-size: 14px; font-family: monospace; letter-spacing: 0.05em; font-weight: 700;">${confirmationNumber}</td>
+                  </tr>` : ''}
+                </table>
+              </div>
+
+              ${getButton(tripUrl || BRAND.website + '/trips', 'View Trip in SoloCompass')}
+
+              <p style="color: #94a3b8; font-size: 12px; margin: 24px 0 0 0; line-height: 1.6;">
+                Keep all your travel bookings organised in one place — flights, trains, hotels, and more.
+                <br>
+                <a href="${unsubscribeUrl}" style="color: #94a3b8; text-decoration: underline;">Manage notifications</a>
+              </p>
+              ${getFooter()}
+            `;
+    },
+    getText: (vars) => {
+      const {
+        name, tripName, bookingType, provider, departureLocation, arrivalLocation,
+        departureDate, confirmationNumber, tripUrl, unsubscribeUrl = BRAND.unsubscribeUrl,
+      } = vars;
+      return `Booking Confirmed ✈️
+
+Hi ${name || 'there'}, your booking for ${tripName || 'your trip'} has been added to SoloCompass.
+
+${bookingType ? `Type:              ${bookingType}\n` : ''}${provider ? `Provider:          ${provider}\n` : ''}${departureLocation ? `From:              ${departureLocation}\n` : ''}${arrivalLocation ? `To:                ${arrivalLocation}\n` : ''}${departureDate ? `Date:              ${departureDate}\n` : ''}${confirmationNumber ? `Confirmation ref:  ${confirmationNumber}\n` : ''}
+View trip: ${tripUrl || BRAND.website + '/trips'}
+
+Manage notifications: ${unsubscribeUrl}
+
+© ${new Date().getFullYear()} SoloCompass. All rights reserved.`;
+    },
+  },
 };
 
 export const getTemplate = (type) => templates[type];
@@ -833,6 +909,19 @@ Day 4: Food Tour
       { name: 'Costa Rica', description: 'Perfect for adventure seekers' }
     ],
     dashboardUrl: 'https://solocompass.app/dashboard'
+  },
+  booking_confirmation: {
+    name: 'Alex',
+    tripName: 'Tokyo Adventure',
+    bookingType: 'Flight',
+    provider: 'Japan Airlines',
+    departureLocation: 'London Heathrow (LHR)',
+    arrivalLocation: 'Tokyo Narita (NRT)',
+    departureDate: '15 Apr 2026, 10:30',
+    confirmationNumber: 'JL406-ABC123',
+    tripUrl: 'https://solocompass.app/trips/123',
+    year: String(new Date().getFullYear()),
+    unsubscribeUrl: 'https://solocompass.app/settings?tab=notifications',
   }
 });
 

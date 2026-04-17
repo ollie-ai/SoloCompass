@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useAuthStore } from './stores/authStore';
@@ -7,6 +7,7 @@ import { useI18n } from './i18n/I18nProvider';
 import { trackFrontendError } from './lib/errorTracking';
 import { useThemeStore } from './stores/themeStore';
 import { initErrorCollector } from './lib/errorCollector';
+import { initSessionTracking } from './lib/telemetry';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import Layout from './components/Layout';
@@ -44,6 +45,7 @@ const Partnerships = lazy(() => import('./pages/Partnerships'));
 const EmailPreview = lazy(() => import('./pages/EmailPreview'));
 const Safety = lazy(() => import('./pages/Safety'));
 const Help = lazy(() => import('./pages/Help'));
+const Support = lazy(() => import('./pages/Support'));
 const OAuthCallback = lazy(() => import('./pages/OAuthCallback'));
 const Contact = lazy(() => import('./pages/Contact'));
 const About = lazy(() => import('./pages/About'));
@@ -52,8 +54,10 @@ const Features = lazy(() => import('./pages/Features'));
 const FAQ = lazy(() => import('./pages/FAQ'));
 const Blog = lazy(() => import('./pages/Blog'));
 const Pricing = lazy(() => import('./pages/Pricing'));
+const Subscription = lazy(() => import('./pages/Subscription'));
 const SafetyInfo = lazy(() => import('./pages/SafetyInfo'));
 const EmergencyPhrases = lazy(() => import('./pages/EmergencyPhrases'));
+const Phrasebook = lazy(() => import('./pages/Phrasebook'));
 const Translator = lazy(() => import('./pages/Translator'));
 const PinkPath = lazy(() => import('./pages/PinkPath'));
 const CrimeMap = lazy(() => import('./pages/CrimeMap'));
@@ -135,6 +139,7 @@ function App() {
 
   useEffect(() => {
     initErrorCollector();
+    initSessionTracking();
   }, []);
 
   useEffect(() => {
@@ -169,8 +174,8 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/features" element={<Features />} />
             <Route path="/pricing" element={<Pricing />} />
-            <Route path="/faq" element={<FAQ />} />
-            <Route path="/blog" element={<Blog />} />
+            <Route path="/pricing/plans" element={<Pricing />} />
+            <Route path="/subscription" element={<Subscription />} />
             <Route path="/safety-info" element={<SafetyInfo />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -446,6 +451,14 @@ function App() {
             {/* SC-SHARED-05: /phrasebook alias */}
             <Route path="/phrasebook" element={<Navigate to="/safety/emergency-phrases" replace />} />
             <Route
+              path="/phrasebook"
+              element={
+                <ProtectedRoute>
+                  <Phrasebook />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/safety/translator"
               element={
                 <ProtectedRoute>
@@ -502,7 +515,7 @@ function App() {
             <Route path="/cookies" element={<Cookies />} />
             <Route path="/legal" element={<Legal />} />
             <Route path="/help" element={<Help />} />
-            <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
+            <Route path="/support" element={<Support />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/partnerships" element={<Partnerships />} />
             <Route path="/contact" element={<Contact />} />
@@ -512,6 +525,10 @@ function App() {
             <Route path="/guardian/acknowledge/:token" element={<GuardianAcknowledge />} />
             <Route path="/guardian/decline/:token" element={<GuardianDecline />} />
             <Route path="/trips/shared/:shareCode" element={<SharedTrip />} />
+            {/* Deep links — canonical URL aliases that open specific in-app views */}
+            <Route path="/verify" element={<VerifyDeepLink />} />
+            <Route path="/join/:shareCode" element={<JoinDeepLink />} />
+            <Route path="/invite/:token" element={<InviteDeepLink />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
@@ -521,6 +538,26 @@ function App() {
       </BrowserRouter>
     </ErrorBoundary>
   );
+}
+
+/**
+ * Deep-link helpers — resolve URL params and redirect to the correct in-app view.
+ * These routes are the canonical landing points for links sent by email / SMS.
+ */
+function VerifyDeepLink() {
+  const { search } = useLocation();
+  // /verify?token=XXX  →  /login?verify=1&token=XXX  (Login page reads token and calls verify API)
+  return <Navigate to={`/login${search}`} replace />;
+}
+
+function JoinDeepLink() {
+  const { shareCode } = useParams();
+  return <Navigate to={`/trips/shared/${shareCode}`} replace />;
+}
+
+function InviteDeepLink() {
+  const { token } = useParams();
+  return <Navigate to={`/buddies?invite=${token}`} replace />;
 }
 
 function PageTracker() {

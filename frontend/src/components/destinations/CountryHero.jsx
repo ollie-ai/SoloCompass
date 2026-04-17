@@ -164,7 +164,7 @@ export default function CountryHero({ destination, onSave }) {
           {/* Right - Editorial image placeholder */}
           <div className="hidden lg:block aspect-[4/3] rounded-2xl overflow-hidden border border-base-300/50 shadow-2xl">
             {image_url ? (
-              <img src={image_url} alt={`${displayName}`} className="w-full h-full object-cover" />
+              <img src={image_url} alt={`${displayName} editorial photo`} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full bg-gradient-to-br from-brand-vibrant/20 to-base-200 flex items-center justify-center">
                 <Sparkles size={48} className="text-brand-vibrant/30" />

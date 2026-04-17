@@ -45,6 +45,8 @@ const Settings = () => {
     newPassword: '',
     confirmPassword: '',
   });
+  // Field-level error for confirm-password input
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
   const [subscriptionStatus, setSubscriptionStatus] = useState(null);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
   const defaultNotifPrefs = {
@@ -304,8 +306,10 @@ const Settings = () => {
     setSaving(true);
     setError('');
     setSuccess('');
+    setConfirmPasswordError('');
 
     if (passwordData.newPassword !== passwordData.confirmPassword) {
+      setConfirmPasswordError('Passwords do not match');
       setError('New passwords do not match');
       setSaving(false);
       return;
@@ -324,6 +328,7 @@ const Settings = () => {
       });
       setSuccess('Password changed successfully');
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setConfirmPasswordError('');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to change password');
@@ -485,6 +490,11 @@ const Settings = () => {
                     <p className="text-base-content/60 font-medium text-sm">Manage your private identity and core account details.</p>
                   </div>
 
+                  {/* Accessible live region for form-level feedback (profile + security tabs) */}
+                  <div aria-live="assertive" aria-atomic="true" className="sr-only" id="settings-live-region">
+                    {error || success}
+                  </div>
+
                   <div className={cardClass}>
                     <div className="p-6 border-b border-base-300/50 flex items-center justify-between">
                       <h3 className="text-base font-black text-base-content flex items-center gap-2">
@@ -570,6 +580,19 @@ const Settings = () => {
                           icon={<MapPin size={18} />}
                           desc="Used for context in your buddy matches."
                         />
+
+                        {error && activeTab === 'profile' && (
+                          <div role="alert" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 border border-error/20 text-error text-sm font-medium">
+                            <AlertTriangle size={16} className="shrink-0" />
+                            {error}
+                          </div>
+                        )}
+                        {success && activeTab === 'profile' && (
+                          <div role="status" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-success text-sm font-medium">
+                            <CheckCircle size={16} className="shrink-0" />
+                            {success}
+                          </div>
+                        )}
 
                         <div className="flex justify-end pt-2">
                           <button
@@ -833,12 +856,30 @@ const Settings = () => {
                           <Input
                             label="Confirm New Password"
                             type="password"
+                            id="confirm-new-password"
+                            name="confirm-new-password"
                             value={passwordData.confirmPassword}
-                            onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                            onChange={(e) => {
+                              setPasswordData({ ...passwordData, confirmPassword: e.target.value });
+                              if (confirmPasswordError) setConfirmPasswordError('');
+                            }}
                             placeholder="Repeat new password"
+                            error={confirmPasswordError}
                           />
                         </div>
                         <p className="text-xs text-base-content/60 font-medium">Use at least 8 characters, including a number and a symbol.</p>
+                        {error && activeTab === 'security' && (
+                          <div role="alert" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-error/10 border border-error/20 text-error text-sm font-medium">
+                            <AlertTriangle size={16} className="shrink-0" />
+                            {error}
+                          </div>
+                        )}
+                        {success && activeTab === 'security' && (
+                          <div role="status" className="flex items-center gap-2 px-4 py-3 rounded-xl bg-success/10 border border-success/20 text-success text-sm font-medium">
+                            <CheckCircle size={16} className="shrink-0" />
+                            {success}
+                          </div>
+                        )}
                         <div className="flex justify-end pt-2">
                           <button
                             type="submit"
@@ -1007,6 +1048,7 @@ const Settings = () => {
                                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                       <input
                                         type="checkbox"
+                                        aria-label={item.label}
                                         checked={notifPrefs[item.key]}
                                         onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                         className="sr-only peer"
@@ -1044,6 +1086,7 @@ const Settings = () => {
                                   <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                     <input
                                       type="checkbox"
+                                      aria-label={item.label}
                                       checked={notifPrefs[item.key]}
                                       onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                       className="sr-only peer"
@@ -1074,6 +1117,7 @@ const Settings = () => {
                               <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                 <input
                                   type="checkbox"
+                                  aria-label="Buddy Requests"
                                   checked={notifPrefs.buddyRequests}
                                   onChange={(e) => setNotifPrefs({ ...notifPrefs, buddyRequests: e.target.checked })}
                                   className="sr-only peer"
@@ -1114,6 +1158,7 @@ const Settings = () => {
                                   <label className="relative inline-flex items-center cursor-pointer shrink-0">
                                     <input
                                       type="checkbox"
+                                      aria-label={item.label}
                                       checked={notifPrefs[item.key]}
                                       onChange={(e) => setNotifPrefs({ ...notifPrefs, [item.key]: e.target.checked })}
                                       className="sr-only peer"
@@ -1131,10 +1176,11 @@ const Settings = () => {
                             <Clock size={14} /> Reminder Timing
                           </h4>
                           <div className="p-4 bg-base-200 rounded-xl border border-base-300/50">
-                            <label className="block text-sm font-bold text-base-content/70 mb-2">
+                            <label htmlFor="reminder-minutes-before" className="block text-sm font-bold text-base-content/70 mb-2">
                               Check-in reminder before due time
                             </label>
                             <select
+                              id="reminder-minutes-before"
                               value={notifPrefs.reminderMinutesBefore}
                               onChange={(e) => setNotifPrefs({ ...notifPrefs, reminderMinutesBefore: parseInt(e.target.value) })}
                               className="w-full px-4 py-3 rounded-xl border border-base-300 bg-base-100 font-bold text-base-content focus:outline-none focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant"

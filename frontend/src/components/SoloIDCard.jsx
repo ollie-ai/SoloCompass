@@ -75,7 +75,7 @@ const SoloIDCard = ({ data, loading = false, variant = 'compact' }) => {
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-vibrant via-emerald-500 to-brand-accent p-[2px] shadow-2xl">
             <div className="w-full h-full rounded-[14px] bg-slate-900 flex items-center justify-center overflow-hidden border border-white/5">
               {avatarUrl ? (
-                <img src={avatarUrl} alt={name} className="w-full h-full object-cover grayscale-[0.2] group-hover:grayscale-0 transition-all duration-500" />
+                <img src={avatarUrl} alt={`${displayName || name}'s profile photo`} className="w-full h-full object-cover grayscale-[0.2] group-hover:grayscale-0 transition-all duration-500" />
               ) : (
                 <span className="text-2xl font-outfit font-black text-white">{name?.charAt(0) || '?'}</span>
               )}

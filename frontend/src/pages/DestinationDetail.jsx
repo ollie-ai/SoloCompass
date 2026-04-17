@@ -574,7 +574,7 @@ function DestinationDetail() {
                   {buddies.slice(0, 5).map((buddy, i) => (
                     <div key={`buddy-${i}`} className="w-10 h-10 rounded-full border-2 border-white overflow-hidden bg-base-300">
                       {buddy.avatar_url ? (
-                        <img src={buddy.avatar_url} alt={buddy.firstName} className="w-full h-full object-cover" />
+                        <img src={buddy.avatar_url} alt={`${buddy.firstName}'s profile photo`} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center bg-brand-vibrant text-white text-xs font-black">
                           {(buddy.firstName || 'U').charAt(0)}

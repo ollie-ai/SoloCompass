@@ -36,6 +36,12 @@ const AIChat = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  useEffect(() => {
+    const openAtlas = () => setIsOpen(true);
+    window.addEventListener('atlas:open', openAtlas);
+    return () => window.removeEventListener('atlas:open', openAtlas);
+  }, []);
+
   const isPublicPage = ['/', '/login', '/register', '/about', '/features', '/safety-info', '/help', '/terms', '/privacy'].includes(location.pathname);
   const showBottomNav = isAuthenticated && !isPublicPage && isMobile;
   const bottomOffset = showBottomNav ? 'bottom-[calc(4rem+env(safe-area-inset-bottom,0px)+0.5rem)]' : 'bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))]';

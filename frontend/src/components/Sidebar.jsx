@@ -49,7 +49,8 @@ export default function Sidebar({ className = '', onLogout }) {
   const { user, logout } = useAuthStore();
 
   const isActive = (path) =>
-    location.pathname === path || location.pathname.startsWith(path + '/');
+    location.pathname === path ||
+    (path !== '/' && location.pathname.startsWith(path + '/'));
 
   const handleLogout = () => {
     if (onLogout) {

@@ -103,7 +103,11 @@ const NavSearch = memo(({ navigate }) => {
   };
 
   const handleBlur = () => {
-    if (!query) setExpanded(false);
+    // Small delay to allow focus to shift to a sibling element (e.g., submit button)
+    // before deciding to collapse, preventing premature collapse on keyboard navigation.
+    setTimeout(() => {
+      if (!query) setExpanded(false);
+    }, 150);
   };
 
   if (!expanded) {

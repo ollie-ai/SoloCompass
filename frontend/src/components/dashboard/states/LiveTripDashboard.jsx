@@ -123,10 +123,6 @@ const LiveTripDashboard = ({ trip = null, alerts = [], stats = {}, safetyData = 
       <QuickActionsBar
         onSOS={() => window.location.assign('/safety')}
         onCheckIn={() => window.location.assign('/safety')}
-        onAtlas={() => {
-          const atlasBtn = document.querySelector('[aria-label="Open Atlas chat"]');
-          atlasBtn?.click();
-        }}
       />
 
       {/* Widget Management Panel */}

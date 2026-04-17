@@ -35,15 +35,17 @@ const ACTIONS = [
  * Props:
  *  onSOS      — () => void   (opens SOS / emergency panel)
  *  onCheckIn  — () => void   (opens safety check-in)
- *  onAtlas    — () => void   (opens Atlas AI chat)
+ *  onAtlas    — () => void   (opens Atlas AI chat; if omitted a "atlas:open" CustomEvent is dispatched)
  *  className  — extra wrapper classes
  */
 export default function QuickActionsBar({ onSOS, onCheckIn, onAtlas, className = '' }) {
-  const handleClick = (key) => {
-    if (key === 'sos') onSOS?.();
-    else if (key === 'checkin') onCheckIn?.();
-    else if (key === 'atlas') onAtlas?.();
+  const CALLBACKS = {
+    sos: onSOS,
+    checkin: onCheckIn,
+    atlas: onAtlas ?? (() => window.dispatchEvent(new CustomEvent('atlas:open'))),
   };
+
+  const handleClick = (key) => CALLBACKS[key]?.();
 
   return (
     <div className={`flex items-center gap-3 flex-wrap ${className}`} role="toolbar" aria-label="Quick actions">

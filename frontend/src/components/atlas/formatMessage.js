@@ -1,6 +1,9 @@
 import DOMPurify from 'dompurify';
 
-/**
+const DOMPURIFY_CONFIG = {
+  ALLOWED_TAGS: ['strong', 'em', 'b', 'i', 'br'],
+  ALLOWED_ATTR: ['class'],
+};
  * Converts Atlas/markdown-like message content to an array of React elements.
  * @param {string} content
  * @param {boolean} isUser
@@ -100,7 +103,7 @@ export function formatMessage(content, isUser) {
             key={`b-${paraIndex}-${lineIndex}`}
             className={`mb-2 ${isUser ? 'text-emerald-50' : 'text-base-content/80'}`}
             // eslint-disable-next-line react/no-danger
-            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(displayText) }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(displayText, DOMPURIFY_CONFIG) }}
           />,
         );
         return;

@@ -2392,174 +2392,41 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
-  // --- Migration v028: Create trip_places table + schema enhancements ---
-  if (!await hasMigration('v028_trip_places_and_schema')) {
+  // --- Migration v028: Billing improvements (idempotent webhooks, billing columns, usage counters) ---
+  if (!await hasMigration('v028_billing_improvements')) {
     try {
-      // trip_places table (was missing entirely from db.js)
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS trip_places (
+        CREATE TABLE IF NOT EXISTS stripe_processed_events (
           id SERIAL PRIMARY KEY,
-          trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          place_id TEXT,
-          name TEXT NOT NULL,
-          address TEXT,
-          category TEXT DEFAULT 'other' CHECK(category IN ('accommodation','restaurant','attraction','transport','other')),
-          latitude REAL,
-          longitude REAL,
-          status TEXT DEFAULT 'want_to_visit' CHECK(status IN ('want_to_visit','planned','visited','skipped')),
-          visited BOOLEAN GENERATED ALWAYS AS (status = 'visited') STORED,
-          user_rating INTEGER CHECK(user_rating >= 1 AND user_rating <= 5),
-          notes TEXT,
-          visit_date DATE,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          stripe_event_id TEXT UNIQUE NOT NULL,
+          event_type TEXT NOT NULL,
+          processed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_trip_places_trip ON trip_places(trip_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_trip_places_user ON trip_places(user_id)`);
-
-      // trips: add cover_image and live status
-      await pool.query(`ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image TEXT`);
-      await pool.query(`ALTER TABLE trips DROP CONSTRAINT IF EXISTS trips_status_check`);
-      await pool.query(`ALTER TABLE trips ADD CONSTRAINT trips_status_check CHECK(status IN ('draft','planning','confirmed','live','completed','cancelled','archived'))`);
-
-      // trip_shares: add permissions column
-      await pool.query(`ALTER TABLE trip_shares ADD COLUMN IF NOT EXISTS permissions TEXT DEFAULT 'view' CHECK(permissions IN ('view','comment','edit'))`);
-
-      // budgets: add daily_target column
-      await pool.query(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS daily_target REAL`);
-
-      // itinerary_days: add title column
-      await pool.query(`ALTER TABLE itinerary_days ADD COLUMN IF NOT EXISTS title TEXT`);
-
-      logger.info('[Migration v028] trip_places, trips.cover_image, trips.live status, trip_shares.permissions, budgets.daily_target, itinerary_days.title applied');
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_stripe_events_id ON stripe_processed_events(stripe_event_id)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'inactive'`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_cancel_at_period_end BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_interval TEXT DEFAULT 'month'`);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS usage_counters (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          counter_type TEXT NOT NULL,
+          period TEXT NOT NULL,
+          count INTEGER DEFAULT 0,
+          last_reset_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, counter_type, period)
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_usage_counters_user ON usage_counters(user_id, counter_type)`);
+      logger.info('[Migration v028] billing improvements applied');
     } catch (error) {
       logger.warn('[Migration v028] skipped:', error.message);
     }
-    await markMigration('v028_trip_places_and_schema');
-  }
-
-  // --- Migration v029: Journal tables (SC-TRIP-02) ---
-  if (!await hasMigration('v029_journal')) {
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS journal_entries (
-          id SERIAL PRIMARY KEY,
-          trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          title TEXT NOT NULL,
-          content TEXT,
-          mood TEXT CHECK(mood IN ('amazing','good','okay','difficult','terrible')),
-          weather TEXT,
-          location TEXT,
-          latitude REAL,
-          longitude REAL,
-          entry_date DATE DEFAULT CURRENT_DATE,
-          is_private BOOLEAN DEFAULT false,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS journal_photos (
-          id SERIAL PRIMARY KEY,
-          entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          file_url TEXT NOT NULL,
-          caption TEXT,
-          taken_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_journal_entries_trip ON journal_entries(trip_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_journal_entries_user ON journal_entries(user_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(entry_date DESC)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_journal_photos_entry ON journal_photos(entry_id)`);
-      logger.info('[Migration v029] journal_entries and journal_photos tables created');
-    } catch (error) {
-      logger.warn('[Migration v029] skipped:', error.message);
-    }
-    await markMigration('v029_journal');
-  }
-
-  // --- Migration v030: Transport tables (SC-TRIP-04) ---
-  if (!await hasMigration('v030_transport')) {
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS transport_segments (
-          id SERIAL PRIMARY KEY,
-          trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          type TEXT NOT NULL DEFAULT 'flight' CHECK(type IN ('flight','train','bus','ferry','car','taxi','other')),
-          provider TEXT,
-          reference_number TEXT,
-          departure_location TEXT,
-          arrival_location TEXT,
-          departure_datetime TIMESTAMP,
-          arrival_datetime TIMESTAMP,
-          departure_timezone TEXT,
-          arrival_timezone TEXT,
-          seat TEXT,
-          platform TEXT,
-          cost REAL,
-          currency TEXT DEFAULT 'USD',
-          status TEXT DEFAULT 'confirmed' CHECK(status IN ('confirmed','pending','cancelled','completed')),
-          flight_number TEXT,
-          notes TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS boarding_passes (
-          id SERIAL PRIMARY KEY,
-          transport_segment_id INTEGER NOT NULL REFERENCES transport_segments(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          file_url TEXT,
-          barcode_data TEXT,
-          passenger_name TEXT,
-          seat TEXT,
-          gate TEXT,
-          boarding_time TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_transport_trip ON transport_segments(trip_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_transport_user ON transport_segments(user_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_transport_type ON transport_segments(type)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_boarding_passes_segment ON boarding_passes(transport_segment_id)`);
-      logger.info('[Migration v030] transport_segments and boarding_passes tables created');
-    } catch (error) {
-      logger.warn('[Migration v030] skipped:', error.message);
-    }
-    await markMigration('v030_transport');
-  }
-
-  // --- Migration v031: Trip legs table (SC-TRIP-01) ---
-  if (!await hasMigration('v031_trip_legs')) {
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS trip_legs (
-          id SERIAL PRIMARY KEY,
-          trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          title TEXT NOT NULL,
-          destination TEXT,
-          start_date DATE,
-          end_date DATE,
-          leg_order INTEGER DEFAULT 0,
-          notes TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_trip_legs_trip ON trip_legs(trip_id)`);
-      logger.info('[Migration v031] trip_legs table created');
-    } catch (error) {
-      logger.warn('[Migration v031] skipped:', error.message);
-    }
-    await markMigration('v031_trip_legs');
+    await markMigration('v028_billing_improvements');
   }
 
   logger.info('[Migration] All migrations complete');

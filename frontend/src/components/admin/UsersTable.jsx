@@ -5,6 +5,7 @@ import AdminDataTable from './AdminDataTable';
 import AdminModal from './AdminModal';
 import Button from '../Button';
 import UserActivityTimeline from './UserActivityTimeline';
+import ConfirmDialog from '../ConfirmDialog';
 import { 
   User, 
   Edit2, 
@@ -47,6 +48,7 @@ const UsersTable = () => {
   const [gdprLoading, setGdprLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, ids: [] });
   const limit = 10;
 
   useEffect(() => {
@@ -114,15 +116,29 @@ const UsersTable = () => {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this traveler? They will lose all itineraries.')) return;
+  const handleDelete = (id) => {
+    setConfirmDialog({ open: true, action: 'single', ids: [id] });
+  };
+
+  const executeDelete = async () => {
+    const { action, ids } = confirmDialog;
+    setConfirmDialog({ open: false, action: null, ids: [] });
     try {
-      await api.delete(`/users/${id}`);
-      toast.success('User removed');
+      if (action === 'single') {
+        await api.delete(`/users/${ids[0]}`);
+        toast.success('User removed');
+      } else {
+        setLoading(true);
+        await Promise.all(ids.map(id => api.delete(`/users/${id}`)));
+        toast.success(`${ids.length} travelers removed`);
+        setSelectedRows(new Set());
+      }
       fetchUsers();
     } catch (error) {
       const msg = error.response?.data?.error?.message || 'Failed to delete user';
       toast.error(msg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -144,21 +160,9 @@ const UsersTable = () => {
     setSelectedRows(selected);
   };
 
-  const handleBulkDelete = async (selectedIndices) => {
+  const handleBulkDelete = (selectedIndices) => {
     const idsToDelete = selectedIndices.map(idx => users[idx]?.id).filter(Boolean);
-    if (!window.confirm(`Are you sure you want to delete ${idsToDelete.length} travelers? They will lose all itineraries.`)) return;
-    
-    try {
-      setLoading(true);
-      await Promise.all(idsToDelete.map(id => api.delete(`/users/${id}`)));
-      toast.success(`${idsToDelete.length} travelers removed`);
-      setSelectedRows(new Set());
-      fetchUsers();
-    } catch (error) {
-      toast.error('Failed to delete users');
-    } finally {
-      setLoading(false);
-    }
+    setConfirmDialog({ open: true, action: 'bulk', ids: idsToDelete });
   };
 
   const handleBulkRoleChange = async (selectedIndices) => {
@@ -355,6 +359,15 @@ const UsersTable = () => {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmDialog({ open: false, action: null, ids: [] })}
+        title={confirmDialog.action === 'bulk' ? `Delete ${confirmDialog.ids.length} Travelers?` : 'Delete Traveler?'}
+        description="This will permanently delete the account(s) and all associated itineraries. This cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+      />
       <AdminDataTable
         data={users}
         columns={columns}

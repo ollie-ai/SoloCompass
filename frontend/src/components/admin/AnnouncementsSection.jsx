@@ -17,6 +17,7 @@ import {
 import AdminDataTable from './AdminDataTable';
 import AdminModal from './AdminModal';
 import Button from '../Button';
+import ConfirmDialog from '../ConfirmDialog';
 
 const typeConfig = {
   info: { 
@@ -51,6 +52,7 @@ const AnnouncementsSection = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, id: null });
   
   const [formData, setFormData] = useState({
     title: '',
@@ -146,9 +148,13 @@ const AnnouncementsSection = () => {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this announcement?')) return;
+  const handleDelete = (id) => {
+    setConfirmDialog({ open: true, id });
+  };
 
+  const executeDelete = async () => {
+    const id = confirmDialog.id;
+    setConfirmDialog({ open: false, id: null });
     try {
       const response = await api.delete(`/admin/announcements/${id}`);
       if (response.data.success) {
@@ -269,7 +275,15 @@ const AnnouncementsSection = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmDialog({ open: false, id: null })}
+        title="Delete Announcement?"
+        description="This announcement will be permanently deleted and removed for all users."
+        confirmLabel="Delete"
+        variant="danger"
+      />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center">

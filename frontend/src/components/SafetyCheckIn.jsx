@@ -30,6 +30,7 @@ import {
 import toast from 'react-hot-toast';
 import Button from './Button.jsx';
 import api from '../lib/api';
+import ConfirmDialog from './ConfirmDialog';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3005/api';
 
@@ -93,6 +94,7 @@ export default function SafetyCheckIn({ tripId, onClose }) {
   // Active recurring schedule
   const [activeRecurringSchedule, setActiveRecurringSchedule] = useState(null);
   const [recurringLoading, setRecurringLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
 
   const INTERVAL_OPTIONS = [
     { value: '15min', label: 'Every 15 minutes' },
@@ -214,9 +216,13 @@ export default function SafetyCheckIn({ tripId, onClose }) {
     }
   };
 
-  const handleDeleteContact = async (id) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+  const handleDeleteContact = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_contact', id });
+  };
 
+  const executeDeleteContact = async () => {
+    const id = confirmDialog.id;
+    setConfirmDialog({ open: false, action: null });
     try {
       const response = await api.delete(`/emergency-contacts/${id}`);
       if (response.data.success) {
@@ -429,9 +435,13 @@ export default function SafetyCheckIn({ tripId, onClose }) {
     }
   };
 
-  const handleCancelRecurringSchedule = async () => {
+  const handleCancelRecurringSchedule = () => {
     if (!activeRecurringSchedule) return;
-    if (!confirm('Cancel this recurring schedule?')) return;
+    setConfirmDialog({ open: true, action: 'cancel_schedule' });
+  };
+
+  const executeCancelSchedule = async () => {
+    setConfirmDialog({ open: false, action: null });
     try {
       const res = await api.delete(`/checkin/schedule/${activeRecurringSchedule.id}`);
       if (res.data.success) {
@@ -443,6 +453,7 @@ export default function SafetyCheckIn({ tripId, onClose }) {
     } catch (err) {
       setError('Failed to cancel schedule');
     }
+  };
   };
 
   const formatDateTime = (dateString) => {
@@ -530,6 +541,17 @@ export default function SafetyCheckIn({ tripId, onClose }) {
 
   return (
     <div className="bg-base-100 rounded-xl shadow-lg overflow-hidden">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={confirmDialog.action === 'delete_contact' ? executeDeleteContact : executeCancelSchedule}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title={confirmDialog.action === 'delete_contact' ? 'Delete Emergency Contact?' : 'Cancel Recurring Schedule?'}
+        description={confirmDialog.action === 'delete_contact'
+          ? 'This emergency contact will be permanently removed.'
+          : 'Your recurring check-in schedule will be cancelled.'}
+        confirmLabel={confirmDialog.action === 'delete_contact' ? 'Delete Contact' : 'Cancel Schedule'}
+        variant="danger"
+      />
       <div className="bg-gradient-to-r from-brand-vibrant to-green-500 p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../../lib/api';
 import toast from 'react-hot-toast';
+import ConfirmDialog from '../ConfirmDialog';
 import { 
   Monitor, 
   Smartphone, 
@@ -22,6 +23,7 @@ const SessionManagement = () => {
   const [terminating, setTerminating] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, id: null });
 
   useEffect(() => {
     fetchSessions();
@@ -43,31 +45,30 @@ const SessionManagement = () => {
     }
   };
 
-  const handleTerminateSession = async (sessionId) => {
-    if (!confirm('Are you sure you want to terminate this session?')) return;
-    
-    try {
-      setTerminating(sessionId);
-      await api.post(`/admin/sessions/${sessionId}/terminate`);
-      toast.success('Session terminated');
-      fetchSessions();
-    } catch (error) {
-      toast.error('Failed to terminate session');
-    } finally {
-      setTerminating(null);
-    }
+  const handleTerminateSession = (sessionId) => {
+    setConfirmDialog({ open: true, action: 'session', id: sessionId });
   };
 
-  const handleTerminateAllUserSessions = async (userId) => {
-    if (!confirm('Are you sure you want to terminate ALL sessions for this user? They will be logged out immediately.')) return;
-    
+  const handleTerminateAllUserSessions = (userId) => {
+    setConfirmDialog({ open: true, action: 'all_user', id: userId });
+  };
+
+  const executeTerminate = async () => {
+    const { action, id } = confirmDialog;
+    setConfirmDialog({ open: false, action: null, id: null });
     try {
-      setTerminating(`user-${userId}`);
-      await api.post(`/admin/sessions/user/${userId}/terminate-all`);
-      toast.success('All user sessions terminated');
+      if (action === 'session') {
+        setTerminating(id);
+        await api.post(`/admin/sessions/${id}/terminate`);
+        toast.success('Session terminated');
+      } else {
+        setTerminating(`user-${id}`);
+        await api.post(`/admin/sessions/user/${id}/terminate-all`);
+        toast.success('All user sessions terminated');
+      }
       fetchSessions();
     } catch (error) {
-      toast.error('Failed to terminate user sessions');
+      toast.error('Failed to terminate session(s)');
     } finally {
       setTerminating(null);
     }
@@ -119,6 +120,17 @@ const SessionManagement = () => {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={executeTerminate}
+        onCancel={() => setConfirmDialog({ open: false, action: null, id: null })}
+        title={confirmDialog.action === 'all_user' ? 'Terminate All User Sessions?' : 'Terminate Session?'}
+        description={confirmDialog.action === 'all_user'
+          ? 'This will terminate ALL sessions for this user. They will be logged out immediately.'
+          : 'This session will be terminated and the user will be logged out.'}
+        confirmLabel="Terminate"
+        variant="danger"
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

@@ -16,6 +16,7 @@ import SoloIDCard from '../components/SoloIDCard';
 import MatchingProfile from '../components/MatchingProfile';
 import MatchingProfileEdit from '../components/MatchingProfileEdit';
 import VerificationModal from '../components/VerificationModal';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 const itemVariants = {
   hidden: { opacity: 0, y: 12 },
@@ -43,6 +44,7 @@ const Buddies = () => {
   const [activeTab, setActiveTab] = useState('discover');
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [confirmBlockId, setConfirmBlockId] = useState(null);
   const searchRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -132,10 +134,13 @@ const Buddies = () => {
     }
   };
 
-  const handleBlockUser = async (userId) => {
-    if (!window.confirm('Are you sure you want to block this user?')) {
-      return;
-    }
+  const handleBlockUser = (userId) => {
+    setConfirmBlockId(userId);
+  };
+
+  const executeBlockUser = async () => {
+    const userId = confirmBlockId;
+    setConfirmBlockId(null);
     try {
       await api.post(`/matching/block/${userId}`);
       toast.success('User blocked');
@@ -371,6 +376,15 @@ const Buddies = () => {
 
   return (
     <DashboardShell>
+      <ConfirmDialog
+        open={confirmBlockId !== null}
+        onConfirm={executeBlockUser}
+        onCancel={() => setConfirmBlockId(null)}
+        title="Block This User?"
+        description="This user will be blocked and will no longer appear in your matches or be able to contact you."
+        confirmLabel="Block User"
+        variant="danger"
+      />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <PageHeader 
           title={<>Solo <span className="text-gradient">Collective</span></>}

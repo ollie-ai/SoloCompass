@@ -4,6 +4,7 @@ import api from '../lib/api';
 import toast from 'react-hot-toast';
 import Button from './Button';
 import BuddyRequest from './BuddyRequest';
+import ConfirmDialog from './ConfirmDialog';
 
 const TripBuddies = ({ hubMode = false }) => {
   const [buddies, setBuddies] = useState([]);
@@ -12,6 +13,7 @@ const TripBuddies = ({ hubMode = false }) => {
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [requestTarget, setRequestTarget] = useState(null);
   const [filterDestination, setFilterDestination] = useState('');
+  const [confirmBlockId, setConfirmBlockId] = useState(null);
 
   useEffect(() => {
     fetchBuddies();
@@ -38,10 +40,13 @@ const TripBuddies = ({ hubMode = false }) => {
     setShowRequestModal(true);
   };
 
-  const handleBlockUser = async (buddyId) => {
-    if (!window.confirm('Are you sure you want to block this user? They will not be able to see your trips.')) {
-      return;
-    }
+  const handleBlockUser = (buddyId) => {
+    setConfirmBlockId(buddyId);
+  };
+
+  const executeBlockUser = async () => {
+    const buddyId = confirmBlockId;
+    setConfirmBlockId(null);
     try {
       await api.post('/matching/blocks', { userId: buddyId, reason: 'Blocked by user' });
       toast.success('User blocked');
@@ -85,6 +90,15 @@ const TripBuddies = ({ hubMode = false }) => {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmBlockId !== null}
+        onConfirm={executeBlockUser}
+        onCancel={() => setConfirmBlockId(null)}
+        title="Block This User?"
+        description="This user will be blocked and will no longer be able to see your trips or send you buddy requests."
+        confirmLabel="Block User"
+        variant="danger"
+      />
       {!hubMode && (
         <>
           <div className="flex items-center justify-between">

@@ -90,6 +90,7 @@ export default function Safety() {
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState(null);
   const [aiAdviceLoading, setAiAdviceLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -193,8 +194,13 @@ export default function Safety() {
     }
   };
 
-  const handleDeleteContact = async (id) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+  const handleDeleteContact = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_contact', id });
+  };
+
+  const executeDeleteContact = async () => {
+    const id = confirmDialog.id;
+    setConfirmDialog({ open: false, action: null });
     try {
       const response = await api.delete(`/emergency-contacts/${id}`);
       if (response.data.success) {
@@ -396,9 +402,13 @@ export default function Safety() {
     }
   };
 
-  const handleCancelRecurringSchedule = async () => {
+  const handleCancelRecurringSchedule = () => {
     if (!activeRecurringSchedule) return;
-    if (!confirm('Cancel this recurring schedule?')) return;
+    setConfirmDialog({ open: true, action: 'cancel_schedule' });
+  };
+
+  const executeCancelSchedule = async () => {
+    setConfirmDialog({ open: false, action: null });
     try {
       const res = await api.delete(`/checkin/schedule/${activeRecurringSchedule.id}`);
       if (res.data.success) {
@@ -561,6 +571,17 @@ export default function Safety() {
       <SEO
         title="Safety Center"
         description="Manage your emergency contacts, scheduled check-ins, and SOS settings on SoloCompass."
+      />
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={confirmDialog.action === 'delete_contact' ? executeDeleteContact : executeCancelSchedule}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title={confirmDialog.action === 'delete_contact' ? 'Delete Emergency Contact?' : 'Cancel Recurring Schedule?'}
+        description={confirmDialog.action === 'delete_contact'
+          ? 'This emergency contact will be permanently removed.'
+          : 'Your recurring check-in schedule will be cancelled.'}
+        confirmLabel={confirmDialog.action === 'delete_contact' ? 'Delete Contact' : 'Cancel Schedule'}
+        variant="danger"
       />
       <APIErrorBoundary>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">

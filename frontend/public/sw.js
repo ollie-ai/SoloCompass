@@ -238,31 +238,111 @@ self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-checkins') {
     event.waitUntil(syncPendingCheckins());
   }
+  if (event.tag === 'sync-push-queue') {
+    event.waitUntil(processOfflinePushQueue());
+  }
 });
 
 async function syncPendingCheckins() {
   console.log('[SW] Syncing pending check-ins...');
 }
 
+const PUSH_QUEUE_CACHE = 'solocompass-push-queue';
+
+/**
+ * Queue a push notification for later display when back online
+ */
+async function queuePushNotification(data) {
+  try {
+    const cache = await caches.open(PUSH_QUEUE_CACHE);
+    const response = await cache.match('queue');
+    const queue = response ? await response.json() : [];
+    queue.push({ ...data, queuedAt: Date.now() });
+    await cache.put('queue', new Response(JSON.stringify(queue)));
+    console.log('[SW] Push notification queued for offline delivery');
+  } catch (err) {
+    console.error('[SW] Failed to queue push notification:', err);
+  }
+}
+
+/**
+ * Process queued push notifications when back online
+ */
+async function processOfflinePushQueue() {
+  try {
+    const cache = await caches.open(PUSH_QUEUE_CACHE);
+    const response = await cache.match('queue');
+    if (!response) return;
+
+    const queue = await response.json();
+    if (!queue || queue.length === 0) return;
+
+    console.log(`[SW] Processing ${queue.length} queued push notifications`);
+    for (const data of queue) {
+      // Skip stale notifications (older than 24 hours)
+      if (Date.now() - data.queuedAt > 24 * 60 * 60 * 1000) continue;
+      
+      await self.registration.showNotification(data.title || 'SoloCompass', {
+        body: data.body || 'You have a notification',
+        icon: '/logo192.png',
+        badge: '/logo192.png',
+        vibrate: data.vibrate || [100, 50, 100],
+        data: { url: data.url || '/' },
+        actions: data.actions || [],
+        tag: data.tag || undefined,
+      });
+    }
+
+    // Clear queue
+    await cache.put('queue', new Response(JSON.stringify([])));
+    console.log('[SW] Offline push queue cleared');
+  } catch (err) {
+    console.error('[SW] Failed to process offline push queue:', err);
+  }
+}
+
 // Push notifications
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
-  const data = event.data.json();
-  
+  let data;
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data = { title: 'SoloCompass', body: event.data.text() };
+  }
+
   const options = {
     body: data.body || 'You have a new notification',
     icon: '/logo192.png',
     badge: '/logo192.png',
-    vibrate: [100, 50, 100],
+    vibrate: data.silent ? undefined : (data.vibrate || [100, 50, 100]),
+    silent: data.silent || false,
+    tag: data.tag || data.type || undefined,
+    renotify: !!data.tag,
+    requireInteraction: data.priority === 'P0' || data.priority === 'P1',
     data: {
-      url: data.url || '/'
+      url: data.url || '/',
+      type: data.type,
+      notificationId: data.notificationId,
     },
     actions: data.actions || []
   };
 
+  // If offline, also queue for sync when back online
   event.waitUntil(
-    self.registration.showNotification(data.title || 'SoloCompass', options)
+    Promise.all([
+      self.registration.showNotification(data.title || 'SoloCompass', options),
+      // Track for analytics via POST when possible
+      data.notificationId ? fetch('/api/notifications/track-delivery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationId: data.notificationId, status: 'delivered' })
+      }).catch(() => {
+        // Offline - queue for later
+        return queuePushNotification(data);
+      }) : Promise.resolve()
+    ])
   );
 });
 

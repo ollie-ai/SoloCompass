@@ -1,7 +1,11 @@
 import Stripe from 'stripe';
 import db from '../db.js';
 import logger from './logger.js';
-import { dispatchNotification } from './notificationDispatcher.js';
+import { createNotification, getNotificationPreferences } from './notificationService.js';
+import { getChannelsForType, CHANNEL } from './notificationRegistry.js';
+import * as pushService from './pushService.js';
+import * as email from './email.js';
+import { handlePaymentFailure } from './billingService.js';
 
 let stripe;
 
@@ -83,10 +87,13 @@ async function sendBillingNotification(userId, notificationType, title, message,
         break;
         
       case 'invoice.payment_failed':
-        await handleInvoicePaymentFailed(event.data.object);
-        break;
-      case 'invoice.payment_succeeded':
-        await handleInvoicePaymentSucceeded(event.data.object);
+        const failedInvoice = event.data.object;
+        logger.warn(`[STRIPE] Payment failed for invoice: ${failedInvoice.id}`);
+        
+        const failedUser = await db.get('SELECT id FROM users WHERE stripe_customer_id = ?', failedInvoice.customer);
+        if (failedUser) {
+          await handlePaymentFailure(failedUser.id, failedInvoice.id);
+        }
         break;
       default:
         logger.info(`[Stripe] Unhandled event type: ${event.type}`);

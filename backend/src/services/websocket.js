@@ -70,12 +70,9 @@ export function initWebSocketServer(server) {
           await handleCallEnd(ws.userId, message.callId);
         }
 
-        if (message.type === 'message:send') {
-          await handleRealtimeMessageSend(ws.userId, message);
-        }
-
-        if (message.type === 'typing:start' || message.type === 'typing:stop') {
-          await handleRealtimeTyping(ws.userId, message.type, message.conversationId);
+        // Settings sync across devices (P3)
+        if (message.type === 'settings_update') {
+          handleSettingsSync(ws.userId, ws, message);
         }
       } catch (err) {
         logger.error(`[WebSocket] Message error: ${err.message}`);
@@ -141,6 +138,43 @@ export function broadcastToUser(userId, message) {
 
 export function broadcastToUsers(userIds, message) {
   userIds.forEach((userId) => broadcastToUser(userId, message));
+}
+
+/**
+ * Settings sync across devices (P3)
+ * When a user updates settings on one device, broadcast to all other connected devices
+ */
+function handleSettingsSync(userId, senderWs, message) {
+  const clients = userClients.get(userId);
+  if (!clients || clients.size <= 1) return;
+
+  const payload = JSON.stringify({
+    type: 'settings_sync',
+    section: message.section, // e.g. 'privacy', 'units', 'notifications', 'accessibility'
+    data: message.data,
+    updatedAt: new Date().toISOString(),
+  });
+
+  clients.forEach((ws) => {
+    // Send to all devices EXCEPT the one that made the change
+    if (ws !== senderWs && ws.readyState === 1) {
+      ws.send(payload);
+    }
+  });
+
+  logger.info(`[WebSocket] Settings sync broadcast for user ${userId} (section: ${message.section})`);
+}
+
+/**
+ * Broadcast a settings change to all user devices (called from API routes)
+ */
+export function broadcastSettingsUpdate(userId, section, data) {
+  broadcastToUser(userId, {
+    type: 'settings_sync',
+    section,
+    data,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 async function handleCheckinConfirm(userId, scheduledCheckInId) {

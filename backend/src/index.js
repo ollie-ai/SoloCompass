@@ -117,7 +117,7 @@ async function bootstrap() {
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
-    const { default: photosRoutes } = await import('./routes/photos.js');
+    const { default: settingsRoutes } = await import('./routes/settings.js');
 
     const app = express();
     const server = createServer(app);
@@ -235,6 +235,7 @@ async function bootstrap() {
     app.use('/api/guardian', guardianRoutes);
     app.use('/api/calls', callsRoutes);
     app.use('/api/esim', esimRoutes);
+    app.use('/api/v1/settings', settingsRoutes);
     app.use('/api/translate', translateRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);

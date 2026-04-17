@@ -11,6 +11,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { dispatchNotification } from '../services/notificationDispatcher.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
+import { startFreeTrial, changePlan, getUsage, checkTrialExpiry } from '../services/billingService.js';
 
 const billingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -383,6 +384,58 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   } catch (error) {
     logger.error('[Billing] Webhook error:', error.message);
     res.status(400).json({ error: error.message });
+  }
+});
+
+// Free trial endpoint
+router.post('/start-trial', requireAuth, async (req, res) => {
+  try {
+    const result = await startFreeTrial(req.userId);
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: { code: 'TRIAL_ERROR', message: result.error } });
+    }
+    res.json({ success: true, data: result.data });
+  } catch (error) {
+    logger.error(`[Billing] Start trial failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'TRIAL_ERROR', message: 'Failed to start trial' } });
+  }
+});
+
+// Change plan with proration
+router.post('/change-plan', requireAuth, async (req, res) => {
+  try {
+    const { planId } = req.body;
+    if (!planId) return res.status(400).json({ success: false, error: 'Plan ID required' });
+    const result = await changePlan(req.userId, planId);
+    if (!result.success) {
+      return res.status(400).json({ success: false, error: { code: 'PLAN_CHANGE_ERROR', message: result.error } });
+    }
+    res.json({ success: true, data: result.data });
+  } catch (error) {
+    logger.error(`[Billing] Plan change failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'PLAN_CHANGE_ERROR', message: 'Failed to change plan' } });
+  }
+});
+
+// Get usage for current billing period
+router.get('/usage', requireAuth, async (req, res) => {
+  try {
+    const result = await getUsage(req.userId);
+    res.json(result);
+  } catch (error) {
+    logger.error(`[Billing] Get usage failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'USAGE_ERROR', message: 'Failed to get usage data' } });
+  }
+});
+
+// Check trial status
+router.get('/trial-status', requireAuth, async (req, res) => {
+  try {
+    const result = await checkTrialExpiry(req.userId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[Billing] Trial status check failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'TRIAL_ERROR', message: 'Failed to check trial status' } });
   }
 });
 

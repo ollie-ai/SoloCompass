@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import api, { createCancelToken, isCancel } from '../lib/api';
+import api, { createCancelToken, isCancel, duplicateTrip } from '../lib/api';
 import toast from 'react-hot-toast';
 import { getErrorMessage } from '../lib/utils';
 import Skeleton from '../components/Skeleton';
@@ -14,7 +14,7 @@ import { trackEvent } from '../lib/telemetry';
 import { isExplorerTier } from '../lib/subscriptionAccess';
 import { 
   MapPin, Calendar, Sparkles, Plus, 
-  ChevronRight, Clock, Map as MapIcon, Globe, MoreVertical, Trash2, Eye, Shield, Check, Navigation, Wallet
+  ChevronRight, Clock, Map as MapIcon, Globe, MoreVertical, Trash2, Eye, Shield, Check, Navigation, Wallet, Search, Copy, ArrowUpDown
 } from 'lucide-react';
 
 const EXPLORER_ACTIVE_TRIP_LIMIT = 2;
@@ -27,6 +27,8 @@ function Trips() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [filterTab, setFilterTab] = useState('active');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('priority');
   const navigate = useNavigate();
   const cancelSourceRef = useRef(null);
   const menuRef = useRef(null);
@@ -209,12 +211,54 @@ function Trips() {
     return { label: 'View trip', icon: Eye };
   };
 
-  const sortedTrips = [...trips].sort((a, b) => getTripPriority(a) - getTripPriority(b));
+  // Search filter
+  const filteredTrips = trips.filter(t => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (t.name?.toLowerCase().includes(q) || t.destination?.toLowerCase().includes(q));
+  });
+
+  // Sort logic
+  const applySorting = (list) => {
+    if (sortBy === 'name') return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    if (sortBy === 'date') return [...list].sort((a, b) => new Date(b.start_date || 0) - new Date(a.start_date || 0));
+    if (sortBy === 'destination') return [...list].sort((a, b) => (a.destination || '').localeCompare(b.destination || ''));
+    return [...list].sort((a, b) => getTripPriority(a) - getTripPriority(b));
+  };
+
+  const sortedTrips = applySorting(filteredTrips);
   const activeTrips = sortedTrips.filter(t => getTripPriority(t) <= 2);
   const draftTrips = sortedTrips.filter(t => t.status === 'draft' || getTripPriority(t) === 3);
   const pastTrips = sortedTrips.filter(t => getTripPriority(t) >= 10);
   const featuredTrip = activeTrips.length > 0 ? activeTrips[0] : null;
   const remainingActive = featuredTrip ? activeTrips.slice(1) : activeTrips;
+
+  // Duplicate handler
+  const handleDuplicate = async (tripId) => {
+    try {
+      const response = await duplicateTrip(tripId);
+      if (response.data?.id) {
+        toast.success('Trip duplicated!');
+        fetchTrips();
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to duplicate trip'));
+    }
+  };
+
+  // Countdown helper
+  const getTripCountdown = (trip) => {
+    if (!trip.start_date) return null;
+    const start = new Date(trip.start_date);
+    const now = new Date();
+    const end = trip.end_date ? new Date(trip.end_date) : null;
+    if (end && now > end) return null;
+    if (now >= start && end && now <= end) return 'Now';
+    const diff = Math.ceil((start - now) / (1000 * 60 * 60 * 24));
+    if (diff < 0) return null;
+    if (diff === 0) return 'Today';
+    return `${diff}d`;
+  };
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -308,6 +352,35 @@ function Trips() {
             )
           }
         />
+
+        {/* Search & Sort Bar */}
+        {trips.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-8">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search trips by name or destination..."
+                className="w-full pl-10 pr-4 py-3 rounded-xl border border-base-content/10 bg-base-100 focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant outline-none font-bold text-sm text-base-content placeholder:text-base-content/30"
+              />
+            </div>
+            <div className="relative">
+              <ArrowUpDown size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-base-content/30" />
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="pl-9 pr-8 py-3 rounded-xl border border-base-content/10 bg-base-100 font-bold text-sm text-base-content appearance-none cursor-pointer focus:ring-2 focus:ring-brand-vibrant/20 focus:border-brand-vibrant outline-none"
+              >
+                <option value="priority">Priority</option>
+                <option value="name">Name</option>
+                <option value="date">Date</option>
+                <option value="destination">Destination</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {trips.length === 0 ? (
           <motion.div
@@ -474,6 +547,8 @@ function Trips() {
                       setOpenMenuId={setOpenMenuId}
                       setDeleteTarget={setDeleteTarget}
                       menuRef={menuRef}
+                      onDuplicate={handleDuplicate}
+                      countdown={getTripCountdown(trip)}
                     />
                   ))}
                 </div>
@@ -560,7 +635,7 @@ function Trips() {
   );
 }
 
-function TripCard({ trip, getStatusBadge, formatDateRange, getDuration, getCardAction, generateItinerary, generatingItinerary, openMenuId, setOpenMenuId, setDeleteTarget, menuRef }) {
+function TripCard({ trip, getStatusBadge, formatDateRange, getDuration, getCardAction, generateItinerary, generatingItinerary, openMenuId, setOpenMenuId, setDeleteTarget, menuRef, onDuplicate, countdown }) {
   const badge = getStatusBadge(trip.status);
   const action = getCardAction(trip);
   const isOpen = openMenuId === trip.id;
@@ -571,7 +646,16 @@ function TripCard({ trip, getStatusBadge, formatDateRange, getDuration, getCardA
         <div className="absolute inset-0 flex items-center justify-center">
           <Globe size={120} strokeWidth={1} className="text-brand-vibrant/10 group-hover:text-brand-vibrant/20 transition-all duration-700 group-hover:rotate-12 transform" />
         </div>
-        <div className="absolute top-4 right-4 z-10">
+        <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+          {countdown && (
+            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black tracking-premium border uppercase shadow-sm ${
+              countdown === 'Now' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600' :
+              countdown === 'Today' ? 'bg-amber-500/10 border-amber-500/30 text-amber-600' :
+              'bg-blue-500/10 border-blue-500/30 text-blue-600'
+            }`}>
+              <Clock size={10} strokeWidth={3} /> {countdown}
+            </span>
+          )}
           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black tracking-premium border uppercase shadow-sm ${badge.bg} ${badge.border} ${badge.text}`}>
             {badge.label}
           </span>
@@ -654,6 +738,13 @@ function TripCard({ trip, getStatusBadge, formatDateRange, getDuration, getCardA
                   transition={{ duration: 0.15 }}
                   className="absolute right-0 top-full mt-1 w-44 bg-base-100 rounded-xl border border-base-300/60 shadow-[0_8px_30px_-6px_rgba(0,0,0,0.12)] z-20 overflow-hidden"
                 >
+                  <button
+                    onClick={() => { onDuplicate(trip.id); setOpenMenuId(null); }}
+                    className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-base-content/70 hover:bg-base-200 transition-colors"
+                  >
+                    <Copy size={14} />
+                    Duplicate trip
+                  </button>
                   <button
                     onClick={() => { setDeleteTarget(trip.id); setOpenMenuId(null); }}
                     className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-error hover:bg-error/10 transition-colors"

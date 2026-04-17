@@ -1129,6 +1129,85 @@ async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Expenses table (trip-level spending, includes receipt support)
+      CREATE TABLE IF NOT EXISTS expenses (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category TEXT NOT NULL DEFAULT 'other',
+        description TEXT,
+        amount NUMERIC NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        expense_date DATE DEFAULT CURRENT_DATE,
+        receipt_url TEXT,
+        merchant TEXT,
+        ocr_data TEXT,
+        split_with_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        split_ratio NUMERIC DEFAULT 0.5,
+        is_recurring BOOLEAN DEFAULT false,
+        recurring_frequency TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Optional user-defined budget/expense categories per trip
+      CREATE TABLE IF NOT EXISTS expense_categories (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        color TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (trip_id, user_id, name)
+      );
+
+      -- Journal entries for trips
+      CREATE TABLE IF NOT EXISTS journal_entries (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        content TEXT,
+        template_type TEXT DEFAULT 'daily_log' CHECK(template_type IN ('daily_log','highlight','food_review','freeform')),
+        location_name TEXT,
+        latitude NUMERIC,
+        longitude NUMERIC,
+        weather_summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Public sharing for journals
+      CREATE TABLE IF NOT EXISTS journal_shares (
+        id SERIAL PRIMARY KEY,
+        journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+        share_id TEXT UNIQUE NOT NULL,
+        created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Trip templates for quick planning
+      CREATE TABLE IF NOT EXISTS trip_templates (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        itinerary_json TEXT NOT NULL DEFAULT '[]',
+        destination_type TEXT DEFAULT 'city',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Links between saved places and itinerary activities
+      CREATE TABLE IF NOT EXISTS itinerary_place_links (
+        id SERIAL PRIMARY KEY,
+        trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+        activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+        trip_place_id INTEGER NOT NULL REFERENCES trip_places(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (activity_id, trip_place_id)
+      );
+
       -- Notifications table
       CREATE TABLE IF NOT EXISTS notifications (
         id SERIAL PRIMARY KEY,
@@ -1381,6 +1460,12 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_budgets_trip ON budgets(trip_id);
       CREATE INDEX IF NOT EXISTS idx_budget_items_budget ON budget_items(budget_id);
       CREATE INDEX IF NOT EXISTS idx_budget_items_category ON budget_items(category);
+      CREATE INDEX IF NOT EXISTS idx_expenses_trip_user ON expenses(trip_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_journal_entries_trip_user ON journal_entries(trip_id, user_id);
+      CREATE INDEX IF NOT EXISTS idx_journal_shares_share_id ON journal_shares(share_id);
+      CREATE INDEX IF NOT EXISTS idx_trip_templates_destination_type ON trip_templates(destination_type);
+      CREATE INDEX IF NOT EXISTS idx_itinerary_place_links_trip ON itinerary_place_links(trip_id);
       
       -- Extra performance indexes
       CREATE INDEX IF NOT EXISTS idx_sessions_refresh_token ON sessions(refresh_token);
@@ -2298,53 +2383,23 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
-  // --- Migration v028: budget_items conversion columns ---
-  if (!await hasMigration('v028_budget_item_conversion_fields')) {
+  // --- Migration v028: Trip polish schema additions ---
+  if (!await hasMigration('v028_trip_polish_schema')) {
     try {
-      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS converted_amount REAL`);
-      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS exchange_rate REAL DEFAULT 1`);
-      await pool.query(`UPDATE budget_items SET converted_amount = COALESCE(converted_amount, amount), exchange_rate = COALESCE(exchange_rate, 1)`);
-      logger.info('[Migration v028] budget item conversion columns added');
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_url TEXT`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS merchant TEXT`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS ocr_data TEXT`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS split_with_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS split_ratio NUMERIC DEFAULT 0.5`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurring_frequency TEXT`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_expenses_trip_user ON expenses(trip_id, user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_journal_shares_share_id ON journal_shares(share_id)`);
+      logger.info('[Migration v028] trip polish schema applied');
     } catch (error) {
       logger.warn('[Migration v028] skipped:', error.message);
     }
-    await markMigration('v028_budget_item_conversion_fields');
-  }
-
-  // --- Migration v029: users 2FA columns ---
-  if (!await hasMigration('v029_users_two_factor')) {
-    try {
-      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`);
-      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false`);
-      logger.info('[Migration v029] users 2FA columns added');
-    } catch (error) {
-      logger.warn('[Migration v029] skipped:', error.message);
-    }
-    await markMigration('v029_users_two_factor');
-  }
-
-  // --- Migration v030: user_sessions table ---
-  if (!await hasMigration('v030_user_sessions_table')) {
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS user_sessions (
-          id TEXT PRIMARY KEY,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          token_hash TEXT NOT NULL,
-          device_name TEXT,
-          ip_address TEXT,
-          user_agent TEXT,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          last_active_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_last_active ON user_sessions(last_active_at DESC)`);
-      logger.info('[Migration v030] user_sessions table created');
-    } catch (error) {
-      logger.warn('[Migration v030] skipped:', error.message);
-    }
-    await markMigration('v030_user_sessions_table');
+    await markMigration('v028_trip_polish_schema');
   }
 
   logger.info('[Migration] All migrations complete');

@@ -23,4 +23,26 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /exchange-rates?base=GBP&symbols=EUR,USD
+router.get('/rates', async (req, res) => {
+  const base = req.query.base || 'GBP';
+  const symbols = req.query.symbols || '';
+  const url = `https://api.frankfurter.app/latest?base=${encodeURIComponent(base)}${symbols ? `&symbols=${encodeURIComponent(symbols)}` : ''}`;
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    res.json({
+      success: true,
+      data: {
+        base: data.base || base,
+        date: data.date || null,
+        rates: data.rates || {}
+      }
+    });
+  } catch (err) {
+    logger.error(`[Exchange] Rates fetch failed: ${err.message}`);
+    res.status(500).json({ success: false, error: 'Exchange rates fetch failed' });
+  }
+});
+
 export default router;

@@ -1353,8 +1353,36 @@ router.get('/:id/time-weather', requireAuth, async (req, res) => {
   }
 });
 
+// Duplicate a trip
+router.post('/:id/duplicate', tripMutateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const trip = await db.prepare('SELECT * FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+    
+    const newName = `${trip.name} (Copy)`;
+    const result = await db.prepare(`
+      INSERT INTO trips (user_id, name, destination, start_date, end_date, budget, notes, status, vibe_check)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+    `).run(req.userId, newName, trip.destination, trip.start_date, trip.end_date, trip.budget, trip.notes, trip.vibe_check);
+    
+    const newTrip = await db.prepare('SELECT * FROM trips WHERE id = ?').get(result.lastInsertRowid);
+    
+    res.status(201).json({
+      success: true,
+      data: newTrip
+    });
+  } catch (error) {
+    logger.error('Duplicate trip error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to duplicate trip'));
+  }
+});
+
 // Generate a shareable link for a trip
-router.post('/:id/share', requireAuth, async (req, res) => {
+router.post('/:id/share', tripMutateLimiter, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1691,51 +1719,19 @@ router.get('/:id/collaborators', requireAuth, async (req, res) => {
   }
 });
 
-// Calendar export (.ics) for a trip
-router.get('/:id/calendar', requireAuth, calendarExportLimiter, async (req, res) => {
+// Get trip templates
+router.get('/templates/list', async (req, res) => {
   try {
-    const { id } = req.params;
-
-    const trip = await db.prepare(`
-      SELECT id, user_id, name, destination, start_date, end_date, description
-      FROM trips WHERE id = ? AND user_id = ?
-    `).get(id, req.userId);
-
-    if (!trip) {
-      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
-    }
-
-    // Load activities
-    const activities = await db.prepare(`
-      SELECT a.id, a.name, a.description, a.location_name, a.address, a.scheduled_start, a.scheduled_end
-      FROM activities a
-      JOIN itinerary_days d ON a.day_id = d.id
-      WHERE d.trip_id = ?
-      ORDER BY a.scheduled_start ASC NULLS LAST
-    `).all(id);
-
-    // Load cached flights for this trip
-    const flights = await db.prepare(`
-      SELECT flight_number, flight_date, status, raw_data
-      FROM flight_status_cache
-      WHERE trip_id = ?
-      ORDER BY flight_date ASC
-    `).all(id);
-
-    const { buildTripCalendar } = await import('../services/calendarExport.js');
-    const icsContent = buildTripCalendar({
-      ...trip,
-      activities,
-      flights: flights.map(f => ({ ...(f.raw_data || {}), flight_number: f.flight_number }))
-    });
-
-    const filename = `trip-${trip.id}-${(trip.name || 'calendar').replace(/[^a-z0-9]/gi, '-').toLowerCase()}.ics`;
-    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(icsContent);
+    const templates = await db.prepare(`
+      SELECT id, name, description, destination_type, created_at
+      FROM trip_templates
+      ORDER BY created_at DESC
+    `).all();
+    
+    res.json({ success: true, data: templates });
   } catch (error) {
-    logger.error('Calendar export error:', error);
-    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to export calendar'));
+    logger.error('Get trip templates error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to fetch templates'));
   }
 });
 

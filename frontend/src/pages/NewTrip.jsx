@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import api from '../lib/api';
+import api, { getTripTemplates } from '../lib/api';
 import toast from 'react-hot-toast';
 import { trackEvent } from '../lib/telemetry';
-import { Sparkles, Calendar, MapPin, PoundSterling, StickyNote, ArrowLeft, CheckCircle2, AlertCircle, ChevronRight, User, ShieldCheck } from 'lucide-react';
+import { Sparkles, Calendar, MapPin, PoundSterling, StickyNote, ArrowLeft, CheckCircle2, AlertCircle, ChevronRight, User, ShieldCheck, LayoutTemplate, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { getErrorMessage } from '../lib/utils';
 
@@ -13,6 +13,9 @@ function NewTrip() {
   const [loading, setLoading] = useState(false);
   const [travelProfile, setTravelProfile] = useState(null);
   const [errors, setErrors] = useState({});
+  const [serverTemplates, setServerTemplates] = useState([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
   
   const queryParams = new URLSearchParams(location.search);
   const initialDestination = queryParams.get('destination') || '';
@@ -49,6 +52,22 @@ function NewTrip() {
       }
     };
     checkQuizPreReq();
+
+    // Fetch trip templates
+    const fetchTemplates = async () => {
+      setLoadingTemplates(true);
+      try {
+        const res = await getTripTemplates();
+        if (res.success && res.data) {
+          setServerTemplates(Array.isArray(res.data) ? res.data : []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch trip templates:', err);
+      } finally {
+        setLoadingTemplates(false);
+      }
+    };
+    fetchTemplates();
   }, []);
 
   useEffect(() => {
@@ -83,6 +102,32 @@ function NewTrip() {
     Adventure: {
       notes: 'Adventure trip with moderate pace. Include outdoor activities, local experiences, and flexible scheduling.'
     }
+  };
+
+  const TEMPLATE_CARDS = [
+    { id: 'SoloSafe', icon: '🛡️', label: 'Solo Safe', desc: 'Safety-first trip with check-ins', color: 'blue' },
+    { id: 'Adventure', icon: '🏔️', label: 'Adventure', desc: 'Outdoor activities & local gems', color: 'amber' },
+    { id: 'Cultural', icon: '🎭', label: 'Cultural', desc: 'Museums, history & local food', color: 'purple' },
+    { id: 'Relaxation', icon: '🌴', label: 'Relaxation', desc: 'Spa, beach & slow travel', color: 'emerald' },
+  ];
+
+  const handleTemplateSelect = (templateId) => {
+    setSelectedTemplate(templateId);
+    // Apply local template notes if available
+    if (TEMPLATES[templateId]) {
+      setFormData(prev => ({ ...prev, notes: TEMPLATES[templateId].notes }));
+    }
+    // Apply server template if found
+    const serverTpl = serverTemplates.find(t => t.id === templateId || t.name === templateId);
+    if (serverTpl) {
+      setFormData(prev => ({
+        ...prev,
+        name: serverTpl.name ? `${serverTpl.name} Trip` : prev.name,
+        destination: serverTpl.destination || prev.destination,
+        notes: serverTpl.notes || serverTpl.description || prev.notes,
+      }));
+    }
+    trackEvent('template_selected', { template: templateId });
   };
 
   useEffect(() => {
@@ -225,6 +270,60 @@ function NewTrip() {
           >
             <div className="bg-base-100 rounded-xl border border-base-300/60 shadow-[0_2px_12px_-2px_rgba(0,0,0,0.06)] p-6 sm:p-8">
               <form onSubmit={handleSubmit} className="space-y-6">
+
+                {/* Template Selection */}
+                <div className="space-y-3">
+                  <label className="block text-sm font-bold text-base-content/80 flex items-center gap-2">
+                    <LayoutTemplate size={16} className="text-brand-vibrant" />
+                    Start from a template <span className="text-base-content/40 font-medium">(optional)</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {TEMPLATE_CARDS.map((tpl) => (
+                      <button
+                        type="button"
+                        key={tpl.id}
+                        onClick={() => handleTemplateSelect(tpl.id)}
+                        className={`p-4 rounded-xl border-2 text-left transition-all hover:shadow-md ${
+                          selectedTemplate === tpl.id
+                            ? 'border-brand-vibrant bg-brand-vibrant/5 shadow-md shadow-brand-vibrant/10'
+                            : 'border-base-300/60 hover:border-base-content/20'
+                        }`}
+                      >
+                        <span className="text-2xl mb-2 block">{tpl.icon}</span>
+                        <span className="text-sm font-black text-base-content block">{tpl.label}</span>
+                        <span className="text-[11px] text-base-content/50 font-medium">{tpl.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Server templates */}
+                  {serverTemplates.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-bold text-base-content/40 uppercase tracking-wider mb-2">Community Templates</p>
+                      <div className="flex flex-wrap gap-2">
+                        {serverTemplates.map((tpl) => (
+                          <button
+                            type="button"
+                            key={tpl.id}
+                            onClick={() => handleTemplateSelect(tpl.id)}
+                            className={`px-4 py-2 rounded-lg border text-sm font-bold transition-all ${
+                              selectedTemplate === tpl.id
+                                ? 'border-brand-vibrant bg-brand-vibrant/5 text-brand-vibrant'
+                                : 'border-base-300 text-base-content/60 hover:border-base-content/20'
+                            }`}
+                          >
+                            {tpl.name || tpl.title || tpl.id}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {loadingTemplates && (
+                    <div className="flex items-center gap-2 text-xs text-base-content/40">
+                      <Loader2 size={12} className="animate-spin" /> Loading templates...
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1">
                   <label className="block text-sm font-bold text-base-content/80">
                     Trip name <span className="text-red-400">*</span>

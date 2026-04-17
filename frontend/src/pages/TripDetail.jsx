@@ -17,7 +17,9 @@ import api, {
   updateTripPlace, 
   deleteTripPlace,
   exportTripPDF,
-  downloadTripDocument
+  downloadTripDocument,
+  shareTrip,
+  duplicateTrip
 } from '../lib/api';
 import toast from 'react-hot-toast';
 import { getErrorMessage } from '../lib/utils';
@@ -69,7 +71,10 @@ import {
   File,
   CreditCard,
   Armchair,
-  Users
+  Users,
+  Share2,
+  Copy as CopyIcon,
+  BookOpen
 } from 'lucide-react';
 import PackingList from '../components/PackingList';
 import BudgetTracker from '../components/BudgetTracker';
@@ -82,7 +87,7 @@ import TransitDirections from '../components/TransitDirections';
 import AffiliateLinks from '../components/AffiliateLinks';
 import SafetyCheckIn from '../components/SafetyCheckIn';
 import SoloSafetyHub from '../components/SoloSafetyHub';
-import TripMap from '../components/TripMap';
+import TripJournal from '../components/TripJournal';
 import { FEATURES } from '../config/features';
 // import TripItinerary from '../components/trip/TripItinerary';
 // import TripSidebar from '../components/trip/TripSidebar';
@@ -112,8 +117,11 @@ function TripDetail() {
   const [showVersions, setShowVersions] = useState(false);
   const [versions, setVersions] = useState([]);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [showTransport, setShowTransport] = useState(false);
+  const [showJournal, setShowJournal] = useState(false);
+  const [showShareTrip, setShowShareTrip] = useState(false);
+  const [shareLink, setShareLink] = useState(null);
+  const [sharing, setSharing] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const [editTripForm, setEditTripForm] = useState({
     name: '',
@@ -194,6 +202,61 @@ function TripDetail() {
   const handleSafetyCheckIn = () => {
     setShowCheckIn(true);
   };
+
+  const handleShareTrip = async () => {
+    setSharing(true);
+    try {
+      const response = await shareTrip(id);
+      if (response.data?.shareUrl) {
+        const fullUrl = `${window.location.origin}${response.data.shareUrl}`;
+        setShareLink(fullUrl);
+        setShowShareTrip(true);
+        await navigator.clipboard.writeText(fullUrl);
+        toast.success('Share link copied to clipboard!');
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to create share link'));
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleDuplicateTrip = async () => {
+    setDuplicating(true);
+    try {
+      const response = await duplicateTrip(id);
+      if (response.data?.id) {
+        toast.success('Trip duplicated! Redirecting...');
+        navigate(`/trips/${response.data.id}`);
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to duplicate trip'));
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
+  // Escape key to close all modals
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowPackingList(false);
+        setShowBudget(false);
+        setShowCheckIn(false);
+        setShowAccommodation(false);
+        setShowBookings(false);
+        setShowDocuments(false);
+        setShowPlaces(false);
+        setShowEditTrip(false);
+        setShowRegenerate(false);
+        setShowVersions(false);
+        setShowJournal(false);
+        setShowShareTrip(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     fetchTrip();
@@ -743,6 +806,37 @@ function TripDetail() {
     sum + (day.activities?.reduce((daySum, act) => daySum + Number(act.cost || 0), 0) || 0), 0
   ) || 0;
 
+  // Trip countdown
+  const getCountdown = () => {
+    if (!trip?.start_date) return null;
+    const start = new Date(trip.start_date);
+    const now = new Date();
+    const end = trip?.end_date ? new Date(trip.end_date) : null;
+    if (end && now > end) return { label: 'Completed', days: 0, past: true };
+    if (now >= start && end && now <= end) return { label: 'Travelling now!', days: 0, active: true };
+    const diff = Math.ceil((start - now) / (1000 * 60 * 60 * 24));
+    if (diff < 0) return { label: 'Completed', days: 0, past: true };
+    if (diff === 0) return { label: 'Departs today!', days: 0, today: true };
+    return { label: `${diff} day${diff !== 1 ? 's' : ''} to go`, days: diff };
+  };
+
+  // Planning completeness
+  const getPlanningProgress = () => {
+    if (!trip) return 0;
+    let score = 0;
+    let total = 6;
+    if (trip.name) score++;
+    if (trip.destination) score++;
+    if (trip.start_date && trip.end_date) score++;
+    if (trip.budget) score++;
+    if (trip.itinerary?.length > 0) score++;
+    if (trip.notes) score++;
+    return Math.round((score / total) * 100);
+  };
+
+  const countdown = getCountdown();
+  const planningProgress = getPlanningProgress();
+
   const handleAddFlightToTrip = async (flight) => {
     try {
       const activity = {
@@ -823,6 +917,24 @@ function TripDetail() {
               <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border shadow-sm ${getStatusStyle(trip?.status)}`}>
                 {trip?.status}
               </div>
+              {countdown && (
+                <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border shadow-sm ${
+                  countdown.active ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600' :
+                  countdown.today ? 'bg-amber-500/10 border-amber-500/30 text-amber-600' :
+                  countdown.past ? 'bg-base-content/5 border-base-content/10 text-base-content/40' :
+                  'bg-blue-500/10 border-blue-500/30 text-blue-600'
+                }`}>
+                  {countdown.label}
+                </div>
+              )}
+              {planningProgress < 100 && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-base-100 border border-base-content/10 rounded-full shadow-sm">
+                  <div className="w-16 h-1.5 bg-base-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-brand-vibrant rounded-full transition-all" style={{ width: `${planningProgress}%` }} />
+                  </div>
+                  <span className="text-[10px] font-black text-base-content/40">{planningProgress}%</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -858,25 +970,45 @@ function TripDetail() {
           >
             <ShieldCheck size={18} className="mr-2" /> Safety Check-in
           </Button>
+          <Button 
+            onClick={handleShareTrip}
+            disabled={sharing}
+            variant="outline" 
+            className="rounded-xl font-bold border-base-content/10 shadow-sm text-base-content/60"
+          >
+            {sharing ? <Loader2 size={18} className="animate-spin mr-2" /> : <Share2 size={18} className="mr-2" />} Share
+          </Button>
+          <Button 
+            onClick={handleDuplicateTrip}
+            disabled={duplicating}
+            variant="outline" 
+            className="rounded-xl font-bold border-base-content/10 shadow-sm text-base-content/60"
+          >
+            {duplicating ? <Loader2 size={18} className="animate-spin mr-2" /> : <CopyIcon size={18} className="mr-2" />} Duplicate
+          </Button>
         </div>
       </div>
 
       <style>{`
         @page { size: A4 portrait; margin: 20mm; }
         @media print {
-          .no-print, nav, header, footer, aside, .glass-card button, .btn-premium { display: none !important; }
+          .no-print, nav, header, footer, aside, .glass-card button, .btn-premium, [class*="BottomNav"], [class*="fixed"] { display: none !important; }
           .max-w-6xl { max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
           body { background: white !important; font-size: 11pt; padding: 0 !important; }
-          .glass-card { border: 1px solid #ddd !important; box-shadow: none !important; break-inside: avoid; }
+          .glass-card { border: 1px solid #ddd !important; box-shadow: none !important; break-inside: avoid; page-break-inside: avoid; }
+          .grid { display: block !important; }
+          .lg\\:col-span-2 { width: 100% !important; }
           h1, h2, h3, h4 { color: black !important; }
           .text-brand-vibrant { color: #10b981 !important; }
           .text-base-content { color: #0f172a !important; }
+          .space-y-12 > * + * { page-break-before: auto; }
+          a[href]:after { content: none !important; }
         }
       `}</style>
 
-      <div className="grid lg:grid-cols-3 gap-10">
+      <div className="grid lg:grid-cols-3 gap-6 md:gap-10">
         {/* Sidebar Info */}
-        <div className="space-y-8 no-print">
+        <div className="space-y-6 md:space-y-8 no-print order-2 lg:order-1">
           <SoloSafetyHub 
             trip={trip} 
             contacts={contacts} 
@@ -981,6 +1113,23 @@ function TripDetail() {
               </button>
             </FeatureGate>
 
+            {/* Journal Card */}
+            <FeatureGate feature="JOURNAL">
+              <button 
+                onClick={() => setShowJournal(true)}
+                className="w-full p-8 rounded-xl bg-base-200 border-2 border-purple-500/20 shadow-lg hover:shadow-xl hover:border-purple-500/40 transition-all group text-left"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-14 h-14 rounded-xl bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
+                    <BookOpen size={28} className="text-purple-500" />
+                  </div>
+                  <ChevronRight size={20} className="text-purple-500/40 group-hover:translate-x-1 transition-transform" />
+                </div>
+                <h4 className="text-lg font-black text-base-content mb-1">Travel Journal</h4>
+                <p className="text-sm text-base-content/60 font-medium">Capture memories & reflections</p>
+              </button>
+            </FeatureGate>
+
            {/* Accommodation Card */}
            <button 
              onClick={() => setShowAccommodation(true)}
@@ -1029,6 +1178,7 @@ function TripDetail() {
            {/* Saved Places Card */}
            <button 
              onClick={() => setShowPlaces(true)}
+             className="w-full p-8 rounded-xl bg-base-200 border-2 border-violet-500/20 shadow-lg hover:shadow-xl hover:border-violet-500/40 transition-all group text-left"
            >
              <div className="flex items-center justify-between mb-4">
                <div className="w-14 h-14 rounded-xl bg-violet-100 flex items-center justify-center group-hover:bg-violet-200 transition-colors">
@@ -1174,14 +1324,7 @@ function TripDetail() {
         </AnimatePresence>
 
         {/* Itinerary Timeline */}
-        <div className="lg:col-span-2">
-          {/* Trip Map */}
-          {!loading && trip?.itinerary?.length > 0 && (
-            <div className="mb-10">
-              <TripMap trip={trip} />
-            </div>
-          )}
-
+        <div className="lg:col-span-2 order-1 lg:order-2">
           {loading ? (
             <div className="space-y-12">
 {[1,2,3].map(i => (
@@ -2344,28 +2487,49 @@ function TripDetail() {
         </div>
       )}
 
-      {/* Share Trip Modal */}
-      {showShareModal && (
-        <ShareTripModal
-          tripId={id}
-          tripName={trip?.name || ''}
-          onClose={() => setShowShareModal(false)}
-        />
+      {/* Journal Modal */}
+      {showJournal && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-base-100 rounded-3xl shadow-2xl overflow-hidden relative">
+            <TripJournal tripId={id} tripName={trip?.name} onClose={() => setShowJournal(false)} />
+          </div>
+        </div>
       )}
 
-      {/* Transport Timeline Modal */}
-      {showTransport && (
-        <div className="fixed inset-0 z-[200] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-2xl bg-base-100 rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-base-content/10 shrink-0">
-              <h2 className="text-lg font-black">Transport</h2>
-              <button onClick={() => setShowTransport(false)} className="p-1.5 rounded-lg hover:bg-base-200 transition-colors">
-                <X size={18} />
+      {/* Share Trip Modal */}
+      {showShareTrip && shareLink && (
+        <div className="fixed inset-0 z-[200] bg-brand-deep/60 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShowShareTrip(false)}>
+          <div className="w-full max-w-md bg-base-100 rounded-3xl shadow-2xl overflow-hidden relative border border-base-content/10 p-8 animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-brand-vibrant/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Share2 className="text-brand-vibrant" size={32} />
+              </div>
+              <h2 className="text-2xl font-black text-base-content mb-2">Share Your Trip</h2>
+              <p className="text-sm text-base-content/60 font-medium">Anyone with this link can view your itinerary (expires in 7 days)</p>
+            </div>
+            <div className="flex items-center gap-2 p-3 bg-base-200 rounded-xl border border-base-content/10">
+              <input
+                type="text"
+                value={shareLink}
+                readOnly
+                className="flex-1 bg-transparent text-sm font-bold text-base-content outline-none truncate"
+              />
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(shareLink);
+                  toast.success('Link copied!');
+                }}
+                className="p-2 text-brand-vibrant hover:bg-brand-vibrant/10 rounded-lg transition-colors flex-shrink-0"
+              >
+                <CopyIcon size={18} />
               </button>
             </div>
-            <div className="overflow-y-auto p-4">
-              <TransportTimeline tripId={id} />
-            </div>
+            <button
+              onClick={() => setShowShareTrip(false)}
+              className="w-full mt-6 py-3 rounded-xl font-bold text-base-content/60 hover:bg-base-200 transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

@@ -84,6 +84,7 @@ async function bootstrap() {
     const { default: flightRoutes } = await import('./routes/flights.js');
     const { default: currencyRoutes } = await import('./routes/currency.js');
     const { default: placesRoutes } = await import('./routes/places.js');
+    const { default: journalRoutes } = await import('./routes/journal.js');
     const { default: directionsRoutes } = await import('./routes/directions.js');
     const { default: mapsRoutes } = await import('./routes/maps.js');
     const { default: contentRoutes } = await import('./routes/content.js');
@@ -215,6 +216,7 @@ async function bootstrap() {
     app.use('/api/reviews', reviewsRoutes);
     app.use('/api/quiz', quizRoutes);
     app.use('/api/places', placesRoutes);
+    app.use('/api/journal', journalRoutes);
     app.use('/api/directions', directionsRoutes);
     app.use('/api/v1/maps', mapsRoutes);
     app.use('/api/v1/content', contentRoutes);

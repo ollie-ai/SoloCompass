@@ -56,7 +56,7 @@ async function bootstrap() {
     const { startScheduledCheckInMonitor } = await import('./services/checkinMonitor.js');
     const { startCriticalEventQueue } = await import('./services/criticalEventQueue.js');
     const { generateSitemap } = await import('./services/sitemapService.js');
-    const { startHospitalRefreshScheduler } = await import('./services/hospitalsService.js');
+    const { startMonthlyEmergencyNumbersRefresh } = await import('./services/emergencyNumbersService.js');
 
     // route imports
     const { default: authRoutes } = await import('./routes/auth.js');
@@ -103,6 +103,8 @@ async function bootstrap() {
     const { default: searchRoutes } = await import('./routes/search.js');
     const { default: translateRoutes } = await import('./routes/translate.js');
     const { default: helpRoutes } = await import('./routes/help.js');
+    const { default: featuresRoutes } = await import('./routes/features.js');
+    const { default: appVersionRoutes } = await import('./routes/appVersion.js');
     const { default: webhookRoutes } = await import('./routes/webhooks.js');
     const { default: notificationRoutes } = await import('./routes/notifications.js');
     const { default: verificationRoutes } = await import('./routes/verification.js');
@@ -207,6 +209,8 @@ async function bootstrap() {
     app.use('/api/analytics', analyticsRoutes);
     app.use('/api/notifications', notificationRoutes);
     app.use('/api/help', helpRoutes);
+    app.use('/api/features', featuresRoutes);
+    app.use('/api/v1/app', appVersionRoutes);
     app.use('/api/currency', currencyRoutes);
     app.use('/api/weather', weatherRoutes);
     app.use('/api/matching', matchingRoutes);
@@ -243,6 +247,11 @@ async function bootstrap() {
     app.use('/api/reports', reportsRoutes);
     app.use('/api/features', featuresRoutes);
     app.use('/api/onboarding', onboardingRoutes);
+
+    // Versioned API aliases
+    app.use('/api/v1/help', helpRoutes);
+    app.use('/api/v1/features', featuresRoutes);
+    app.use('/api/v1/emergency-numbers', emergencyNumbersRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {
@@ -339,7 +348,7 @@ async function bootstrap() {
         console.log(`\x1b[32m SoloCompass Core Online :: Listening on Port ${PORT} \x1b[0m`);
         initWebSocketServer(server);
         startScheduledCheckInMonitor();
-        startHospitalRefreshScheduler();
+        startMonthlyEmergencyNumbersRefresh();
         generateSitemap().catch(err => logger.error(`[SEO] Sitemap fail: ${err.message}`));
         
         // Automated Production Seeding (Phase 5) - Development only

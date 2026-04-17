@@ -115,6 +115,16 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     
+    <!-- Vercel Analytics (production only, no-op elsewhere) -->
+    <script>
+      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        var va = document.createElement('script');
+        va.defer = true;
+        va.src = '/_vercel/insights/script.js';
+        document.head.appendChild(va);
+      }
+    </script>
+    
     <!-- Service Worker Registration -->
     <script>
       if ('serviceWorker' in navigator) {

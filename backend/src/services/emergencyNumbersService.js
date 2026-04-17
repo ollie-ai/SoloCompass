@@ -4,10 +4,20 @@ import logger from './logger.js';
 
 const EMERGENCY_TYPES = ['police', 'ambulance', 'fire', 'general'];
 
+let emergencyNumbersData = emergencyNumbers;
+let refreshTimer = null;
+let refreshMetadata = {
+  source: 'static-json',
+  lastSuccessfulRefreshAt: null,
+  nextScheduledRefreshAt: null,
+  lastAttemptAt: null,
+  lastError: null,
+};
+
 function normalizeCountryCode(countryCode) {
   if (!countryCode) return null;
   const normalized = countryCode.toUpperCase().trim();
-  if (emergencyNumbers[normalized]) {
+  if (emergencyNumbersData[normalized]) {
     return normalized;
   }
   
@@ -94,11 +104,11 @@ export async function getEmergencyNumbers(countryCode) {
     normalizedCode = getCountryByName(countryCode);
   }
   
-  if (!normalizedCode || !emergencyNumbers[normalizedCode]) {
+  if (!normalizedCode || !emergencyNumbersData[normalizedCode]) {
     return null;
   }
   
-  const data = emergencyNumbers[normalizedCode];
+  const data = emergencyNumbersData[normalizedCode];
   
   return {
     countryCode: normalizedCode,
@@ -113,7 +123,7 @@ export async function getEmergencyNumbers(countryCode) {
 }
 
 export async function getAllEmergencyNumbers() {
-  return emergencyNumbers;
+  return emergencyNumbersData;
 }
 
 export function isAvailable(countryCode) {
@@ -121,7 +131,7 @@ export function isAvailable(countryCode) {
   if (!normalizedCode) {
     normalizedCode = getCountryByName(countryCode);
   }
-  return !!(normalizedCode && emergencyNumbers[normalizedCode]);
+  return !!(normalizedCode && emergencyNumbersData[normalizedCode]);
 }
 
 // Fetch emergency numbers from external API as fallback
@@ -152,8 +162,8 @@ export async function getEmergencyNumbersWithFallback(countryCode) {
   }
   
   // Check local data first
-  if (normalizedCode && emergencyNumbers[normalizedCode]) {
-    const data = emergencyNumbers[normalizedCode];
+  if (normalizedCode && emergencyNumbersData[normalizedCode]) {
+    const data = emergencyNumbersData[normalizedCode];
     return {
       countryCode: normalizedCode,
       source: 'local',
@@ -179,4 +189,110 @@ export async function getEmergencyNumbersWithFallback(countryCode) {
   }
   
   return null;
+}
+
+function computeNextMonthlyRefreshDate(fromDate = new Date()) {
+  const next = new Date(fromDate);
+  next.setUTCDate(1);
+  next.setUTCHours(3, 0, 0, 0);
+  if (next <= fromDate) {
+    next.setUTCMonth(next.getUTCMonth() + 1);
+  }
+  return next;
+}
+
+function scheduleNextMonthlyRefresh() {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+  }
+
+  const nextRun = computeNextMonthlyRefreshDate();
+  refreshMetadata.nextScheduledRefreshAt = nextRun.toISOString();
+  const delay = Math.max(1_000, nextRun.getTime() - Date.now());
+
+  refreshTimer = setTimeout(async () => {
+    await refreshEmergencyNumbersDataset();
+    scheduleNextMonthlyRefresh();
+  }, delay);
+
+  if (refreshTimer.unref) {
+    refreshTimer.unref();
+  }
+}
+
+export async function refreshEmergencyNumbersDataset({ force = false } = {}) {
+  const sourceUrl = process.env.EMERGENCY_NUMBERS_SOURCE_URL;
+  refreshMetadata.lastAttemptAt = new Date().toISOString();
+
+  if (!sourceUrl) {
+    if (force) {
+      logger.warn('[EmergencyNumbers] Forced refresh skipped; EMERGENCY_NUMBERS_SOURCE_URL is not configured');
+    } else {
+      logger.info('[EmergencyNumbers] Monthly refresh check skipped; EMERGENCY_NUMBERS_SOURCE_URL is not configured');
+    }
+    return {
+      refreshed: false,
+      reason: 'source_url_not_configured',
+      metadata: getEmergencyNumbersRefreshMetadata(),
+    };
+  }
+
+  try {
+    const response = await axios.get(sourceUrl, {
+      timeout: Number(process.env.EMERGENCY_NUMBERS_REFRESH_TIMEOUT_MS) || 15000,
+      headers: { Accept: 'application/json' },
+    });
+
+    const incoming = response.data;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      throw new Error('Invalid emergency numbers payload received');
+    }
+
+    emergencyNumbersData = incoming;
+    refreshMetadata = {
+      ...refreshMetadata,
+      source: sourceUrl,
+      lastSuccessfulRefreshAt: new Date().toISOString(),
+      lastError: null,
+    };
+
+    logger.info(`[EmergencyNumbers] Dataset refreshed successfully (${Object.keys(incoming).length} country entries)`);
+    return {
+      refreshed: true,
+      count: Object.keys(incoming).length,
+      metadata: getEmergencyNumbersRefreshMetadata(),
+    };
+  } catch (error) {
+    refreshMetadata.lastError = error.message;
+    logger.error(`[EmergencyNumbers] Dataset refresh failed: ${error.message}`);
+    return {
+      refreshed: false,
+      reason: 'refresh_failed',
+      error: error.message,
+      metadata: getEmergencyNumbersRefreshMetadata(),
+    };
+  }
+}
+
+export function startMonthlyEmergencyNumbersRefresh() {
+  if (refreshMetadata.lastSuccessfulRefreshAt == null) {
+    refreshMetadata.lastSuccessfulRefreshAt = new Date().toISOString();
+  }
+
+  scheduleNextMonthlyRefresh();
+  logger.info(`[EmergencyNumbers] Monthly refresh schedule enabled; next run at ${refreshMetadata.nextScheduledRefreshAt}`);
+}
+
+export function getEmergencyNumbersRefreshMetadata() {
+  const nextRefreshAt = refreshMetadata.nextScheduledRefreshAt
+    ? new Date(refreshMetadata.nextScheduledRefreshAt).getTime()
+    : null;
+  const now = Date.now();
+
+  return {
+    ...refreshMetadata,
+    refreshInterval: 'monthly',
+    nextRefreshInMs: nextRefreshAt ? Math.max(0, nextRefreshAt - now) : null,
+    sourceRecordCount: Object.keys(emergencyNumbersData || {}).length,
+  };
 }

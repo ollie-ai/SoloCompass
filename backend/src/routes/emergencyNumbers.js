@@ -1,7 +1,34 @@
 import express from 'express';
-import { getEmergencyNumbers, getAllEmergencyNumbers, isAvailable } from '../services/emergencyNumbersService.js';
+import {
+  getEmergencyNumbers,
+  getAllEmergencyNumbers,
+  isAvailable,
+  getEmergencyNumbersRefreshMetadata,
+  refreshEmergencyNumbersDataset,
+} from '../services/emergencyNumbersService.js';
+import logger from '../services/logger.js';
 
 const router = express.Router();
+
+router.get('/refresh-status', (req, res) => {
+  res.json({
+    success: true,
+    data: getEmergencyNumbersRefreshMetadata(),
+  });
+});
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const result = await refreshEmergencyNumbersDataset({ force: true });
+    res.status(result.refreshed ? 200 : 202).json({
+      success: result.refreshed,
+      data: result,
+    });
+  } catch (error) {
+    logger.error(`[EmergencyNumbers] Refresh Error: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Refresh failed' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -25,7 +52,7 @@ router.get('/', async (req, res) => {
       countries: allNumbers
     });
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -47,7 +74,7 @@ router.get('/:countryCode', async (req, res) => {
     
     res.json(numbers);
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -58,7 +85,7 @@ router.get('/check/:countryCode', async (req, res) => {
     const available = isAvailable(countryCode);
     res.json({ countryCode, available });
   } catch (error) {
-    console.error('[EmergencyNumbers] Error:', error.message);
+    logger.error(`[EmergencyNumbers] Error: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

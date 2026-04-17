@@ -6,7 +6,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import App from './App.jsx'
 import './i18n'
 import './index.css'
-import { trackWebVitals } from './lib/webVitals'
+import { reportWebVitals } from './hooks/useWebVitals.js'
 
 function ErrorFallback({ error, resetErrorBoundary }) {
   return (
@@ -67,4 +67,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>,
 )
 
-trackWebVitals();
+// Start observing Core Web Vitals (production only, non-blocking)
+reportWebVitals();

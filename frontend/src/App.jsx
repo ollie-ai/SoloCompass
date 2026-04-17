@@ -70,8 +70,7 @@ const TripItineraryPage = lazy(() => import('./pages/TripItineraryPage'));
 const TripPackingPage = lazy(() => import('./pages/TripPackingPage'));
 const TripSharePage = lazy(() => import('./pages/TripSharePage'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
-const FAQ = lazy(() => import('./pages/FAQ'));
-const Changelog = lazy(() => import('./pages/Changelog'));
+const WhatsNew = lazy(() => import('./components/WhatsNew'));
 
 function LoadingFallback() {
   return (
@@ -511,6 +510,7 @@ function App() {
         </Routes>
         </Suspense>
         <BottomNav />
+        <WhatsNew />
       </BrowserRouter>
     </ErrorBoundary>
   );

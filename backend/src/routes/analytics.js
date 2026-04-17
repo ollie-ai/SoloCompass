@@ -60,4 +60,34 @@ router.get('/stats', requireAdmin, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/analytics/vitals
+ * Receive Core Web Vitals measurements from the frontend.
+ */
+router.post('/vitals', optionalAuth, [
+  body('name').isIn(['LCP', 'FID', 'CLS', 'FCP', 'TTFB', 'INP']).withMessage('Invalid metric name'),
+  body('value').isNumeric().withMessage('value must be numeric'),
+  body('rating').optional({ nullable: true }).isIn(['good', 'needs-improvement', 'poor', 'unknown']),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { name, value, rating } = req.body;
+    const userId = req.userId || null;
+
+    logger.info(`[Vitals] ${name}=${value} rating=${rating || 'unknown'} userId=${userId || 'anon'}`);
+
+    // Store as analytics event so it appears in the admin dashboard alongside
+    // other events — no schema change required.
+    await trackEvent(userId, 'web_vital', {
+      metricName: name,
+      metricValue: value,
+      metricRating: rating || 'unknown',
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`[Vitals] Failed to record: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to record vital' } });
+  }
+});
+
 export default router;

@@ -28,6 +28,30 @@ const getEmergencyFlag = ({ subject = '', message = '', category = '' }) => {
   return emergencyKeywords.some((keyword) => text.includes(keyword));
 };
 
+const HELP_ARTICLES = [
+  {
+    id: 'getting-started',
+    title: 'Getting Started with SoloCompass',
+    category: 'Getting Started',
+    excerpt: 'Create your account, set up your profile, and plan your first solo trip.',
+    updatedAt: '2026-01-15T00:00:00.000Z',
+  },
+  {
+    id: 'safety-check-in-guide',
+    title: 'How Safety Check-Ins Work',
+    category: 'Safety',
+    excerpt: 'Learn how automatic check-ins, SOS alerts, and emergency contacts protect your journey.',
+    updatedAt: '2026-02-12T00:00:00.000Z',
+  },
+  {
+    id: 'billing-and-subscriptions',
+    title: 'Billing, Plans, and Subscription Management',
+    category: 'Billing',
+    excerpt: 'Understand available plans, renewals, invoices, and cancellation options.',
+    updatedAt: '2026-03-03T00:00:00.000Z',
+  },
+];
+
 /**
  * GET /api/help/faqs
  * Returns FAQ data for the Help Center
@@ -101,6 +125,18 @@ router.get('/faqs', (req, res) => {
   res.json({
     success: true,
     data: faqs
+  });
+});
+
+/**
+ * GET /api/help/articles
+ * Returns in-app help centre article summaries
+ */
+router.get('/articles', (req, res) => {
+  logger.http(`[Help] GET /articles - Request ID: ${req.id}`);
+  res.json({
+    success: true,
+    data: HELP_ARTICLES,
   });
 });
 

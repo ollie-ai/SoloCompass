@@ -2348,53 +2348,310 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
-  if (!await hasMigration('v028_content_hub')) {
+  // --- Migration v028: safety_scores ---
+  if (!await hasMigration('v028_safety_scores')) {
     try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS content_guides (
-          id SERIAL PRIMARY KEY,
-          slug TEXT UNIQUE NOT NULL,
-          title TEXT NOT NULL,
-          excerpt TEXT,
-          content TEXT,
-          category TEXT DEFAULT 'general',
-          tags TEXT DEFAULT '[]',
-          destination TEXT,
-          country TEXT,
-          cover_image TEXT,
-          author TEXT DEFAULT 'SoloCompass Team',
-          read_time_minutes INTEGER DEFAULT 5,
-          is_published BOOLEAN DEFAULT true,
-          view_count INTEGER DEFAULT 0,
-          version INTEGER DEFAULT 1,
-          published_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_guides_slug ON content_guides(slug)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_content_guides_category ON content_guides(category)`);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS content_tips (
-          id SERIAL PRIMARY KEY,
-          title TEXT NOT NULL,
-          content TEXT NOT NULL,
-          category TEXT DEFAULT 'general',
-          tags TEXT DEFAULT '[]',
-          difficulty TEXT DEFAULT 'beginner' CHECK(difficulty IN ('beginner', 'intermediate', 'advanced')),
-          is_published BOOLEAN DEFAULT true,
-          helpful_count INTEGER DEFAULT 0,
-          version INTEGER DEFAULT 1,
-          published_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      logger.info('[Migration v028] content_guides and content_tips tables created');
+      await pool.query(`CREATE TABLE IF NOT EXISTS safety_scores (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        overall DECIMAL(4,1),
+        women DECIMAL(4,1),
+        lgbtq DECIMAL(4,1),
+        night DECIMAL(4,1),
+        solo DECIMAL(4,1),
+        last_updated TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(destination_id)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_safety_scores_destination ON safety_scores(destination_id)`);
+      logger.info('[Migration v028] safety_scores table created');
     } catch (error) {
       logger.warn('[Migration v028] skipped:', error.message);
     }
-    await markMigration('v028_content_hub');
+    await markMigration('v028_safety_scores');
+  }
+
+  // --- Migration v029: destination_practical_info ---
+  if (!await hasMigration('v029_destination_practical_info')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS destination_practical_info (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        visa_notes TEXT,
+        visa_on_arrival BOOLEAN DEFAULT false,
+        e_visa_available BOOLEAN DEFAULT false,
+        vaccines TEXT,
+        recommended_vaccines TEXT,
+        power_socket TEXT,
+        voltage INTEGER,
+        frequency INTEGER,
+        currency_code VARCHAR(10),
+        currency_name TEXT,
+        atm_availability TEXT,
+        card_acceptance TEXT,
+        language TEXT,
+        english_spoken TEXT,
+        driving_side VARCHAR(5),
+        emergency_number VARCHAR(20),
+        police_number VARCHAR(20),
+        ambulance_number VARCHAR(20),
+        fire_number VARCHAR(20),
+        water_safety TEXT,
+        tap_water_safe BOOLEAN DEFAULT false,
+        internet_quality TEXT,
+        sim_card_info TEXT,
+        tipping_culture TEXT,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(destination_id)
+      )`);
+      logger.info('[Migration v029] destination_practical_info table created');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_destination_practical_info');
+  }
+
+  // --- Migration v030: destination_cost_data ---
+  if (!await hasMigration('v030_destination_cost_data')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS destination_cost_data (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        category VARCHAR(100) NOT NULL,
+        budget_low DECIMAL(10,2),
+        budget_mid DECIMAL(10,2),
+        budget_high DECIMAL(10,2),
+        currency_code VARCHAR(10) DEFAULT 'USD',
+        notes TEXT,
+        UNIQUE(destination_id, category)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_cost_data_destination ON destination_cost_data(destination_id)`);
+      logger.info('[Migration v030] destination_cost_data table created');
+    } catch (error) {
+      logger.warn('[Migration v030] skipped:', error.message);
+    }
+    await markMigration('v030_destination_cost_data');
+  }
+
+  // --- Migration v031: weather_cache ---
+  if (!await hasMigration('v031_weather_cache')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS weather_cache (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        month INTEGER CHECK(month BETWEEN 1 AND 12),
+        temp_high DECIMAL(5,2),
+        temp_low DECIMAL(5,2),
+        rainfall DECIMAL(8,2),
+        humidity INTEGER,
+        description TEXT,
+        cached_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(destination_id, month)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_weather_cache_destination ON weather_cache(destination_id)`);
+      logger.info('[Migration v031] weather_cache table created');
+    } catch (error) {
+      logger.warn('[Migration v031] skipped:', error.message);
+    }
+    await markMigration('v031_weather_cache');
+  }
+
+  // --- Migration v032: destination_routes ---
+  if (!await hasMigration('v032_destination_routes')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS destination_routes (
+        id SERIAL PRIMARY KEY,
+        from_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        to_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        transport_type VARCHAR(50),
+        duration_minutes INTEGER,
+        cost_low DECIMAL(10,2),
+        cost_high DECIMAL(10,2),
+        currency_code VARCHAR(10) DEFAULT 'USD',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_destination_routes_from ON destination_routes(from_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_destination_routes_to ON destination_routes(to_id)`);
+      logger.info('[Migration v032] destination_routes table created');
+    } catch (error) {
+      logger.warn('[Migration v032] skipped:', error.message);
+    }
+    await markMigration('v032_destination_routes');
+  }
+
+  // --- Migration v033: destination_tags ---
+  if (!await hasMigration('v033_destination_tags')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS destination_tags (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        tag VARCHAR(100) NOT NULL,
+        tag_type VARCHAR(50) DEFAULT 'general',
+        UNIQUE(destination_id, tag)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_destination_tags_destination ON destination_tags(destination_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_destination_tags_tag ON destination_tags(tag)`);
+      logger.info('[Migration v033] destination_tags table created');
+    } catch (error) {
+      logger.warn('[Migration v033] skipped:', error.message);
+    }
+    await markMigration('v033_destination_tags');
+  }
+
+  // --- Migration v034: review_reports ---
+  if (!await hasMigration('v034_review_reports')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS review_reports (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        review_id INTEGER REFERENCES reviews(id) ON DELETE CASCADE,
+        reason VARCHAR(100) NOT NULL,
+        details TEXT,
+        status VARCHAR(20) DEFAULT 'pending' CHECK(status IN ('pending','reviewed','dismissed')),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, review_id)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_reports_review ON review_reports(review_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_review_reports_status ON review_reports(status)`);
+      logger.info('[Migration v034] review_reports table created');
+    } catch (error) {
+      logger.warn('[Migration v034] skipped:', error.message);
+    }
+    await markMigration('v034_review_reports');
+  }
+
+  // --- Migration v035: community_tips ---
+  if (!await hasMigration('v035_community_tips')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS community_tips (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        category VARCHAR(100) DEFAULT 'general',
+        content TEXT NOT NULL,
+        upvotes INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'active' CHECK(status IN ('active','hidden','removed')),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_community_tips_destination ON community_tips(destination_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_community_tips_user ON community_tips(user_id)`);
+      logger.info('[Migration v035] community_tips table created');
+    } catch (error) {
+      logger.warn('[Migration v035] skipped:', error.message);
+    }
+    await markMigration('v035_community_tips');
+  }
+
+  // --- Migration v036: emergency_services ---
+  if (!await hasMigration('v036_emergency_services')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS emergency_services (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        service_type VARCHAR(50) NOT NULL,
+        name TEXT,
+        number VARCHAR(30),
+        address TEXT,
+        lat DECIMAL(10,7),
+        lng DECIMAL(10,7),
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_emergency_services_destination ON emergency_services(destination_id)`);
+      logger.info('[Migration v036] emergency_services table created');
+    } catch (error) {
+      logger.warn('[Migration v036] skipped:', error.message);
+    }
+    await markMigration('v036_emergency_services');
+  }
+
+  // --- Migration v037: safety_areas_table ---
+  if (!await hasMigration('v037_safety_areas_table')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS safety_areas (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        area_name TEXT NOT NULL,
+        lat DECIMAL(10,7),
+        lng DECIMAL(10,7),
+        radius_meters INTEGER DEFAULT 500,
+        risk_level VARCHAR(20) DEFAULT 'medium' CHECK(risk_level IN ('low','medium','high','very_high')),
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_safety_areas_destination ON safety_areas(destination_id)`);
+      logger.info('[Migration v037] safety_areas table created');
+    } catch (error) {
+      logger.warn('[Migration v037] skipped:', error.message);
+    }
+    await markMigration('v037_safety_areas_table');
+  }
+
+  // --- Migration v038: safety_scams ---
+  if (!await hasMigration('v038_safety_scams')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS safety_scams (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        severity VARCHAR(20) DEFAULT 'medium' CHECK(severity IN ('low','medium','high')),
+        area TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_safety_scams_destination ON safety_scams(destination_id)`);
+      logger.info('[Migration v038] safety_scams table created');
+    } catch (error) {
+      logger.warn('[Migration v038] skipped:', error.message);
+    }
+    await markMigration('v038_safety_scams');
+  }
+
+  // --- Migration v039: travel_advisories ---
+  if (!await hasMigration('v039_travel_advisories')) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS travel_advisories (
+        id SERIAL PRIMARY KEY,
+        destination_id INTEGER REFERENCES destinations(id) ON DELETE CASCADE,
+        source VARCHAR(50) DEFAULT 'fcdo',
+        level INTEGER CHECK(level BETWEEN 1 AND 4),
+        level_label TEXT,
+        description TEXT,
+        url TEXT,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(destination_id, source)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_travel_advisories_destination ON travel_advisories(destination_id)`);
+      logger.info('[Migration v039] travel_advisories table created');
+    } catch (error) {
+      logger.warn('[Migration v039] skipped:', error.message);
+    }
+    await markMigration('v039_travel_advisories');
+  }
+
+  // --- Migration v040: reviews_visited_date ---
+  if (!await hasMigration('v040_reviews_visited_date')) {
+    try {
+      await pool.query(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS visited_date DATE`);
+      await pool.query(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS destination_id INTEGER REFERENCES destinations(id) ON DELETE SET NULL`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reviews_destination_id ON reviews(destination_id)`);
+      logger.info('[Migration v040] reviews visited_date and destination_id columns added');
+    } catch (error) {
+      logger.warn('[Migration v040] skipped:', error.message);
+    }
+    await markMigration('v040_reviews_visited_date');
+  }
+
+  // --- Migration v041: reviews_unique_constraint ---
+  if (!await hasMigration('v041_reviews_unique_constraint')) {
+    try {
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_user_dest_unique ON reviews(user_id, destination_id) WHERE destination_id IS NOT NULL`);
+      logger.info('[Migration v041] reviews unique constraint added');
+    } catch (error) {
+      logger.warn('[Migration v041] skipped:', error.message);
+    }
+    await markMigration('v041_reviews_unique_constraint');
   }
 
   logger.info('[Migration] All migrations complete');

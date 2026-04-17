@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_PATH = path.join(__dirname, '../data/emergencyNumbers.json');
 const META_PATH = path.join(__dirname, '../data/emergencyNumbers.meta.json');
+// Approximate monthly cadence for scheduled refresh checks.
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 async function readMeta() {

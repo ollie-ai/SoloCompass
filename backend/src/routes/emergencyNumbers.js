@@ -1,8 +1,16 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { getEmergencyNumbers, getAllEmergencyNumbers, isAvailable } from '../services/emergencyNumbersService.js';
 import { getEmergencyDataRefreshStatus, maybeRefreshEmergencyData } from '../services/emergencyDataRefreshService.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -37,7 +45,7 @@ router.get('/refresh-status', async (_req, res) => {
   res.json({ success: true, data: status });
 });
 
-router.post('/refresh', async (_req, res) => {
+router.post('/refresh', refreshLimiter, requireAdmin, async (_req, res) => {
   const status = await maybeRefreshEmergencyData(true);
   res.json({ success: true, data: status });
 });

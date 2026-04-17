@@ -4,7 +4,8 @@ import { translations } from './translations';
 const SUPPORTED = ['en', 'es'];
 
 function detectLocale() {
-  const browserLocale = (navigator.language || 'en').slice(0, 2).toLowerCase();
+  const rawLocale = (navigator.language || 'en').toLowerCase();
+  const browserLocale = rawLocale.length >= 2 ? rawLocale.slice(0, 2) : 'en';
   return SUPPORTED.includes(browserLocale) ? browserLocale : 'en';
 }
 

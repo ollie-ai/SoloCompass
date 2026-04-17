@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+const DEFAULT_PULL_THRESHOLD = 85;
+
 export function usePullToRefresh(onRefresh, enabled = true) {
   const startY = useRef(0);
   const touching = useRef(false);
@@ -17,7 +19,7 @@ export function usePullToRefresh(onRefresh, enabled = true) {
     const onTouchMove = (event) => {
       if (!touching.current || isRefreshing || window.scrollY > 0) return;
       const distance = event.touches[0].clientY - startY.current;
-      if (distance > 85) {
+      if (distance > DEFAULT_PULL_THRESHOLD) {
         setIsRefreshing(true);
         Promise.resolve(onRefresh?.()).finally(() => {
           setTimeout(() => setIsRefreshing(false), 400);

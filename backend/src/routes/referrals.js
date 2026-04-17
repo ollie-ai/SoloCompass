@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import db from '../db.js';
 
 const router = express.Router();
+const REFERRAL_CODE_BYTES = 4;
 const referralsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -16,7 +17,7 @@ router.get('/me', referralsLimiter, requireAuth, async (req, res) => {
   const referral = await db.prepare('SELECT code, invites, reward_points, updated_at FROM referrals WHERE user_id = ?').get(req.userId);
 
   if (!referral) {
-    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const code = crypto.randomBytes(REFERRAL_CODE_BYTES).toString('hex').toUpperCase();
     await db.prepare('INSERT INTO referrals (user_id, code, invites, reward_points) VALUES (?, ?, 0, 0)').run(req.userId, code);
     return res.json({ success: true, data: { code, invites: 0, rewardPoints: 0 } });
   }

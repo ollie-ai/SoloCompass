@@ -6,6 +6,7 @@ export default function Referrals() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [copyStatus, setCopyStatus] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -32,7 +33,12 @@ export default function Referrals() {
 
   const copyLink = async () => {
     if (!inviteUrl) return;
-    await navigator.clipboard.writeText(inviteUrl);
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopyStatus('Invite link copied');
+    } catch {
+      setCopyStatus('Could not copy link');
+    }
   };
 
   return (
@@ -68,6 +74,7 @@ export default function Referrals() {
                     <input readOnly value={inviteUrl} className="input input-bordered flex-1" />
                     <button onClick={copyLink} className="btn btn-primary">Copy</button>
                   </div>
+                  {copyStatus && <p className="mt-2 text-sm text-base-content/60">{copyStatus}</p>}
                 </div>
               </div>
             )}

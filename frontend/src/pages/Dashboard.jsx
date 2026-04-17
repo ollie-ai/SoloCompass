@@ -257,6 +257,7 @@ const Dashboard = () => {
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         >
           <DashboardShell>
+            <main id="dashboard-main" aria-label="Dashboard">
             <div className="flex items-center justify-end mb-3">
               <SafetyStatusIndicator safetyData={safetyData} />
             </div>
@@ -282,6 +283,7 @@ const Dashboard = () => {
             )}
             <SubscriptionBanner />
             {renderState()}
+            </main>
           </DashboardShell>
         </motion.div>
       </AnimatePresence>

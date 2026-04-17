@@ -567,3 +567,26 @@ main {
 .animate-slide-in {
   animation: slideIn 0.2s ease-out;
 }
+
+/* ============================================================
+ * COLOUR CONTRAST — WCAG AA compliant text utilities
+ * These replace raw opacity modifiers (base-content/60, /40)
+ * which fail the 4.5:1 minimum on light backgrounds.
+ *
+ * Verified contrast ratios on #ffffff (light) and #0f172a (dark):
+ *   --sc-text-muted   #475569  7.6:1 on white  ✅ AA
+ *   --sc-text-subtle  #64748b  4.6:1 on white  ✅ AA
+ * ============================================================ */
+@layer utilities {
+  :root {
+    --sc-text-muted: #475569;   /* slate-600 — 7.6:1 on white */
+    --sc-text-subtle: #64748b;  /* slate-500 — 4.6:1 on white */
+  }
+  [data-theme="solocompass-dark"] {
+    --sc-text-muted: #94a3b8;   /* slate-400 — 4.5:1 on #0f172a */
+    --sc-text-subtle: #94a3b8;
+  }
+
+  .text-muted  { color: var(--sc-text-muted);  }
+  .text-subtle { color: var(--sc-text-subtle); }
+}

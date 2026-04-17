@@ -149,6 +149,15 @@ function AdminStats({ period = '30d' }) {
         </div>
       </div>
 
+      {/* User Growth Bar Chart */}
+      {stats?.newUsersByDay?.length > 0 && (
+        <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6">
+          <h3 className="text-lg font-black text-base-content mb-1 tracking-tight">New User Signups</h3>
+          <p className="text-xs text-muted mb-5">Daily signups over the selected period</p>
+          <UserGrowthChart data={stats.newUsersByDay} />
+        </div>
+      )}
+
       <div className="bg-base-100 rounded-xl shadow-sm border border-base-300 p-6">
         <h3 className="text-lg font-black text-base-content mb-4 tracking-tight">Financial Pulse</h3>
         <div className="grid grid-cols-2 gap-4">
@@ -172,6 +181,47 @@ function AdminStats({ period = '30d' }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function UserGrowthChart({ data }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data.map(d => d.count), 1);
+  const barCount = data.length;
+
+  return (
+    <div className="w-full" aria-label="User signups bar chart">
+      <div className="flex items-end gap-0.5 h-24" role="img" aria-label={`Daily signups: max ${max} users/day over ${barCount} days`}>
+        {data.map((d, i) => {
+          const pct = Math.max((d.count / max) * 100, 2);
+          return (
+            <div key={d.day ?? i} className="flex-1 flex flex-col items-center justify-end group relative h-full">
+              <div
+                className="w-full rounded-t-sm bg-primary/70 group-hover:bg-primary transition-all duration-200"
+                style={{ height: `${pct}%` }}
+                aria-hidden="true"
+              />
+              {/* Tooltip on hover */}
+              <div className="absolute bottom-full mb-1 hidden group-hover:flex flex-col items-center pointer-events-none z-10">
+                <div className="bg-base-content text-base-100 text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
+                  {d.count} new{d.day ? ` · ${d.day}` : ''}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* X-axis: show first, middle, and last label */}
+      {data.length >= 2 && (
+        <div className="flex justify-between mt-1.5">
+          <span className="text-[9px] text-muted">{data[0].day}</span>
+          {data.length > 4 && (
+            <span className="text-[9px] text-muted">{data[Math.floor(data.length / 2)]?.day}</span>
+          )}
+          <span className="text-[9px] text-muted">{data[data.length - 1].day}</span>
+        </div>
+      )}
     </div>
   );
 }

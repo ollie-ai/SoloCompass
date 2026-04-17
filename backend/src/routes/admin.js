@@ -170,6 +170,21 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
       ? Math.max(0, ((usersLast60Days.count - usersLast30Days.count) / usersLast60Days.count) * 100)
       : 0;
 
+    // Daily new user signups for the selected period (for the bar chart)
+    let newUsersByDay = [];
+    try {
+      const dateFilter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const rows = await db.all(
+        `SELECT DATE(created_at) as day, COUNT(*) as count
+         FROM users
+         WHERE created_at >= ?
+         GROUP BY DATE(created_at)
+         ORDER BY day ASC`,
+        dateFilter
+      );
+      newUsersByDay = Array.isArray(rows) ? rows.map(r => ({ day: r.day, count: r.count || 0 })) : [];
+    } catch (e) { logger.warn('[Admin] newUsersByDay query failed:', e.message); }
+
     res.json({
       success: true,
       data: {
@@ -190,6 +205,8 @@ router.get('/analytics/overview', ...adminGuard, async (req, res) => {
           tripCount: d.trip_count
         })) : [],
         churnRate: Math.round(churnRate * 10) / 10,
+        newUsersLastPeriod: usersLast30Days.count || 0,
+        newUsersByDay,
         period: `${days}d`
       }
     });

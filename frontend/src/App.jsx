@@ -5,6 +5,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { useAuthStore } from './stores/authStore';
 import { useThemeStore } from './stores/themeStore';
 import { initErrorCollector } from './lib/errorCollector';
+import { initSessionTracking } from './lib/telemetry';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import Layout from './components/Layout';
@@ -121,6 +122,7 @@ function App() {
 
   useEffect(() => {
     initErrorCollector();
+    initSessionTracking();
   }, []);
 
   useEffect(() => {

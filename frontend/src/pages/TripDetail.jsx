@@ -61,9 +61,12 @@ import {
 import PackingList from '../components/PackingList';
 import BudgetTracker from '../components/BudgetTracker';
 import SafetyCheckIn from '../components/SafetyCheckIn';
-import TripHeader from '../components/trip/TripHeader';
-import TripSidebar from '../components/trip/TripSidebar';
-import TripMainContent from '../components/trip/TripMainContent';
+import SoloSafetyHub from '../components/SoloSafetyHub';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { FEATURES } from '../config/features';
+// import TripItinerary from '../components/trip/TripItinerary';
+// import TripSidebar from '../components/trip/TripSidebar';
+// import { AccommodationForm, BookingForm, DocumentForm } from '../components/trip/TripForms';
 
 function TripDetail() {
   const { id } = useParams();
@@ -150,6 +153,9 @@ function TripDetail() {
   const [documents, setDocuments] = useState([]);
   const [savedPlaces, setSavedPlaces] = useState([]);
   const [contacts, setContacts] = useState([]);
+
+  // ConfirmDialog state — action: 'delete_activity' | 'delete_accommodation' | 'delete_booking' | 'delete_document' | 'delete_place' | 'regenerate'
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, targetId: null });
 
   const handleExportPDF = async () => {
     setExporting(true);
@@ -349,8 +355,11 @@ function TripDetail() {
 
   const handleRegenerateSubmit = async (e) => {
     e.preventDefault();
-    if (!confirm('This will replace your current itinerary. Are you sure?')) return;
-    
+    setConfirmDialog({ open: true, action: 'regenerate', targetId: null });
+  };
+
+  const executeRegenerate = async () => {
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
       setIsRegenerating(true);
       await api.post(`/trips/${id}/generate`, regenerateForm);
@@ -360,7 +369,7 @@ function TripDetail() {
       startPolling(id);
     } catch (error) {
       setIsRegenerating(false);
-      toast.success('Failed to start regeneration');
+      toast.error('Failed to start regeneration');
     }
   };
 
@@ -482,8 +491,13 @@ function TripDetail() {
     }
   };
 
-  const deleteActivity = async (activityId) => {
-    if (!confirm('Remove this activity from your plan?')) return;
+  const deleteActivity = (activityId) => {
+    setConfirmDialog({ open: true, action: 'delete_activity', targetId: activityId });
+  };
+
+  const executeDeleteActivity = async () => {
+    const activityId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
       await api.delete(`/trips/activities/${activityId}`);
       toast.success('Activity removed');
@@ -624,33 +638,48 @@ function TripDetail() {
     }
   };
 
-  const deleteAccommodation = async (id) => {
-    if (!confirm('Remove this accommodation?')) return;
+  const deleteAccommodation = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_accommodation', targetId: id });
+  };
+
+  const executeDeleteAccommodation = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripAccommodation(id);
-      setAccommodations(accommodations.filter(a => a.id !== id));
+      await deleteTripAccommodation(targetId);
+      setAccommodations(accommodations.filter(a => a.id !== targetId));
       toast.success('Accommodation removed');
     } catch (error) {
       toast.error('Failed to delete accommodation');
     }
   };
 
-  const deleteBooking = async (id) => {
-    if (!confirm('Remove this booking?')) return;
+  const deleteBooking = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_booking', targetId: id });
+  };
+
+  const executeDeleteBooking = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripBooking(id);
-      setBookings(bookings.filter(b => b.id !== id));
+      await deleteTripBooking(targetId);
+      setBookings(bookings.filter(b => b.id !== targetId));
       toast.success('Booking removed');
     } catch (error) {
       toast.error('Failed to delete booking');
     }
   };
 
-  const deleteDocument = async (id) => {
-    if (!confirm('Remove this document?')) return;
+  const deleteDocument = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_document', targetId: id });
+  };
+
+  const executeDeleteDocument = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripDocument(id);
-      setDocuments(documents.filter(d => d.id !== id));
+      await deleteTripDocument(targetId);
+      setDocuments(documents.filter(d => d.id !== targetId));
       toast.success('Document removed');
     } catch (error) {
       toast.error('Failed to delete document');
@@ -679,11 +708,16 @@ function TripDetail() {
     }
   };
 
-  const deletePlace = async (id) => {
-    if (!confirm('Remove this place?')) return;
+  const deletePlace = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_place', targetId: id });
+  };
+
+  const executeDeletePlace = async () => {
+    const targetId = confirmDialog.targetId;
+    setConfirmDialog({ open: false, action: null, targetId: null });
     try {
-      await deleteTripPlace(id);
-      setSavedPlaces(savedPlaces.filter(p => p.id !== id));
+      await deleteTripPlace(targetId);
+      setSavedPlaces(savedPlaces.filter(p => p.id !== targetId));
       toast.success('Place removed');
     } catch (error) {
       toast.error('Failed to delete place');
@@ -830,7 +864,71 @@ function TripDetail() {
     );
   }
 
+  // Central dispatcher for confirmed destructive actions
+  const handleConfirmAction = () => {
+    switch (confirmDialog.action) {
+      case 'regenerate': return executeRegenerate();
+      case 'delete_activity': return executeDeleteActivity();
+      case 'delete_accommodation': return executeDeleteAccommodation();
+      case 'delete_booking': return executeDeleteBooking();
+      case 'delete_document': return executeDeleteDocument();
+      case 'delete_place': return executeDeletePlace();
+      default: setConfirmDialog({ open: false, action: null, targetId: null });
+    }
+  };
+
+  const CONFIRM_CONFIGS = {
+    regenerate: {
+      title: 'Regenerate Itinerary?',
+      description: 'This will replace your current itinerary with a new AI-generated one. This cannot be undone.',
+      confirmLabel: 'Yes, Regenerate',
+      variant: 'warning',
+    },
+    delete_activity: {
+      title: 'Remove Activity?',
+      description: 'This activity will be permanently removed from your itinerary.',
+      confirmLabel: 'Remove Activity',
+      variant: 'danger',
+    },
+    delete_accommodation: {
+      title: 'Remove Accommodation?',
+      description: 'This accommodation entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_booking: {
+      title: 'Remove Booking?',
+      description: 'This booking entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_document: {
+      title: 'Remove Document?',
+      description: 'This document entry will be permanently deleted.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+    delete_place: {
+      title: 'Remove Saved Place?',
+      description: 'This place will be removed from your saved places.',
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    },
+  };
+
+  const activeConfirmConfig = confirmDialog.action ? CONFIRM_CONFIGS[confirmDialog.action] : null;
+
   return (
+    <>
+    <ConfirmDialog
+      open={confirmDialog.open}
+      onConfirm={handleConfirmAction}
+      onCancel={() => setConfirmDialog({ open: false, action: null, targetId: null })}
+      title={activeConfirmConfig?.title}
+      description={activeConfirmConfig?.description}
+      confirmLabel={activeConfirmConfig?.confirmLabel}
+      variant={activeConfirmConfig?.variant || 'danger'}
+    />
     <div className="max-w-6xl mx-auto px-4 py-12 animate-fade-in pb-32">
       <TripHeader
         trip={trip}
@@ -1987,6 +2085,7 @@ function TripDetail() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

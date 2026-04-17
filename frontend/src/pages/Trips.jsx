@@ -12,6 +12,7 @@ import APIErrorBoundary from '../components/APIErrorBoundary';
 import { useAuthStore } from '../stores/authStore';
 import { trackEvent } from '../lib/telemetry';
 import { isExplorerTier } from '../lib/subscriptionAccess';
+import SEO from '../components/SEO';
 import { 
   MapPin, Calendar, Sparkles, Plus, 
   ChevronRight, Clock, Map as MapIcon, Globe, MoreVertical, Trash2, Eye, Shield, Check, Navigation, Wallet, Search, Copy, ArrowUpDown
@@ -336,6 +337,10 @@ function Trips() {
 
   return (
     <DashboardShell>
+      <SEO
+        title="My Trips"
+        description="Plan and manage all your solo travel adventures on SoloCompass."
+      />
       <APIErrorBoundary>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <PageHeader 

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import AdminDataTable from './AdminDataTable';
 import AdminModal from './AdminModal';
 import Button from '../Button';
+import ConfirmDialog from '../ConfirmDialog';
 import { 
   Edit2, 
   Check, 
@@ -22,6 +23,7 @@ const ReviewsTab = () => {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('pending');
   const [counts, setCounts] = useState({});
+  const [confirmPurgeId, setConfirmPurgeId] = useState(null);
   const limit = 10;
 
   useEffect(() => {
@@ -66,8 +68,13 @@ const ReviewsTab = () => {
     }
   };
 
-  const handlePurge = async (id) => {
-    if (!window.confirm('Purge this review? This action is irreversible.')) return;
+  const handlePurge = (id) => {
+    setConfirmPurgeId(id);
+  };
+
+  const executePurge = async () => {
+    const id = confirmPurgeId;
+    setConfirmPurgeId(null);
     try {
       await api.delete(`/reviews/admin/${id}`);
       toast.success('Review purged');
@@ -190,6 +197,15 @@ const ReviewsTab = () => {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmPurgeId !== null}
+        onConfirm={executePurge}
+        onCancel={() => setConfirmPurgeId(null)}
+        title="Purge Review?"
+        description="This will permanently delete the review. This action is irreversible."
+        confirmLabel="Purge"
+        variant="danger"
+      />
       <AdminDataTable
         data={reviews}
         columns={columns}
@@ -213,6 +229,7 @@ const DestinationsTab = () => {
   const [loading, setLoading] = useState(true);
   const [selectedDest, setSelectedDest] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [confirmRejectId, setConfirmRejectId] = useState(null);
   const limit = 10;
 
   useEffect(() => {
@@ -243,8 +260,13 @@ const DestinationsTab = () => {
     }
   };
 
-  const handleReject = async (id) => {
-    if (!window.confirm('Mark this AI data as flagged?')) return;
+  const handleReject = (id) => {
+    setConfirmRejectId(id);
+  };
+
+  const executeReject = async () => {
+    const id = confirmRejectId;
+    setConfirmRejectId(null);
     try {
       await api.post(`/admin/moderation/destinations/${id}/reject`);
       toast.success('Destination flagged');
@@ -353,6 +375,15 @@ const DestinationsTab = () => {
 
   return (
     <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmRejectId !== null}
+        onConfirm={executeReject}
+        onCancel={() => setConfirmRejectId(null)}
+        title="Flag AI Data?"
+        description="This will mark the destination's AI-generated data as flagged for review."
+        confirmLabel="Flag It"
+        variant="warning"
+      />
       <AdminDataTable
         data={destinations}
         columns={columns}

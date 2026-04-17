@@ -15,6 +15,18 @@ const GoogleIcon = () => (
   </svg>
 );
 
+const FacebookIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M22 12.07C22 6.51 17.52 2 12 2S2 6.51 2 12.07c0 5.02 3.66 9.18 8.44 9.93v-7.02H7.9v-2.9h2.54V9.86c0-2.52 1.49-3.91 3.77-3.91 1.09 0 2.23.2 2.23.2v2.48h-1.26c-1.24 0-1.63.77-1.63 1.56v1.89h2.77l-.44 2.9h-2.33V22c4.78-.75 8.44-4.91 8.44-9.93z" fill="#1877F2"/>
+  </svg>
+);
+
+const AppleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M16.8 13.05c.02 2.27 1.99 3.03 2.01 3.04-.02.05-.31 1.07-1.02 2.12-.61.91-1.25 1.82-2.25 1.84-.98.02-1.3-.58-2.43-.58-1.14 0-1.49.56-2.41.6-.96.04-1.7-.96-2.32-1.87-1.26-1.82-2.22-5.15-.93-7.39.64-1.11 1.79-1.81 3.03-1.83.94-.02 1.83.63 2.43.63.6 0 1.73-.78 2.91-.67.49.02 1.88.2 2.77 1.5-.07.04-1.66.97-1.64 2.61ZM14.92 7.39c.51-.62.86-1.49.77-2.35-.73.03-1.62.49-2.14 1.11-.47.55-.88 1.44-.77 2.29.81.06 1.63-.41 2.14-1.05Z"/>
+  </svg>
+);
+
 const Register = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -26,6 +38,7 @@ const Register = () => {
     email: '',
     password: '',
   });
+  const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3005';
   const [registeredEmail, setRegisteredEmail] = useState('');
   const plan = new URLSearchParams(location.search).get('plan');
 
@@ -289,14 +302,32 @@ const Register = () => {
                 </div>
               </div>
               
-              <div className="flex justify-center">
-                <a href={`${import.meta.env.VITE_API_URL || ''}/api/auth/google`} className="w-full group">
-                  <Button 
-                    variant="outline" 
+              <div className="space-y-3">
+                <a href={`${apiBaseUrl}/api/auth/google`} className="w-full group block">
+                  <Button
+                    variant="outline"
                     className="w-full rounded-xl py-3.5 border-base-300/80 text-base-content/80 hover:bg-base-200/80 hover:border-base-300/70 hover:shadow-sm transition-all font-medium flex items-center justify-center gap-3"
                   >
                     <GoogleIcon />
                     <span>Continue with Google</span>
+                  </Button>
+                </a>
+                <a href={`${apiBaseUrl}/api/auth/facebook`} className="w-full group block">
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-xl py-3.5 border-base-300/80 text-base-content/80 hover:bg-base-200/80 hover:border-base-300/70 hover:shadow-sm transition-all font-medium flex items-center justify-center gap-3"
+                  >
+                    <FacebookIcon />
+                    <span>Continue with Facebook</span>
+                  </Button>
+                </a>
+                <a href={`${apiBaseUrl}/api/auth/apple`} className="w-full group block">
+                  <Button
+                    variant="outline"
+                    className="w-full rounded-xl py-3.5 border-base-300/80 text-base-content/80 hover:bg-base-200/80 hover:border-base-300/70 hover:shadow-sm transition-all font-medium flex items-center justify-center gap-3"
+                  >
+                    <AppleIcon />
+                    <span>Continue with Apple</span>
                   </Button>
                 </a>
               </div>

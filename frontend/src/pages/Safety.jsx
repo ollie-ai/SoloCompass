@@ -14,25 +14,7 @@ import {
 import Button from '../components/Button';
 import APIErrorBoundary from '../components/APIErrorBoundary';
 import PlanGate from '../components/PlanGate';
-import MissedCheckInAlert from '../components/safety/MissedCheckInAlert';
-import GuardianInviteForm from '../components/safety/GuardianInviteForm';
-import GuardianDashboard from '../components/safety/GuardianDashboard';
-import ReturnPlanSetup from '../components/safety/ReturnPlanSetup';
-import SafetyMapOverlay from '../components/safety/SafetyMapOverlay';
-import EmbassyFinder from '../components/safety/EmbassyFinder';
-import LocationSharingToggle from '../components/safety/LocationSharingToggle';
-import CheckInScheduler from '../components/safety/CheckInScheduler';
-import CheckInStatus from '../components/safety/CheckInStatus';
-import CheckInHistory from '../components/safety/CheckInHistory';
-import CheckInReminder from '../components/safety/CheckInReminder';
-import GuardianList from '../components/safety/GuardianList';
-import GuardianTravellerCard from '../components/safety/GuardianTravellerCard';
-import ReturnPlanCard from '../components/safety/ReturnPlanCard';
-import EmergencyReturnActivation from '../components/safety/EmergencyReturnActivation';
-import NearestSafeLocations from '../components/safety/NearestSafeLocations';
-import EmergencyServicesCard from '../components/safety/EmergencyServicesCard';
-import NearbyHospitals from '../components/safety/NearbyHospitals';
-import offlineStorage from '../lib/offlineStorage';
+import SEO from '../components/SEO';
 
 const Skeleton = ({ className }) => (
   <div className={`bg-base-content/5 rounded-lg animate-pulse ${className}`} />
@@ -116,6 +98,7 @@ export default function Safety() {
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState(null);
   const [aiAdviceLoading, setAiAdviceLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null });
 
   // New state for wired safety components
   const [missedCheckIn, setMissedCheckIn] = useState(null);
@@ -266,8 +249,13 @@ export default function Safety() {
     }
   };
 
-  const handleDeleteContact = async (id) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+  const handleDeleteContact = (id) => {
+    setConfirmDialog({ open: true, action: 'delete_contact', id });
+  };
+
+  const executeDeleteContact = async () => {
+    const id = confirmDialog.id;
+    setConfirmDialog({ open: false, action: null });
     try {
       const response = await api.delete(`/emergency-contacts/${id}`);
       if (response.data.success) {
@@ -528,9 +516,13 @@ export default function Safety() {
     }
   };
 
-  const handleCancelRecurringSchedule = async () => {
+  const handleCancelRecurringSchedule = () => {
     if (!activeRecurringSchedule) return;
-    if (!confirm('Cancel this recurring schedule?')) return;
+    setConfirmDialog({ open: true, action: 'cancel_schedule' });
+  };
+
+  const executeCancelSchedule = async () => {
+    setConfirmDialog({ open: false, action: null });
     try {
       const res = await api.delete(`/checkin/schedule/${activeRecurringSchedule.id}`);
       if (res.data.success) {
@@ -690,6 +682,21 @@ export default function Safety() {
 
   return (
     <DashboardShell>
+      <SEO
+        title="Safety Center"
+        description="Manage your emergency contacts, scheduled check-ins, and SOS settings on SoloCompass."
+      />
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onConfirm={confirmDialog.action === 'delete_contact' ? executeDeleteContact : executeCancelSchedule}
+        onCancel={() => setConfirmDialog({ open: false, action: null })}
+        title={confirmDialog.action === 'delete_contact' ? 'Delete Emergency Contact?' : 'Cancel Recurring Schedule?'}
+        description={confirmDialog.action === 'delete_contact'
+          ? 'This emergency contact will be permanently removed.'
+          : 'Your recurring check-in schedule will be cancelled.'}
+        confirmLabel={confirmDialog.action === 'delete_contact' ? 'Delete Contact' : 'Cancel Schedule'}
+        variant="danger"
+      />
       <APIErrorBoundary>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <PageHeader 

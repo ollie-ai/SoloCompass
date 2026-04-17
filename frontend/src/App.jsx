@@ -171,6 +171,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/auth/google/callback" element={<OAuthCallback provider="google" />} />
+            <Route path="/auth/facebook/callback" element={<OAuthCallback provider="facebook" />} />
+            <Route path="/auth/apple/callback" element={<OAuthCallback provider="apple" />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />

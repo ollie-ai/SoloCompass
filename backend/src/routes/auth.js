@@ -2,6 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import passport from 'passport';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { body, validationResult } from 'express-validator';
 import rateLimit from 'express-rate-limit';
@@ -46,6 +47,17 @@ const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const oauthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: {
+    success: false,
+    error: { code: 'TOO_MANY_REQUESTS', message: 'Too many OAuth attempts, please try again later' }
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Lazy JWT secret getter - avoids fatal throw on import
 const getSecret = () => {
   const secret = getJWTSecret();
@@ -56,35 +68,151 @@ const getSecret = () => {
   return secret;
 };
 
-// IP-level lockout: tracks failed login attempts per IP address across all accounts.
-// After IP_MAX_FAILURES failed attempts within the window the IP is blocked for
-// IP_LOCKOUT_MS milliseconds. This complements the per-account lockout.
-const IP_MAX_FAILURES = 20;
-const IP_LOCKOUT_MS = 30 * 60 * 1000; // 30 minutes
-const ipFailures = new Map(); // ip -> { count, lockedUntil }
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3005';
 
-const checkIpLockout = (ip) => {
-  const entry = ipFailures.get(ip);
-  if (!entry) return false;
-  if (entry.lockedUntil && entry.lockedUntil > Date.now()) return true;
-  if (entry.lockedUntil && entry.lockedUntil <= Date.now()) {
-    ipFailures.delete(ip);
-  }
-  return false;
+const oauthStateStore = new Map();
+const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000;
+
+const createOAuthState = (provider, extra = {}) => {
+  const state = crypto.randomBytes(24).toString('hex');
+  oauthStateStore.set(state, {
+    provider,
+    expiresAt: Date.now() + OAUTH_STATE_EXPIRY_MS,
+    ...extra
+  });
+  setTimeout(() => oauthStateStore.delete(state), OAUTH_STATE_EXPIRY_MS);
+  return state;
 };
 
-const recordIpFailure = (ip) => {
-  const entry = ipFailures.get(ip) || { count: 0, lockedUntil: null };
-  entry.count += 1;
-  if (entry.count >= IP_MAX_FAILURES) {
-    entry.lockedUntil = Date.now() + IP_LOCKOUT_MS;
-    logger.warn(`[Auth] IP lockout triggered for ${ip} after ${entry.count} failures`);
+const consumeOAuthState = (state, provider) => {
+  if (!state) return null;
+  const saved = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  if (!saved || saved.provider !== provider || Date.now() > saved.expiresAt) {
+    return null;
   }
-  ipFailures.set(ip, entry);
+  return saved;
 };
 
-const clearIpFailure = (ip) => {
-  ipFailures.delete(ip);
+const getOAuthErrorRedirect = (provider, errorCode) =>
+  `${FRONTEND_URL}/auth/${provider}/callback?error=${encodeURIComponent(errorCode)}`;
+
+const normalizeSocialEmail = (email, fallback) => {
+  if (typeof email === 'string' && email.includes('@')) {
+    return email.toLowerCase().trim();
+  }
+  return fallback.toLowerCase().trim();
+};
+
+const findOrCreateSocialUser = async ({ email, fallbackEmail, name }) => {
+  const normalizedEmail = normalizeSocialEmail(email, fallbackEmail);
+  let user = await db.get('SELECT * FROM users WHERE email = ?', normalizedEmail);
+
+  if (!user) {
+    const result = await db.run(
+      'INSERT INTO users (email, password, name, role, is_verified) VALUES (?, ?, ?, ?, ?)',
+      normalizedEmail, 'social_login_locked', name || 'Social User', 'user', true
+    );
+    const userId = result.lastInsertRowid;
+
+    await db.run('INSERT INTO profiles (user_id) VALUES (?)', userId);
+    user = await db.get('SELECT * FROM users WHERE id = ?', userId);
+  } else if (!user.is_verified) {
+    await db.run('UPDATE users SET is_verified = true WHERE id = ?', user.id);
+    user.is_verified = true;
+  }
+
+  return user;
+};
+
+const createOAuthSessionAndRedirect = async (res, user) => {
+  const token = generateToken({ id: user.id, email: user.email, role: user.role });
+  const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
+
+  const sessionId = uuidv4();
+  const refreshHash = hashToken(refreshToken);
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  await db.run(
+    'INSERT INTO sessions (id, user_id, refresh_token, expires_at) VALUES (?, ?, ?, ?)',
+    sessionId, user.id, refreshHash, expiresAt
+  );
+
+  const tokenWithSession = generateToken({ id: user.id, email: user.email, role: user.role }, sessionId);
+  const isProd = process.env.NODE_ENV === 'production';
+
+  res.cookie('token', tokenWithSession, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+
+  return res.redirect(`${FRONTEND_URL}/dashboard`);
+};
+
+const decodeJwtSegment = (segment) =>
+  JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+
+const toBase64UrlBuffer = (input) => Buffer.from(input.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+let appleJwksCache = { keys: [], expiresAt: 0 };
+const APPLE_JWKS_URL = 'https://appleid.apple.com/auth/keys';
+
+const getAppleJwks = async () => {
+  if (appleJwksCache.expiresAt > Date.now() && appleJwksCache.keys.length > 0) {
+    return appleJwksCache.keys;
+  }
+  const response = await fetch(APPLE_JWKS_URL);
+  if (!response.ok) {
+    throw new Error('apple_jwks_fetch_failed');
+  }
+  const data = await response.json();
+  appleJwksCache = {
+    keys: data.keys || [],
+    expiresAt: Date.now() + 60 * 60 * 1000
+  };
+  return appleJwksCache.keys;
+};
+
+const verifyAppleIdentityToken = async (identityToken, expectedAudiences, expectedNonce) => {
+  if (!identityToken) throw new Error('missing_identity_token');
+
+  const segments = identityToken.split('.');
+  if (segments.length !== 3) throw new Error('invalid_identity_token');
+
+  const [headerSeg, payloadSeg, signatureSeg] = segments;
+  const header = decodeJwtSegment(headerSeg);
+  const payload = decodeJwtSegment(payloadSeg);
+  const message = `${headerSeg}.${payloadSeg}`;
+
+  const keys = await getAppleJwks();
+  const key = keys.find((k) => k.kid === header.kid && k.alg === 'RS256');
+  if (!key) throw new Error('apple_signing_key_not_found');
+
+  const publicKey = crypto.createPublicKey({ key, format: 'jwk' });
+  const verifier = crypto.createVerify('RSA-SHA256');
+  verifier.update(message);
+  verifier.end();
+
+  const signatureBuffer = toBase64UrlBuffer(signatureSeg);
+  const validSignature = verifier.verify(publicKey, signatureBuffer);
+  if (!validSignature) throw new Error('invalid_identity_signature');
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.iss !== 'https://appleid.apple.com') throw new Error('invalid_identity_issuer');
+  if (!expectedAudiences.includes(payload.aud)) throw new Error('invalid_identity_audience');
+  if (!payload.exp || payload.exp < now) throw new Error('identity_token_expired');
+  if (expectedNonce && payload.nonce && payload.nonce !== expectedNonce) throw new Error('invalid_identity_nonce');
+
+  return payload;
 };
 
 // Helper to parse user agent into device info
@@ -1002,56 +1130,202 @@ router.get('/verify', async (req, res) => {
 });
 
 // --- Google OAuth ---
-router.get('/google', passport.authenticate('google', { 
+router.get('/google', oauthLimiter, passport.authenticate('google', { 
   scope: ['profile', 'email'],
   prompt: 'select_account' 
 }));
 
-router.get('/google/callback', async (req, res, next) => {
+router.get('/google/callback', oauthLimiter, async (req, res, next) => {
   passport.authenticate('google', { session: false }, async (err, user, info) => {
     try {
       if (err) {
-        return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/google/callback?error=oauth_failed`);
+        return res.redirect(getOAuthErrorRedirect('google', 'oauth_failed'));
       }
       
       if (!user) {
-        return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/google/callback?error=user_not_found`);
+        return res.redirect(getOAuthErrorRedirect('google', 'user_not_found'));
       }
-
-      const token = generateToken({ id: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
-
-      const sessionId = uuidv4();
-      const refreshHash = hashToken(refreshToken);
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      await db.run(
-        'INSERT INTO sessions (id, user_id, refresh_token, expires_at) VALUES (?, ?, ?, ?)',
-        sessionId, user.id, refreshHash, expiresAt
-      );
-
-      const tokenWithSession = generateToken({ id: user.id, email: user.email, role: user.role }, sessionId);
-
-      const isProd = process.env.NODE_ENV === 'production';
-
-      res.cookie('token', tokenWithSession, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-
-      res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: isProd,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-
-      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard`);
+      return await createOAuthSessionAndRedirect(res, user);
     } catch (error) {
-      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/google/callback?error=server_error`);
+      logger.error(`[Auth] Google OAuth callback failed: ${error.message}`);
+      return res.redirect(getOAuthErrorRedirect('google', 'server_error'));
     }
   })(req, res, next);
+});
+
+// --- Facebook OAuth ---
+router.get('/facebook', oauthLimiter, (req, res) => {
+  const facebookClientId = process.env.FACEBOOK_APP_ID || process.env.FACEBOOK_CLIENT_ID;
+  if (!facebookClientId) {
+    return res.status(501).json({
+      success: false,
+      error: { code: 'NOT_IMPLEMENTED', message: 'Facebook OAuth is not configured. Please set FACEBOOK_APP_ID (or FACEBOOK_CLIENT_ID).' }
+    });
+  }
+
+  const state = createOAuthState('facebook');
+  const callbackUrl = `${BACKEND_URL}/api/auth/facebook/callback`;
+  const oauthUrl = new URL('https://www.facebook.com/v19.0/dialog/oauth');
+  oauthUrl.searchParams.set('client_id', facebookClientId);
+  oauthUrl.searchParams.set('redirect_uri', callbackUrl);
+  oauthUrl.searchParams.set('response_type', 'code');
+  oauthUrl.searchParams.set('scope', 'email,public_profile');
+  oauthUrl.searchParams.set('state', state);
+
+  return res.redirect(oauthUrl.toString());
+});
+
+router.get('/facebook/callback', oauthLimiter, async (req, res) => {
+  const facebookClientId = process.env.FACEBOOK_APP_ID || process.env.FACEBOOK_CLIENT_ID;
+  const facebookClientSecret = process.env.FACEBOOK_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET;
+  const callbackUrl = `${BACKEND_URL}/api/auth/facebook/callback`;
+
+  if (!facebookClientId || !facebookClientSecret) {
+    return res.redirect(getOAuthErrorRedirect('facebook', 'oauth_not_configured'));
+  }
+
+  try {
+    if (req.query.error) {
+      return res.redirect(getOAuthErrorRedirect('facebook', 'oauth_denied'));
+    }
+
+    const stateData = consumeOAuthState(req.query.state, 'facebook');
+    if (!stateData) {
+      return res.redirect(getOAuthErrorRedirect('facebook', 'invalid_state'));
+    }
+
+    const code = req.query.code;
+    if (!code) {
+      return res.redirect(getOAuthErrorRedirect('facebook', 'missing_code'));
+    }
+
+    const tokenUrl = new URL('https://graph.facebook.com/v19.0/oauth/access_token');
+    tokenUrl.searchParams.set('client_id', facebookClientId);
+    tokenUrl.searchParams.set('client_secret', facebookClientSecret);
+    tokenUrl.searchParams.set('redirect_uri', callbackUrl);
+    tokenUrl.searchParams.set('code', code);
+
+    const tokenResponse = await fetch(tokenUrl.toString());
+    if (!tokenResponse.ok) {
+      throw new Error('facebook_token_exchange_failed');
+    }
+    const tokenData = await tokenResponse.json();
+    if (!tokenData.access_token) {
+      throw new Error('facebook_access_token_missing');
+    }
+
+    const profileResponse = await fetch(`https://graph.facebook.com/me?fields=id,name,email&access_token=${encodeURIComponent(tokenData.access_token)}`);
+    if (!profileResponse.ok) {
+      throw new Error('facebook_profile_fetch_failed');
+    }
+    const profile = await profileResponse.json();
+    if (!profile?.id) {
+      throw new Error('facebook_profile_invalid');
+    }
+
+    const user = await findOrCreateSocialUser({
+      email: profile.email,
+      fallbackEmail: `facebook_${profile.id}@users.solocompass.local`,
+      name: profile.name || 'Facebook User'
+    });
+
+    if (!user) {
+      throw new Error('facebook_user_create_failed');
+    }
+
+    return await createOAuthSessionAndRedirect(res, user);
+  } catch (error) {
+    logger.error(`[Auth] Facebook OAuth callback failed: ${error.message}`);
+    return res.redirect(getOAuthErrorRedirect('facebook', 'server_error'));
+  }
+});
+
+// --- Apple Sign-In ---
+router.get('/apple', oauthLimiter, (req, res) => {
+  const appleClientId = process.env.APPLE_CLIENT_ID;
+  if (!appleClientId) {
+    return res.status(501).json({
+      success: false,
+      error: { code: 'NOT_IMPLEMENTED', message: 'Apple Sign-In is not configured. Please set APPLE_CLIENT_ID.' }
+    });
+  }
+
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const state = createOAuthState('apple', { nonce });
+  const redirectUri = process.env.APPLE_REDIRECT_URI || `${BACKEND_URL}/api/auth/apple/callback`;
+
+  const oauthUrl = new URL('https://appleid.apple.com/auth/authorize');
+  oauthUrl.searchParams.set('response_type', 'code id_token');
+  oauthUrl.searchParams.set('response_mode', 'form_post');
+  oauthUrl.searchParams.set('client_id', appleClientId);
+  oauthUrl.searchParams.set('redirect_uri', redirectUri);
+  oauthUrl.searchParams.set('scope', 'name email');
+  oauthUrl.searchParams.set('state', state);
+  oauthUrl.searchParams.set('nonce', nonce);
+
+  return res.redirect(oauthUrl.toString());
+});
+
+router.post('/apple/callback', oauthLimiter, async (req, res) => {
+  const expectedAudiences = (process.env.APPLE_CLIENT_IDS || process.env.APPLE_CLIENT_ID || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (expectedAudiences.length === 0) {
+    return res.redirect(getOAuthErrorRedirect('apple', 'oauth_not_configured'));
+  }
+
+  try {
+    if (req.body?.error) {
+      return res.redirect(getOAuthErrorRedirect('apple', 'oauth_denied'));
+    }
+
+    const stateData = consumeOAuthState(req.body?.state, 'apple');
+    if (!stateData) {
+      return res.redirect(getOAuthErrorRedirect('apple', 'invalid_state'));
+    }
+
+    const identityToken = req.body?.id_token;
+    if (!identityToken) {
+      return res.redirect(getOAuthErrorRedirect('apple', 'missing_identity_token'));
+    }
+
+    const tokenPayload = await verifyAppleIdentityToken(identityToken, expectedAudiences, stateData.nonce);
+
+    let parsedUser = {};
+    if (typeof req.body?.user === 'string') {
+      try {
+        parsedUser = JSON.parse(req.body.user);
+      } catch {
+        parsedUser = {};
+      }
+    }
+
+    const parsedName = [parsedUser?.name?.firstName, parsedUser?.name?.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    const user = await findOrCreateSocialUser({
+      email: tokenPayload.email || parsedUser?.email,
+      fallbackEmail: `apple_${tokenPayload.sub}@users.solocompass.local`,
+      name: parsedName || 'Apple User'
+    });
+
+    if (!user) {
+      throw new Error('apple_user_create_failed');
+    }
+
+    return await createOAuthSessionAndRedirect(res, user);
+  } catch (error) {
+    logger.error(`[Auth] Apple OAuth callback failed: ${error.message}`);
+    return res.redirect(getOAuthErrorRedirect('apple', 'server_error'));
+  }
+});
+
+router.get('/apple/callback', oauthLimiter, (req, res) => {
+  return res.redirect(getOAuthErrorRedirect('apple', 'invalid_callback_method'));
 });
 
 // --- GitHub OAuth ---

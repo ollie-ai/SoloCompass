@@ -4,6 +4,7 @@ import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { sendVerificationSMS } from '../services/smsService.js';
 import { PLAN_TIERS } from '../middleware/paywall.js';
 import logger from '../services/logger.js';
+import { requireFeature, FEATURES } from '../middleware/paywall.js';
 
 const TIER_CONTACT_LIMITS = {
   [PLAN_TIERS.EXPLORER]: 1,
@@ -99,7 +100,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /emergency-contacts - Create new contact
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, requireFeature(FEATURES.EMERGENCY_CONTACTS), async (req, res) => {
   try {
     const {
       name,

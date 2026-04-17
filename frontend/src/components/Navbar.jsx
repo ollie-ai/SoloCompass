@@ -193,6 +193,7 @@ const Navbar = () => {
       <motion.nav
         initial={{ y: -100 }}
         animate={{ y: 0 }}
+        aria-label="Main navigation"
         className={`fixed top-0 left-0 right-0 z-[60] transition-all duration-300 ${
           scrolled || !isPublicPage 
             ? 'bg-base-100 backdrop-blur-md border-b border-base-content/10 shadow-lg' 

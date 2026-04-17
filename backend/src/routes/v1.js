@@ -1,318 +1,368 @@
 import express from 'express';
+import { authenticate, optionalAuth } from '../middleware/auth.js';
+import { requireAdmin } from '../middleware/auth.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
-import { FEATURES, hasFeature } from '../middleware/paywall.js';
+import { searchPlaces, getPlaceDetails } from '../services/placesService.js';
+import { getDirections } from '../services/directionsService.js';
+import { fetchFCDOAdvisories } from '../services/fcdoService.js';
+import { searchNearby } from '../services/hospitalsService.js';
+import {
+  createFunnel, trackFunnelStep, getFunnelStats,
+  createExperiment, startExperiment, pauseExperiment, completeExperiment,
+  getAssignment, recordExposure, getExperimentResults,
+  getEngagementMetrics
+} from '../services/experimentService.js';
 
 const router = express.Router();
 
-const ONBOARDING_STEPS = ['profile_setup', 'first_trip', 'safety_setup', 'preferences', 'notifications'];
-
-const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  const value = Array.isArray(forwarded) ? forwarded[0] : (forwarded?.split(',')[0] || req.ip || req.connection?.remoteAddress || '');
-  return String(value).trim().replace('::ffff:', '');
+const CULTURAL_NORMS = {
+  japan: {
+    greeting: 'Bow politely; avoid loud conversation on public transport.',
+    dining: 'Do not tip; say "itadakimasu" before eating when appropriate.',
+    safety: 'Low violent crime, but watch for scam bars in nightlife districts.'
+  },
+  thailand: {
+    greeting: 'Use the wai greeting respectfully.',
+    dining: 'Remove shoes where requested; avoid touching heads.',
+    safety: 'Tourist scams occur in busy zones; verify transport fares first.'
+  }
 };
 
-const getUserPlan = async (userId) => {
-  const user = await db.get('SELECT subscription_tier, is_premium FROM users WHERE id = ?', userId);
-  if (!user) return 'explorer';
-  if (user.subscription_tier) return user.subscription_tier;
-  return user.is_premium ? 'guardian' : 'explorer';
-};
+const OFFLINE_FAQ = new Map();
+const OFFLINE_PHRASES = new Map();
 
-// GDPR consent management
-router.get('/consents', requireAuth, async (req, res) => {
+router.get('/maps/places/search', authenticate, async (req, res) => {
   try {
-    const rows = await db.all(
-      `SELECT consent_type, granted, source, granted_at, revoked_at
-       FROM user_consents
-       WHERE user_id = ?
-       ORDER BY granted_at DESC`,
-      req.userId
-    );
-    const latest = {};
-    for (const row of rows || []) {
-      if (!(row.consent_type in latest)) latest[row.consent_type] = row;
-    }
-    res.json({ success: true, data: { consents: latest, history: rows || [] } });
-  } catch (error) {
-    logger.error(`[v1] Failed to get consents: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to fetch consent state' });
-  }
-});
-
-router.post('/consents', requireAuth, async (req, res) => {
-  try {
-    const { consentType, granted, source = 'web' } = req.body;
-    const validTypes = ['data_processing', 'cookie_analytics', 'cookie_marketing', 'marketing'];
-    if (!validTypes.includes(consentType) || typeof granted !== 'boolean') {
-      return res.status(400).json({ success: false, error: 'Invalid consent payload' });
-    }
-
-    await db.run(
-      `INSERT INTO user_consents (user_id, consent_type, granted, source, ip_address, user_agent, granted_at, revoked_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
-      req.userId,
-      consentType,
-      granted,
-      source,
-      getClientIp(req),
-      req.headers['user-agent'] || null,
-      granted ? null : new Date().toISOString()
-    );
-
-    await db.run(
-      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
-      req.userId,
-      'user_consent_updated',
-      JSON.stringify({ consentType, granted, source })
-    );
-
-    res.json({ success: true, data: { consentType, granted } });
-  } catch (error) {
-    logger.error(`[v1] Failed to upsert consent: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to save consent' });
-  }
-});
-
-// Onboarding flow engine (status + completion)
-router.get('/onboarding/status', requireAuth, async (req, res) => {
-  try {
-    const steps = await db.all(
-      `SELECT step_key, completed, metadata, completed_at
-       FROM onboarding_progress
-       WHERE user_id = ?
-       ORDER BY step_key ASC`,
-      req.userId
-    );
-    const completedCount = (steps || []).filter(s => s.completed).length;
-    const percent = Math.round((completedCount / ONBOARDING_STEPS.length) * 100);
-    res.json({
-      success: true,
-      data: {
-        steps: ONBOARDING_STEPS.map(stepKey => steps.find(s => s.step_key === stepKey) || { step_key: stepKey, completed: false }),
-        completedCount,
-        totalSteps: ONBOARDING_STEPS.length,
-        progressPercent: percent
-      }
+    const { q, query, lat, lng, radius, type } = req.query;
+    const searchQuery = q || query;
+    if (!searchQuery) return res.status(400).json({ success: false, error: 'Missing query' });
+    const data = await searchPlaces(searchQuery, {
+      lat: lat ? parseFloat(lat) : null,
+      lng: lng ? parseFloat(lng) : null,
+      radius: radius ? parseInt(radius, 10) : 5000,
+      type
     });
+    res.json({ success: true, data, count: data.length });
   } catch (error) {
-    logger.error(`[v1] Failed onboarding status: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to fetch onboarding status' });
+    logger.error(`[v1] place search failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Place search failed' });
   }
 });
 
-router.post('/onboarding/complete', requireAuth, async (req, res) => {
+router.get('/maps/places/:id', authenticate, async (req, res) => {
   try {
-    const { step, metadata = {} } = req.body;
-    if (!step || typeof step !== 'string') {
-      return res.status(400).json({ success: false, error: 'step is required' });
-    }
-
-    const now = new Date().toISOString();
-    await db.run(
-      `INSERT INTO onboarding_progress (user_id, step_key, completed, metadata, completed_at, updated_at)
-       VALUES (?, ?, true, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT (user_id, step_key) DO UPDATE SET
-         completed = EXCLUDED.completed,
-         metadata = EXCLUDED.metadata,
-         completed_at = EXCLUDED.completed_at,
-         updated_at = CURRENT_TIMESTAMP`,
-      req.userId,
-      step,
-      JSON.stringify(metadata || {}),
-      now
-    );
-
-    await db.run(
-      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
-      req.userId,
-      'onboarding_step_completed',
-      JSON.stringify({ step, metadata })
-    );
-
-    res.json({ success: true, data: { step, completed: true, completedAt: now } });
+    const data = await getPlaceDetails(req.params.id);
+    res.json({ success: true, data });
   } catch (error) {
-    logger.error(`[v1] Failed onboarding completion: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to complete onboarding step' });
+    logger.error(`[v1] place detail failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Place detail failed' });
   }
 });
 
-// Plan-based feature availability
-router.get('/features', requireAuth, async (req, res) => {
+router.get('/maps/directions', authenticate, async (req, res) => {
   try {
-    const plan = await getUserPlan(req.userId);
-    const all = Object.values(FEATURES);
-    const available = [];
-    for (const feature of all) {
-      // eslint-disable-next-line no-await-in-loop
-      if (await hasFeature(req.userId, feature)) available.push(feature);
-    }
-    res.json({ success: true, data: { plan, available, all } });
-  } catch (error) {
-    logger.error(`[v1] Failed to list features: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to load features' });
-  }
-});
-
-// Safety/content reports
-router.post('/reports', requireAuth, async (req, res) => {
-  try {
-    const { reportedEntityType, entityId, reason, details } = req.body;
-    if (!reportedEntityType || !entityId || !reason) {
-      return res.status(400).json({ success: false, error: 'reportedEntityType, entityId, and reason are required' });
-    }
-
-    const result = await db.run(
-      `INSERT INTO reports (reporter_id, reported_entity_type, entity_id, reason, details, status)
-       VALUES (?, ?, ?, ?, ?, 'open')`,
-      req.userId,
-      reportedEntityType,
-      String(entityId),
-      reason,
-      details || null
-    );
-
-    await db.run(
-      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
-      req.userId,
-      'report_submitted',
-      JSON.stringify({ reportId: result?.lastInsertRowid, reportedEntityType, entityId, reason })
-    );
-
-    // auto-block if entity receives multiple recent reports
-    const countRow = await db.get(
-      `SELECT COUNT(*)::int as count
-       FROM reports
-       WHERE reported_entity_type = ? AND entity_id = ? AND created_at >= NOW() - INTERVAL '24 hours'`,
-      reportedEntityType,
-      String(entityId)
-    );
-    if ((countRow?.count || 0) >= 5) {
-      await db.run(
-        'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
-        req.userId,
-        'entity_auto_block_recommended',
-        JSON.stringify({ reportedEntityType, entityId, reportCount: countRow.count })
-      );
-    }
-
-    res.status(201).json({ success: true, data: { id: result?.lastInsertRowid, status: 'open' } });
-  } catch (error) {
-    logger.error(`[v1] Failed to submit report: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to submit report' });
-  }
-});
-
-// Emergency support priority lane
-router.post('/support/tickets', requireAuth, async (req, res) => {
-  try {
-    const { subject, message, category = 'general', emergency = false } = req.body;
-    if (!subject || !message) {
-      return res.status(400).json({ success: false, error: 'subject and message are required' });
-    }
-    const isSos = emergency === true || ['sos', 'emergency', 'safety'].includes(String(category).toLowerCase());
-    const priority = isSos ? 'critical' : 'normal';
-    const slaDueAt = new Date(Date.now() + (isSos ? 15 : 24 * 60) * 60 * 1000).toISOString();
-
-    const user = await db.get('SELECT email FROM users WHERE id = ?', req.userId);
-    const result = await db.run(
-      `INSERT INTO support_tickets (user_id, email, subject, message, category, priority, status, sla_due_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
-      req.userId,
-      user?.email || null,
-      subject,
-      message,
-      category,
-      priority,
-      slaDueAt
-    );
-
-    await db.run(
-      'INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)',
-      req.userId,
-      isSos ? 'support_ticket_sos_created' : 'support_ticket_created',
-      JSON.stringify({ ticketId: result?.lastInsertRowid, priority, category, emergency: isSos })
-    );
-
-    res.status(201).json({
-      success: true,
-      data: { id: result?.lastInsertRowid, priority, status: 'open', fastTracked: isSos, slaDueAt }
+    const { origin, destination, mode, alternatives } = req.query;
+    if (!origin || !destination) return res.status(400).json({ success: false, error: 'Missing origin/destination' });
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) return res.status(503).json({ success: false, error: 'GOOGLE_MAPS_API_KEY not configured' });
+    const data = await getDirections(origin, destination, apiKey, {
+      mode: mode || 'transit',
+      alternatives: alternatives === 'true'
     });
+    res.json({ success: true, data });
   } catch (error) {
-    logger.error(`[v1] Failed to create support ticket: ${error.message}`);
-    res.status(500).json({ success: false, error: 'Failed to create support ticket' });
+    logger.error(`[v1] directions failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Directions failed' });
   }
 });
 
-// GDPR portability/erasure aliases
-router.get('/users/me/export', requireAuth, async (req, res) => {
-  res.redirect(307, `/api/users/${req.userId}/export`);
+router.get('/content/cultural-norms/:country', optionalAuth, async (req, res) => {
+  const country = (req.params.country || '').toLowerCase();
+  const norms = CULTURAL_NORMS[country] || {
+    greeting: 'Respect local customs and personal space.',
+    dining: 'Follow venue etiquette and local norms.',
+    safety: 'Use official advisories and local emergency guidance.'
+  };
+  res.json({
+    success: true,
+    data: {
+      country,
+      version: 'v1',
+      sections: [
+        { type: 'greeting', guidance: norms.greeting },
+        { type: 'dining', guidance: norms.dining },
+        { type: 'safety', guidance: norms.safety }
+      ]
+    }
+  });
 });
 
-router.delete('/users/me', requireAuth, async (req, res) => {
-  const query = req.query.permanent === 'true' ? '?permanent=true' : '';
-  res.redirect(307, `/api/users/${req.userId}${query}`);
+router.get('/safety/advisories', authenticate, async (_req, res) => {
+  try {
+    const advisories = await fetchFCDOAdvisories();
+    const mapped = advisories.map((a) => {
+      const text = `${a.title || ''} ${a.summary || ''}`.toLowerCase();
+      let level = 1;
+      if (text.includes('all travel')) level = 4;
+      else if (text.includes('against travel')) level = 3;
+      else if (text.includes('caution')) level = 2;
+      return { ...a, level };
+    });
+    res.json({ success: true, count: mapped.length, data: mapped });
+  } catch (error) {
+    logger.error(`[v1] advisories feed failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch advisories' });
+  }
 });
 
-// P3 lightweight endpoints
-router.post('/feature-requests', requireAuth, async (req, res) => {
-  const { title, details } = req.body || {};
-  if (!title) return res.status(400).json({ success: false, error: 'title is required' });
-  await db.run('INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)', req.userId, 'feature_request_submitted', JSON.stringify({ title, details }));
-  return res.status(201).json({ success: true, data: { submitted: true } });
+router.get('/destinations/recommended', authenticate, async (req, res) => {
+  try {
+    const profile = await db.prepare(`
+      SELECT budget_level, preferred_climate, travel_style
+      FROM profiles WHERE user_id = ?
+    `).get(req.userId);
+    let query = `
+      SELECT id, name, country, city, image_url, solo_friendly_rating, budget_level, climate
+      FROM destinations
+      WHERE (publication_status = 'live' OR status = 'live')
+    `;
+    const params = [];
+    if (profile?.budget_level) {
+      query += ' AND budget_level = ?';
+      params.push(profile.budget_level);
+    }
+    if (profile?.preferred_climate) {
+      query += ' AND climate = ?';
+      params.push(profile.preferred_climate);
+    }
+    if (profile?.travel_style) {
+      query += ' AND travel_styles ILIKE ?';
+      params.push(`%${profile.travel_style}%`);
+    }
+    query += ' ORDER BY solo_friendly_rating DESC NULLS LAST LIMIT 10';
+    const data = await db.prepare(query).all(...params);
+    res.json({ success: true, count: data.length, data });
+  } catch (error) {
+    logger.error(`[v1] recommended destinations failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to fetch recommended destinations' });
+  }
 });
 
-router.post('/waitlist', async (req, res) => {
-  const { email, feature } = req.body || {};
-  if (!email) return res.status(400).json({ success: false, error: 'email is required' });
-  await db.run('INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)', null, 'waitlist_joined', JSON.stringify({ email, feature: feature || null }));
-  return res.status(201).json({ success: true, data: { joined: true } });
+router.get('/offline/faq/:destination', optionalAuth, async (req, res) => {
+  const key = (req.params.destination || '').toLowerCase();
+  const data = OFFLINE_FAQ.get(key) || [];
+  res.json({ success: true, data, count: data.length });
 });
 
-// Simple placeholders for listed read endpoints
-router.get('/changelog', (req, res) => {
-  res.json({ success: true, data: [{ version: '0.1.0', date: new Date().toISOString().slice(0, 10), notes: 'Initial release notes placeholder' }] });
+router.post('/offline/faq/:destination', authenticate, async (req, res) => {
+  const key = (req.params.destination || '').toLowerCase();
+  const faq = Array.isArray(req.body?.faq) ? req.body.faq.slice(0, 20) : [];
+  OFFLINE_FAQ.set(key, faq);
+  res.json({ success: true, data: faq, count: faq.length });
 });
 
-router.get('/help/articles', (req, res) => {
-  res.json({ success: true, data: [{ id: 'getting-started', title: 'Getting Started', category: 'Basics', content: 'Help center placeholder article.' }] });
+router.get('/offline/phrases/:destination', optionalAuth, async (req, res) => {
+  const key = (req.params.destination || '').toLowerCase();
+  const locale = String(req.query.locale || 'en').toLowerCase();
+  const data = OFFLINE_PHRASES.get(`${key}:${locale}`) || [];
+  res.json({ success: true, data, count: data.length, locale });
 });
 
-router.get('/support/faq', (req, res) => {
-  res.json({ success: true, data: [{ id: 'faq-1', question: 'How do I contact support?', answer: 'Use /contact or submit a support ticket.' }] });
+router.post('/offline/phrases/:destination', authenticate, async (req, res) => {
+  const key = (req.params.destination || '').toLowerCase();
+  const locale = String(req.body?.locale || 'en').toLowerCase();
+  const phrases = Array.isArray(req.body?.phrases) ? req.body.phrases : [];
+  OFFLINE_PHRASES.set(`${key}:${locale}`, phrases);
+  res.json({ success: true, data: phrases, count: phrases.length, locale });
 });
 
-router.get('/dashboard/activity', requireAuth, async (req, res) => {
-  const events = await db.all('SELECT id, event_name, event_data, timestamp FROM events WHERE user_id = ? ORDER BY timestamp DESC LIMIT 20', req.userId);
-  res.json({ success: true, data: events || [] });
+// ── Hospitals ────────────────────────────────────────────────────
+
+router.get('/hospitals/nearby', authenticate, async (req, res) => {
+  try {
+    const { lat, lng, radius, english_only } = req.query;
+    if (!lat || !lng) return res.status(400).json({ success: false, error: 'lat and lng are required' });
+
+    const results = await searchNearby(
+      parseFloat(lat),
+      parseFloat(lng),
+      radius ? parseFloat(radius) : 10,
+      { englishOnly: english_only === 'true' }
+    );
+    res.json({ success: true, data: results, count: results.length });
+  } catch (error) {
+    logger.error(`[v1] Hospital search failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Hospital search failed' });
+  }
 });
 
-router.get('/subscriptions/invoices', requireAuth, async (req, res) => {
-  res.json({ success: true, data: [] });
+// ── Review Votes (idempotent upsert) ─────────────────────────────
+
+router.post('/reviews/:id/vote', authenticate, async (req, res) => {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    const { vote_type } = req.body;
+    if (!['helpful', 'unhelpful', 'flag'].includes(vote_type)) {
+      return res.status(400).json({ success: false, error: 'vote_type must be helpful, unhelpful, or flag' });
+    }
+
+    const review = await db.get('SELECT id FROM reviews WHERE id = $1', reviewId);
+    if (!review) return res.status(404).json({ success: false, error: 'Review not found' });
+
+    // Idempotent upsert
+    await db.run(`
+      INSERT INTO review_votes (review_id, user_id, vote_type)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (review_id, user_id, vote_type) DO NOTHING
+    `, reviewId, req.userId, vote_type);
+
+    // Update helpful_count on the reviews table
+    if (vote_type === 'helpful') {
+      const count = await db.get('SELECT COUNT(*) as cnt FROM review_votes WHERE review_id = $1 AND vote_type = $2', reviewId, 'helpful');
+      await db.run('UPDATE reviews SET helpful_count = $1 WHERE id = $2', count?.cnt || 0, reviewId);
+    }
+
+    res.json({ success: true, message: 'Vote recorded' });
+  } catch (error) {
+    logger.error(`[v1] Review vote failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Vote failed' });
+  }
 });
 
-router.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
-  const totals = await db.get('SELECT COUNT(*)::int as users FROM users');
-  const reports = await db.get('SELECT COUNT(*)::int as reports FROM reports');
-  const tickets = await db.get('SELECT COUNT(*)::int as tickets FROM support_tickets');
-  res.json({ success: true, data: { users: totals?.users || 0, reports: reports?.reports || 0, supportTickets: tickets?.tickets || 0 } });
+router.delete('/reviews/:id/vote', authenticate, async (req, res) => {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    const { vote_type } = req.body;
+    if (!['helpful', 'unhelpful', 'flag'].includes(vote_type)) {
+      return res.status(400).json({ success: false, error: 'vote_type must be helpful, unhelpful, or flag' });
+    }
+
+    await db.run(
+      'DELETE FROM review_votes WHERE review_id = $1 AND user_id = $2 AND vote_type = $3',
+      reviewId, req.userId, vote_type
+    );
+
+    if (vote_type === 'helpful') {
+      const count = await db.get('SELECT COUNT(*) as cnt FROM review_votes WHERE review_id = $1 AND vote_type = $2', reviewId, 'helpful');
+      await db.run('UPDATE reviews SET helpful_count = $1 WHERE id = $2', count?.cnt || 0, reviewId);
+    }
+
+    res.json({ success: true, message: 'Vote removed' });
+  } catch (error) {
+    logger.error(`[v1] Vote removal failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Vote removal failed' });
+  }
 });
 
-router.post('/admin/announcements', requireAuth, requireAdmin, async (req, res) => {
-  const { title, message } = req.body || {};
-  if (!title || !message) return res.status(400).json({ success: false, error: 'title and message are required' });
-  await db.run('INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)', req.userId, 'admin_announcement_created', JSON.stringify({ title, message }));
-  res.status(201).json({ success: true, data: { created: true } });
+// ── Analytics Funnels ────────────────────────────────────────────
+
+router.post('/analytics/funnel', requireAdmin, async (req, res) => {
+  try {
+    const { name, steps } = req.body;
+    if (!name || !Array.isArray(steps)) return res.status(400).json({ success: false, error: 'name and steps[] required' });
+    const funnel = await createFunnel(name, steps);
+    res.status(201).json({ success: true, data: funnel });
+  } catch (error) {
+    logger.error(`[v1] Create funnel failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Create funnel failed' });
+  }
 });
 
-router.post('/support/tickets/:id/rate', requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const { rating, comment } = req.body || {};
-  if (!rating || Number(rating) < 1 || Number(rating) > 5) return res.status(400).json({ success: false, error: 'rating must be 1-5' });
-  await db.run('INSERT INTO events (user_id, event_name, event_data) VALUES (?, ?, ?)', req.userId, 'support_ticket_rated', JSON.stringify({ ticketId: Number(id), rating: Number(rating), comment: comment || null }));
-  res.json({ success: true, data: { ticketId: Number(id), rating: Number(rating) } });
+router.post('/analytics/funnel/:name/track', authenticate, async (req, res) => {
+  try {
+    const { step, sessionId, metadata } = req.body;
+    if (!step) return res.status(400).json({ success: false, error: 'step is required' });
+    const result = await trackFunnelStep(req.params.name, req.userId, step, sessionId, metadata);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[v1] Track funnel step failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Track funnel failed' });
+  }
+});
+
+router.get('/analytics/funnel/:name', requireAdmin, async (req, res) => {
+  try {
+    const stats = await getFunnelStats(req.params.name, req.query.since);
+    if (!stats) return res.status(404).json({ success: false, error: 'Funnel not found' });
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    logger.error(`[v1] Funnel stats failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Funnel stats failed' });
+  }
+});
+
+router.get('/analytics/engagement', requireAdmin, async (req, res) => {
+  try {
+    const metrics = await getEngagementMetrics(req.query.period);
+    if (!metrics) return res.status(500).json({ success: false, error: 'Failed to compute metrics' });
+    res.json({ success: true, data: metrics });
+  } catch (error) {
+    logger.error(`[v1] Engagement metrics failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Engagement metrics failed' });
+  }
+});
+
+// ── A/B Experiments ──────────────────────────────────────────────
+
+router.post('/experiments', requireAdmin, async (req, res) => {
+  try {
+    const { name, description, variants, trafficPct } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+    const exp = await createExperiment(name, description, variants, trafficPct);
+    res.status(201).json({ success: true, data: exp });
+  } catch (error) {
+    logger.error(`[v1] Create experiment failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Create experiment failed' });
+  }
+});
+
+router.post('/experiments/:id/start', requireAdmin, async (req, res) => {
+  try { await startExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/experiments/:id/pause', requireAdmin, async (req, res) => {
+  try { await pauseExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/experiments/:id/complete', requireAdmin, async (req, res) => {
+  try { await completeExperiment(req.params.id); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.get('/experiments/:id/assign', authenticate, async (req, res) => {
+  try {
+    const variant = await getAssignment(parseInt(req.params.id, 10), req.userId);
+    res.json({ success: true, data: { variant } });
+  } catch (error) {
+    logger.error(`[v1] Assignment failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Assignment failed' });
+  }
+});
+
+router.post('/experiments/:id/expose', authenticate, async (req, res) => {
+  try {
+    const { eventName, metadata } = req.body;
+    if (!eventName) return res.status(400).json({ success: false, error: 'eventName required' });
+    const result = await recordExposure(parseInt(req.params.id, 10), req.userId, eventName, metadata);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error(`[v1] Exposure recording failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Exposure recording failed' });
+  }
+});
+
+router.get('/experiments/:id/results', requireAdmin, async (req, res) => {
+  try {
+    const results = await getExperimentResults(parseInt(req.params.id, 10));
+    if (!results) return res.status(404).json({ success: false, error: 'Experiment not found' });
+    res.json({ success: true, data: results });
+  } catch (error) {
+    logger.error(`[v1] Experiment results failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Experiment results failed' });
+  }
 });
 
 export default router;

@@ -11,6 +11,7 @@ import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import CookieConsent from './components/CookieConsent';
 import CallModal from './components/CallModal';
+import InstallPrompt from './components/InstallPrompt';
 import { useTelemetry } from './hooks/useTelemetry';
 const Home = lazy(() => import('./pages/Home'));
 const Login = lazy(() => import('./pages/Login'));
@@ -160,6 +161,7 @@ function App() {
         <Toaster position="top-right" />
         <CookieConsent />
         <CallModal />
+        <InstallPrompt />
         <Suspense fallback={<LoadingFallback />}>
         <Routes>
           <Route element={<Layout />}>

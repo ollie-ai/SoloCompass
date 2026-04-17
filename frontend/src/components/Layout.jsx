@@ -44,32 +44,20 @@ const Layout = () => {
       </a>
       <Navbar />
       {isAuthenticated && <AnnouncementBanner />}
-      <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
-
-      {/* Sidebar + content wrapper */}
-      <div className="flex flex-1">
-        {showSidebar && <AppSidebar />}
-
-        <main
-          id="main-content"
-          className={`flex-1 pt-20 min-h-full ${showSidebar ? 'lg:pl-64' : ''}`}
-          tabIndex={-1}
-        >
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="min-h-full"
-            >
-              <Outlet />
-            </motion.div>
-          </AnimatePresence>
-        </main>
-      </div>
-
+      <main id="main-content" role="main" className="flex-1 pt-20" tabIndex={-1}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={location.pathname}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="min-h-full"
+          >
+            <Outlet />
+          </motion.div>
+        </AnimatePresence>
+      </main>
       <AIChat />
       {isPublicPage && <Footer />}
     </div>

@@ -56,10 +56,7 @@ async function bootstrap() {
     const { startScheduledCheckInMonitor } = await import('./services/checkinMonitor.js');
     const { startCriticalEventQueue } = await import('./services/criticalEventQueue.js');
     const { generateSitemap } = await import('./services/sitemapService.js');
-    const { startTripAutoStatusService } = await import('./services/tripAutoStatus.js');
-    const { startFlightStatusPoller } = await import('./services/flightStatusPoller.js');
-    const { startSafetyDataRefresh } = await import('./services/safetyDataRefresh.js');
-    const { startUsageResetService } = await import('./services/usageReset.js');
+    const { startHospitalRefreshScheduler } = await import('./services/hospitalsService.js');
 
     // route imports
     const { default: authRoutes } = await import('./routes/auth.js');
@@ -118,7 +115,7 @@ async function bootstrap() {
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
-    const { default: settingsRoutes } = await import('./routes/settings.js');
+    const { default: v1Routes } = await import('./routes/v1.js');
 
     const app = express();
     const server = createServer(app);
@@ -241,9 +238,7 @@ async function bootstrap() {
     app.use('/api/translate', translateRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
-    app.use('/api/sessions', sessionsRoutes);
-    app.use('/api/account', accountRoutes);
-    app.use('/api/trips', photosRoutes);
+    app.use('/api/v1', v1Routes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {
@@ -307,10 +302,7 @@ async function bootstrap() {
         console.log(`\x1b[32m SoloCompass Core Online :: Listening on Port ${PORT} \x1b[0m`);
         initWebSocketServer(server);
         startScheduledCheckInMonitor();
-        startTripAutoStatusService();
-        startFlightStatusPoller();
-        startSafetyDataRefresh();
-        startUsageResetService();
+        startHospitalRefreshScheduler();
         generateSitemap().catch(err => logger.error(`[SEO] Sitemap fail: ${err.message}`));
         
         // Automated Production Seeding (Phase 5) - Development only

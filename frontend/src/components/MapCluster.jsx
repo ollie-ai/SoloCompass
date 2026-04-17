@@ -1,173 +1,99 @@
 import { useEffect, useRef } from 'react';
-import PropTypes from 'prop-types';
-import L from 'leaflet';
 import { useMap } from 'react-leaflet';
+import L from 'leaflet';
 
-// ─── Cluster icon factory ─────────────────────────────────────────────────────
-function createClusterIcon(count, color = '#10b981') {
-  const size = count < 10 ? 36 : count < 100 ? 42 : 50;
-  return L.divIcon({
-    className: 'sc-cluster-icon',
-    html: `
-      <div style="
-        width:${size}px;height:${size}px;
-        background:${color};
-        border:2.5px solid white;
-        border-radius:50%;
-        display:flex;align-items:center;justify-content:center;
-        color:white;font-weight:900;font-size:${size < 42 ? 11 : 13}px;
-        box-shadow:0 2px 10px ${color}55;
-      ">${count}</div>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
+const CLUSTER_RADIUS_PX = 40;
+
+function latLngToPoint(map, lat, lng) {
+  return map.latLngToContainerPoint([lat, lng]);
+}
+
+function buildClusters(map, markers) {
+  const clusters = [];
+  const assigned = new Set();
+
+  markers.forEach((marker, i) => {
+    if (assigned.has(i)) return;
+    const pt = latLngToPoint(map, marker.lat, marker.lng);
+    const cluster = { members: [marker], center: { lat: marker.lat, lng: marker.lng }, pt };
+    assigned.add(i);
+
+    markers.forEach((other, j) => {
+      if (i === j || assigned.has(j)) return;
+      const otherPt = latLngToPoint(map, other.lat, other.lng);
+      const dx = pt.x - otherPt.x;
+      const dy = pt.y - otherPt.y;
+      if (Math.sqrt(dx * dx + dy * dy) < CLUSTER_RADIUS_PX) {
+        cluster.members.push(other);
+        assigned.add(j);
+      }
+    });
+
+    clusters.push(cluster);
   });
+
+  return clusters;
 }
 
 /**
- * MapCluster — lightweight client-side marker clustering without extra packages.
+ * MapCluster — renders markers on a Leaflet map and clusters nearby ones.
+ * Must be used inside a <MapContainer>.
  *
- * Groups an array of `{ position, ...markerProps }` into visual clusters based
- * on a configurable pixel radius. Zoom in to expand clusters to individual pins.
- *
- * Must be rendered inside a `<MapContainer>`.
- *
- * @example
- * <MapCluster
- *   markers={[
- *     { position: [48.8, 2.3], popup: 'Paris', color: '#ef4444' },
- *     { position: [51.5, -0.1], popup: 'London' },
- *   ]}
- *   clusterRadius={60}
- *   color="#10b981"
- * />
+ * Props:
+ *   markers: Array<{ lat, lng, popup?, id? }>
+ *   clusterColor: string (default '#10b981')
  */
-const MapCluster = ({
-  markers = [],
-  clusterRadius = 60,
-  color = '#10b981',
-  markerSize = 28,
-  onMarkerClick,
-}) => {
+export default function MapCluster({ markers = [], clusterColor = '#10b981' }) {
   const map = useMap();
   const layerRef = useRef(null);
 
   useEffect(() => {
     if (!map || !markers.length) return;
 
-    function buildClusters() {
-      // Remove previous layer
+    const render = () => {
       if (layerRef.current) {
-        layerRef.current.clearLayers();
-      } else {
-        layerRef.current = L.layerGroup().addTo(map);
+        map.removeLayer(layerRef.current);
       }
 
-      // Project all markers to pixel space at current zoom
-      const zoom = map.getZoom();
-      const projected = markers.map((m, idx) => ({
-        ...m,
-        idx,
-        px: map.project(m.position, zoom),
-        clustered: false,
-      }));
+      const group = L.layerGroup();
+      const clusters = buildClusters(map, markers);
 
-      const clusters = [];
-      for (let i = 0; i < projected.length; i++) {
-        if (projected[i].clustered) continue;
-        const cluster = { points: [projected[i]], center: projected[i].px };
-        projected[i].clustered = true;
-        for (let j = i + 1; j < projected.length; j++) {
-          if (projected[j].clustered) continue;
-          const dx = projected[j].px.x - cluster.center.x;
-          const dy = projected[j].px.y - cluster.center.y;
-          if (Math.sqrt(dx * dx + dy * dy) < clusterRadius) {
-            cluster.points.push(projected[j]);
-            projected[j].clustered = true;
-            // Recalculate cluster center (centroid)
-            cluster.center = {
-              x: cluster.points.reduce((s, p) => s + p.px.x, 0) / cluster.points.length,
-              y: cluster.points.reduce((s, p) => s + p.px.y, 0) / cluster.points.length,
-            };
-          }
-        }
-        clusters.push(cluster);
-      }
-
-      for (const cluster of clusters) {
-        const latlng = map.unproject(cluster.center, zoom);
-
-        if (cluster.points.length === 1) {
-          const m = cluster.points[0];
-          // Single marker
+      clusters.forEach(({ members, center }) => {
+        if (members.length === 1) {
+          const m = members[0];
           const icon = L.divIcon({
-            className: 'sc-map-marker',
-            html: `<div style="
-              width:${markerSize}px;height:${markerSize}px;
-              background:${m.color || color};
-              border:2px solid white;
-              border-radius:50% 50% 50% 0;
-              transform:rotate(-45deg);
-              box-shadow:0 2px 6px rgba(0,0,0,0.2);
-            "><div style="
-              width:${Math.round(markerSize * 0.3)}px;height:${Math.round(markerSize * 0.3)}px;
-              background:white;border-radius:50%;
-              position:absolute;top:50%;left:50%;
-              transform:translate(-50%,-50%) rotate(45deg);
-            "></div></div>`,
-            iconSize:    [markerSize, markerSize],
-            iconAnchor:  [markerSize / 2, markerSize],
-            popupAnchor: [0, -markerSize],
+            className: '',
+            html: `<div style="width:14px;height:14px;background:${clusterColor};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
           });
-          const marker = L.marker(m.position, { icon }).addTo(layerRef.current);
-          if (m.popup) marker.bindPopup(String(m.popup));
-          if (m.tooltip) marker.bindTooltip(String(m.tooltip));
-          if (onMarkerClick) marker.on('click', () => onMarkerClick(m));
+          const marker = L.marker([m.lat, m.lng], { icon });
+          if (m.popup) marker.bindPopup(m.popup);
+          group.addLayer(marker);
         } else {
-          // Cluster bubble — click zooms in
-          const clusterMarker = L.marker(latlng, {
-            icon: createClusterIcon(cluster.points.length, color),
-          }).addTo(layerRef.current);
-          clusterMarker.on('click', () => {
-            map.setView(latlng, map.getZoom() + 2, { animate: true });
+          const size = Math.min(36, 20 + members.length * 2);
+          const icon = L.divIcon({
+            className: '',
+            html: `<div style="width:${size}px;height:${size}px;background:${clusterColor};border:2px solid white;border-radius:50%;box-shadow:0 1px 6px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700">${members.length}</div>`,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2],
           });
-          clusterMarker.bindTooltip(`${cluster.points.length} locations — click to expand`, {
-            direction: 'top',
-            offset: [0, -8],
-          });
+          L.marker([center.lat, center.lng], { icon }).addTo(group);
         }
-      }
-    }
+      });
 
-    buildClusters();
-    map.on('zoomend moveend', buildClusters);
+      group.addTo(map);
+      layerRef.current = group;
+    };
+
+    render();
+    map.on('zoomend moveend', render);
 
     return () => {
-      map.off('zoomend moveend', buildClusters);
-      if (layerRef.current) {
-        layerRef.current.clearLayers();
-        layerRef.current.remove();
-        layerRef.current = null;
-      }
+      map.off('zoomend moveend', render);
+      if (layerRef.current) map.removeLayer(layerRef.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, markers, clusterRadius, color, markerSize]);
+  }, [map, markers, clusterColor]);
 
   return null;
-};
-
-MapCluster.propTypes = {
-  markers: PropTypes.arrayOf(
-    PropTypes.shape({
-      position: PropTypes.arrayOf(PropTypes.number).isRequired,
-      popup:    PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
-      tooltip:  PropTypes.string,
-      color:    PropTypes.string,
-    })
-  ),
-  clusterRadius: PropTypes.number,
-  color:         PropTypes.string,
-  markerSize:    PropTypes.number,
-  onMarkerClick: PropTypes.func,
-};
-
-export default MapCluster;
+}

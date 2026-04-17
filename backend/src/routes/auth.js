@@ -7,10 +7,21 @@ import { body, validationResult } from 'express-validator';
 import rateLimit from 'express-rate-limit';
 import db from '../db.js';
 import { generateToken, generateRefreshToken, verifyRefreshToken, getJWTSecret, hashToken, authenticate } from '../middleware/auth.js';
-import { sendWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../services/email.js';
+import { sendWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail, sendMagicLinkEmail } from '../services/email.js';
 import logger from '../services/logger.js';
 
 const router = express.Router();
+
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email',
+  'yopmail.com', 'sharklasers.com', 'guerrillamailblock.com', 'grr.la',
+  'guerrillamail.info', 'guerrillamail.biz', 'guerrillamail.de', 'guerrillamail.net',
+  'guerrillamail.org', 'spam4.me', 'trashmail.com', 'trashmail.me', 'trashmail.net',
+  'dispostable.com', 'mailnull.com', 'spamgourmet.com', 'tempr.email',
+  'discard.email', 'fakeinbox.com', 'mailnesia.com', '10minutemail.com',
+  'tempinbox.com', 'throwam.com', 'spamherelots.com', 'binkmail.com', 'bob.email',
+  'clrmail.com', 'dcctb.com', 'drdrb.net',
+]);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -133,7 +144,14 @@ const handleValidationErrors = (req, res, next) => {
 
 router.post('/register', [
   authLimiter,
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().normalizeEmail().withMessage('Valid email is required')
+    .custom((email) => {
+      const domain = email.split('@')[1]?.toLowerCase();
+      if (domain && DISPOSABLE_EMAIL_DOMAINS.has(domain)) {
+        throw new Error('Disposable email addresses are not allowed');
+      }
+      return true;
+    }),
   body('password')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
@@ -159,14 +177,14 @@ router.post('/register', [
     const isVerified = process.env.NODE_ENV === 'development' ? true : false;
     
     const result = await db.run(
-      'INSERT INTO users (email, password, name, role, is_verified, verification_token) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (email, password, name, role, email_verified, verification_token) VALUES (?, ?, ?, ?, ?, ?)',
       email, hashedPassword, name || null, 'user', isVerified, verificationToken
     );
 
     const userId = result.lastInsertRowid;
     
     // Fetch user for token generation - explicitly select only needed columns to prevent exposing sensitive data
-    const user = await db.get('SELECT id, email, name, role, is_verified, is_premium, subscription_tier, premium_expires_at, created_at, theme_preference, admin_level FROM users WHERE id = ?', userId);
+    const user = await db.get('SELECT id, email, name, role, email_verified, is_premium, subscription_tier, premium_expires_at, created_at, theme_preference, admin_level FROM users WHERE id = ?', userId);
     const token = generateToken({ id: user.id, email: user.email, role: user.role });
     const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
     const sessionId = uuidv4();
@@ -232,16 +250,7 @@ router.post('/login', [
     const { email, password } = req.body;
     const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
-    // IP-level lockout check
-    if (checkIpLockout(ipAddress)) {
-      logger.warn(`[Auth] Login blocked - IP locked out | IP: ${ipAddress}`);
-      return res.status(423).json({
-        success: false,
-        error: { code: 'IP_LOCKED', message: 'Too many failed attempts from this IP. Try again in 30 minutes.' }
-      });
-    }
-
-    const user = await db.get('SELECT id, email, password, name, role, is_verified, is_premium, subscription_tier, premium_expires_at, failed_attempts, locked_until, admin_level FROM users WHERE email = ?', email); // FIXED: was SELECT * which exposed sensitive fields
+    const user = await db.get('SELECT id, email, password, name, role, email_verified, is_premium, subscription_tier, premium_expires_at, failed_attempts, locked_until, admin_level FROM users WHERE email = ?', email); // FIXED: was SELECT * which exposed sensitive fields
     if (!user) {
       recordIpFailure(ipAddress);
       return res.status(401).json({
@@ -275,6 +284,10 @@ router.post('/login', [
         });
       }
       await db.run('UPDATE users SET failed_attempts = ? WHERE id = ?', newFailedAttempts, user.id);
+      // Log failed attempt
+      try {
+        await db.run('INSERT INTO login_attempts (ip_address, user_id, email, success) VALUES (?, ?, ?, ?)', ipAddress, user.id, email, false);
+      } catch {}
       return res.status(401).json({
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Invalid credentials' }
@@ -287,7 +300,7 @@ router.post('/login', [
     }
     clearIpFailure(ipAddress);
 
-    if (!user.is_verified && user.role !== 'admin') {
+    if (!user.email_verified && user.role !== 'admin') {
       return res.status(401).json({
         success: false,
         error: { code: 'EMAIL_NOT_VERIFIED', message: 'Please verify your email address before logging in.' }
@@ -300,6 +313,7 @@ router.post('/login', [
     const refreshHash = hashToken(refreshToken);
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
     const deviceInfo = parseUserAgent(userAgent);
     
@@ -349,6 +363,11 @@ router.post('/login', [
     }
     userWithoutPassword.quiz_completed = quizCompleted;
     
+    // Log successful attempt
+    try {
+      await db.run('INSERT INTO login_attempts (ip_address, user_id, email, success) VALUES (?, ?, ?, ?)', ipAddress, user.id, email, true);
+    } catch {}
+
     res.json({ success: true, data: { user: userWithoutPassword } });
   } catch (error) {
     logger.error(`[Auth] Login failed: ${error.message}`);
@@ -516,7 +535,7 @@ router.get('/me', async (req, res) => {
     }
 
     const decoded = jwt.verify(token, getSecret());
-    const user = await db.get('SELECT id, email, name, role, is_verified, is_premium, subscription_tier, premium_expires_at, created_at, theme_preference, admin_level FROM users WHERE id = ?', decoded.userId);
+    const user = await db.get('SELECT id, email, name, role, email_verified, is_premium, subscription_tier, premium_expires_at, created_at, theme_preference, admin_level FROM users WHERE id = ?', decoded.userId);
 
     if (!user) {
       return res.status(401).json({
@@ -527,8 +546,8 @@ router.get('/me', async (req, res) => {
 
     user.admin_level = user.admin_level || 'support';
 
-    // Map is_verified to emailVerified for frontend compatibility
-    user.emailVerified = !!user.is_verified;
+    // Map email_verified to emailVerified for frontend compatibility
+    user.emailVerified = !!user.email_verified;
 
     // Check quiz status for onboarding flow
     const quiz = await db.get('SELECT id FROM quiz_responses WHERE user_id = ? AND result IS NOT NULL', user.id);
@@ -724,14 +743,14 @@ router.post('/resend-verification', [
 ], handleValidationErrors, async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await db.get('SELECT id, is_verified, verification_token FROM users WHERE email = ?', email);
+    const user = await db.get('SELECT id, email_verified, verification_token FROM users WHERE email = ?', email);
 
     if (!user) {
       // Don't reveal if user exists, but say we sent it if they do
       return res.json({ success: true, data: { message: 'If the account exists and is not verified, a new verification email has been sent.' } });
     }
 
-    if (user.is_verified) {
+    if (user.email_verified) {
       return res.status(400).json({
         success: false,
         error: { code: 'ALREADY_VERIFIED', message: 'Account is already verified' }
@@ -756,6 +775,99 @@ router.post('/resend-verification', [
   }
 });
 
+// Magic link login - request
+router.post('/magic-link', [
+  passwordResetLimiter,
+  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+], handleValidationErrors, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await db.get('SELECT id, email, name, email_verified FROM users WHERE email = ?', email);
+    
+    // Always return success to avoid email enumeration
+    if (!user) {
+      return res.json({ success: true, data: { message: 'If an account exists, a magic link has been sent.' } });
+    }
+
+    const token = uuidv4();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
+
+    // Invalidate old unused tokens for this user
+    await db.run('DELETE FROM magic_link_tokens WHERE user_id = ? AND used = false', user.id);
+    
+    await db.run(
+      'INSERT INTO magic_link_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+      user.id, token, expiresAt
+    );
+
+    const magicLinkUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/magic-link?token=${token}`;
+    
+    // Send magic link email
+    try {
+      await sendMagicLinkEmail(email, magicLinkUrl, user.name || 'Explorer');
+    } catch (emailError) {
+      logger.error(`[Auth] Magic link email failed: ${emailError.message}`);
+    }
+
+    res.json({ success: true, data: { message: 'If an account exists, a magic link has been sent.' } });
+  } catch (error) {
+    logger.error(`[Auth] Magic link request failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } });
+  }
+});
+
+// Magic link verify
+router.post('/magic-link/verify', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Token is required' } });
+    }
+
+    const now = new Date().toISOString();
+    const record = await db.get(
+      'SELECT ml.id, ml.user_id, ml.used, u.id as uid, u.email, u.name, u.role, u.is_premium, u.subscription_tier, u.admin_level FROM magic_link_tokens ml JOIN users u ON u.id = ml.user_id WHERE ml.token = ? AND ml.expires_at > ? AND ml.used = false',
+      token, now
+    );
+
+    if (!record) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid or expired magic link' } });
+    }
+
+    // Mark token as used
+    await db.run('UPDATE magic_link_tokens SET used = true WHERE id = ?', record.id);
+    
+    // Ensure email is verified
+    await db.run('UPDATE users SET email_verified = true WHERE id = ?', record.user_id);
+
+    const user = { id: record.uid, email: record.email, name: record.name, role: record.role, is_premium: record.is_premium, subscription_tier: record.subscription_tier, admin_level: record.admin_level };
+    
+    const sessionId = uuidv4();
+    const refreshToken = generateRefreshToken(user);
+    const refreshHash = hashToken(refreshToken);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const deviceInfo = parseUserAgent(userAgent);
+
+    await db.run(
+      'INSERT INTO sessions (id, user_id, refresh_token, device_info, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      sessionId, user.id, refreshHash, deviceInfo, ipAddress, userAgent, expiresAt
+    );
+
+    const tokenWithSession = generateToken(user, sessionId);
+    const isProd = process.env.NODE_ENV === 'production';
+
+    res.cookie('token', tokenWithSession, { httpOnly: true, secure: isProd, sameSite: 'lax', maxAge: 15 * 60 * 1000 });
+    res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: isProd, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
+
+    res.json({ success: true, data: { user, message: 'Logged in via magic link' } });
+  } catch (error) {
+    logger.error(`[Auth] Magic link verify failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } });
+  }
+});
+
 router.get('/verify', async (req, res) => {
   try {
     const { token } = req.query;
@@ -770,7 +882,7 @@ router.get('/verify', async (req, res) => {
       error: { code: 'INVALID_TOKEN', message: 'Invalid or expired verification token' }
     });
 
-    await db.run('UPDATE users SET is_verified = true, verification_token = NULL WHERE id = ?', user.id);
+    await db.run('UPDATE users SET email_verified = true, verification_token = NULL WHERE id = ?', user.id);
 
     // Send Welcome Email now that they are verified
     sendWelcomeEmail(user.email, user.name || 'Explorer').catch(err => logger.error(`[Auth] Welcome email failed: ${err.message}`));
@@ -807,7 +919,7 @@ router.get('/google/callback', async (req, res, next) => {
 
       const sessionId = uuidv4();
       const refreshHash = hashToken(refreshToken);
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
       await db.run(
         'INSERT INTO sessions (id, user_id, refresh_token, expires_at) VALUES (?, ?, ?, ?)',
         sessionId, user.id, refreshHash, expiresAt
@@ -820,15 +932,15 @@ router.get('/google/callback', async (req, res, next) => {
       res.cookie('token', tokenWithSession, {
         httpOnly: true,
         secure: isProd,
-        sameSite: isProd ? 'none' : 'lax',
+        sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
         secure: isProd,
-        sameSite: isProd ? 'none' : 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard`);

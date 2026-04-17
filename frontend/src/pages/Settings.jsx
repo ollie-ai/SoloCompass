@@ -13,6 +13,14 @@ import VerificationModal from '../components/VerificationModal';
 import { ACTIVITY_INTERESTS, VIBE_INTERESTS } from '../constants/interests';
 import DashboardShell from '../components/dashboard/DashboardShell';
 import PageHeader from '../components/PageHeader';
+import ChangePasswordForm from '../components/ChangePasswordForm';
+import SessionsList from '../components/SessionsList';
+import TwoFactorSetup from '../components/TwoFactorSetup';
+import AccountDeletionFlow from '../components/AccountDeletionFlow';
+import PrivacySettingsForm from '../components/PrivacySettingsForm';
+import AppPreferencesForm from '../components/AppPreferencesForm';
+import ProfileCompletenessCard from '../components/ProfileCompletenessCard';
+import TravelPersonaBadge from '../components/TravelPersonaBadge';
 
 const EASE = [0.16, 1, 0.3, 1];
 const cardClass = "glass-card p-6 rounded-3xl border border-base-300/50";
@@ -604,6 +612,14 @@ const Settings = () => {
                             <div className="flex-1 text-center sm:text-left min-w-0">
                               <p className="text-xs font-black text-brand-vibrant uppercase tracking-widest mb-1">Your DNA Vibe</p>
                               <h4 className="text-2xl font-black text-slate-900 capitalize leading-none mb-2">{soloId.travelDna.style}</h4>
+                              <div className="flex flex-wrap gap-2 justify-center sm:justify-start mb-2">
+                                <TravelPersonaBadge
+                                  dominantStyle={soloId.travelDna.style}
+                                  travelPersona={soloId.travelDna.travelPersona}
+                                  size="sm"
+                                  showDescription
+                                />
+                              </div>
                               <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-900 text-white">Social: {soloId.travelDna.socialStyle}</span>
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-900 text-white">Adventure: {soloId.travelDna.adventureLevel}</span>
@@ -744,6 +760,17 @@ const Settings = () => {
                     </div>
                   </div>
 
+                  <div className={cardClass}>
+                    <div className="p-6 border-b border-base-300/50">
+                      <h3 className="text-base font-black text-base-content flex items-center gap-2">
+                        <CheckCircle size={16} className="text-brand-vibrant" /> Profile Completeness
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      <ProfileCompletenessCard />
+                    </div>
+                  </div>
+
                   {hasUnsavedChanges && (
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
@@ -814,42 +841,7 @@ const Settings = () => {
                       </h3>
                     </div>
                     <div className="p-6">
-                      <form onSubmit={handlePasswordChange} className="space-y-5">
-                        <Input
-                          label="Current Password"
-                          type="password"
-                          value={passwordData.currentPassword}
-                          onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-                          placeholder="Enter current password"
-                        />
-                        <div className="grid sm:grid-cols-2 gap-5">
-                          <Input
-                            label="New Password"
-                            type="password"
-                            value={passwordData.newPassword}
-                            onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                            placeholder="At least 8 characters"
-                          />
-                          <Input
-                            label="Confirm New Password"
-                            type="password"
-                            value={passwordData.confirmPassword}
-                            onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                            placeholder="Repeat new password"
-                          />
-                        </div>
-                        <p className="text-xs text-base-content/60 font-medium">Use at least 8 characters, including a number and a symbol.</p>
-                        <div className="flex justify-end pt-2">
-                          <button
-                            type="submit"
-                            disabled={saving}
-                            className="inline-flex items-center gap-2 bg-brand-vibrant text-white shadow-lg shadow-brand-vibrant/20 hover:bg-green-600 disabled:opacity-30 rounded-xl font-black px-6 py-2.5 text-xs uppercase tracking-tight transition-all"
-                          >
-                            <Lock size={14} />
-                            {saving ? 'UPDATING...' : 'Update Password'}
-                          </button>
-                        </div>
-                      </form>
+                      <ChangePasswordForm />
                     </div>
                   </div>
 
@@ -860,28 +852,7 @@ const Settings = () => {
                       </h3>
                     </div>
                     <div className="p-6">
-                      <div className="flex items-center justify-between p-4 rounded-xl bg-base-200 border border-base-300/50">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-lg bg-brand-vibrant/10 flex items-center justify-center">
-                            <Monitor size={16} className="text-brand-vibrant" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-base-content">Current device</p>
-                            <p className="text-xs text-base-content/60 font-medium">This browser — active now</p>
-                          </div>
-                        </div>
-                        <span className="text-xs font-bold text-brand-vibrant bg-brand-vibrant/10 px-2.5 py-1 rounded-full">Current</span>
-                      </div>
-                      <div className="mt-4">
-                        <button
-                          type="button"
-                          onClick={handleLogoutOtherDevices}
-                          className="inline-flex items-center gap-2 text-sm text-base-content/80 hover:text-brand-vibrant font-bold transition-colors"
-                        >
-                          <LogOut size={14} /> Log out other devices
-                        </button>
-                        <p className="text-xs text-base-content/60 font-medium mt-2">If anything looks unfamiliar, log out other devices immediately.</p>
-                      </div>
+                      <SessionsList />
                     </div>
                   </div>
 
@@ -931,15 +902,14 @@ const Settings = () => {
                     </div>
                   </div>
 
-                  <div className={`${cardClass} p-5 border-dashed border-base-300/70`}>
-                    <div className="flex items-start gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-base-200 flex items-center justify-center shrink-0">
-                        <Lock size={18} className="text-base-content/40" />
-                      </div>
-                      <div>
-                        <p className="font-bold text-base-content">Two-factor authentication</p>
-                        <p className="text-sm text-base-content/60 font-medium mt-1">Coming later — we'll notify you when it's available.</p>
-                      </div>
+                  <div className={cardClass}>
+                    <div className="p-6 border-b border-base-300/50">
+                      <h3 className="text-lg font-black text-base-content flex items-center gap-2">
+                        <Smartphone size={18} className="text-brand-vibrant" /> Two-Factor Authentication
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      <TwoFactorSetup />
                     </div>
                   </div>
                 </motion.div>
@@ -1363,44 +1333,29 @@ const Settings = () => {
                     </div>
                   </div>
 
-                  <div className="bg-error/5 p-6 rounded-2xl border-2 border-red-500/10">
-                    <h3 className="text-base font-black text-error mb-4 flex items-center gap-2">
-                      <Trash2 size={18} /> Account Termination
-                    </h3>
-
-                    <div className="p-4 rounded-xl bg-base-100 border border-red-500/15 mb-4">
-                      <div className="flex gap-3">
-                        <AlertTriangle className="text-error shrink-0 mt-0.5" size={18} />
-                        <div>
-                          <h4 className="font-black text-red-900 mb-1">Permanently Delete Account</h4>
-                          <p className="text-sm text-error leading-relaxed font-medium">
-                            Once you delete your account, there is no going back. All itineraries, safety data, and account information will be wiped immediately.
-                          </p>
-                          <p className="text-xs text-error/80 font-medium mt-2">
-                            We recommend downloading your data archive before deleting.
-                          </p>
-                        </div>
-                      </div>
+                  <div className={cardClass}>
+                    <div className="p-5 border-b border-base-300/50">
+                      <h3 className="text-base font-black text-base-content flex items-center gap-2">
+                        <Eye size={16} className="text-brand-vibrant" /> Profile Privacy Controls
+                      </h3>
                     </div>
-
-                    <p className="text-xs text-base-content/60 font-medium mb-3">
-                      Deleting your account permanently removes your trips, preferences, and associated account data.
-                    </p>
-
-                    <div className="flex flex-col sm:flex-row items-center gap-4 mt-6">
-                      <button
-                        onClick={handleDeleteAccount}
-                        disabled={saving}
-                        className="w-full sm:w-auto px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-[10px] uppercase tracking-widest"
-                      >
-                        {saving ? <RotateCcw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        {saving ? 'Processing...' : 'Delete My Account'}
-                      </button>
-                      <p className="text-[10px] text-base-content/40 font-bold italic">
-                        Wait! Have you downloaded your data archive yet?
-                      </p>
+                    <div className="p-5">
+                      <PrivacySettingsForm />
                     </div>
                   </div>
+
+                  <div className={cardClass}>
+                    <div className="p-5 border-b border-base-300/50">
+                      <h3 className="text-base font-black text-base-content flex items-center gap-2">
+                        <Globe size={16} className="text-brand-vibrant" /> App Preferences
+                      </h3>
+                    </div>
+                    <div className="p-5">
+                      <AppPreferencesForm />
+                    </div>
+                  </div>
+
+                  <AccountDeletionFlow />
                 </motion.div>
               )}
             </AnimatePresence>

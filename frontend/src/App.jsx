@@ -58,6 +58,12 @@ const GuardianAcknowledge = lazy(() => import('./pages/GuardianAcknowledge'));
 const GuardianDecline = lazy(() => import('./pages/GuardianDecline'));
 const SharedTrip = lazy(() => import('./pages/SharedTrip'));
 const BottomNav = lazy(() => import('./components/BottomNav'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
+const MagicLink = lazy(() => import('./pages/MagicLink'));
+const Profile = lazy(() => import('./pages/Profile'));
+const ProfileEdit = lazy(() => import('./pages/ProfileEdit'));
+const PublicProfile = lazy(() => import('./pages/PublicProfile'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
 
 function LoadingFallback() {
   return (
@@ -157,6 +163,10 @@ function App() {
             <Route path="/auth/google/callback" element={<OAuthCallback provider="google" />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
+            <Route path="/verify-email/:token" element={<VerifyEmail />} />
+            <Route path="/magic-link" element={<MagicLink />} />
+            <Route path="/profile/:id" element={<PublicProfile />} />
             <Route
               path="/dashboard"
               element={
@@ -200,6 +210,30 @@ function App() {
             <Route
               path="/quiz"
               element={<Quiz />}
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <Onboarding />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile/edit"
+              element={
+                <ProtectedRoute>
+                  <ProfileEdit />
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/destinations"

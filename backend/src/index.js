@@ -54,6 +54,7 @@ async function bootstrap() {
     const { default: logger } = await import('./services/logger.js');
     const { initWebSocketServer } = await import('./services/websocket.js');
     const { startScheduledCheckInMonitor } = await import('./services/checkinMonitor.js');
+    const { startEmailScheduler } = await import('./services/emailScheduler.js');
     const { generateSitemap } = await import('./services/sitemapService.js');
 
     // route imports
@@ -104,6 +105,8 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
+    const { default: twoFactorRoutes } = await import('./routes/twoFactor.js');
+    const { default: onboardingRoutes } = await import('./routes/onboarding.js');
 
     const app = express();
     const server = createServer(app);
@@ -202,6 +205,8 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
     app.use('/api/translate', translateRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
+    app.use('/api/users/me/2fa', twoFactorRoutes);
+    app.use('/api/onboarding', onboardingRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {
@@ -265,6 +270,7 @@ const { default: countriesRoutes } = await import('./routes/countries.js');
         console.log(`\x1b[32m SoloCompass Core Online :: Listening on Port ${PORT} \x1b[0m`);
         initWebSocketServer(server);
         startScheduledCheckInMonitor();
+        startEmailScheduler();
         generateSitemap().catch(err => logger.error(`[SEO] Sitemap fail: ${err.message}`));
         
         // Automated Production Seeding (Phase 5) - Development only

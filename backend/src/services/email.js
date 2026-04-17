@@ -95,4 +95,13 @@ export const sendTestEmail = async (email, templateType = 'welcome') => {
   return sendTemplateEmail(email, templateType, { name: 'Test User', dashboardUrl: '#' });
 };
 
+export const sendMagicLinkEmail = async (email, magicLinkUrl, name) => {
+  const { sendEmail } = await import('./resendClient.js');
+  return sendEmail({
+    to: email,
+    subject: 'Your SoloCompass Magic Link',
+    html: `<p>Hi ${name},</p><p>Click the link below to sign in to SoloCompass. This link expires in 15 minutes.</p><p><a href="${magicLinkUrl}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">Sign In with Magic Link</a></p><p>If you didn't request this, you can safely ignore this email.</p>`,
+  });
+};
+
 export { FROM_EMAIL };

@@ -1,6 +1,14 @@
-import express from 'express';
-import rateLimit from 'express-rate-limit';
-import { authenticate } from '../middleware/auth.js';
+import express from 'express'; 
+import { 
+    stripe,
+    createCheckoutSession, 
+    handleStripeWebhook, 
+    cancelSubscription, 
+    getSubscriptionStatus,
+    PLAN_PRICE_IDS 
+} from '../services/stripe.js';
+import { requireAuth } from '../middleware/auth.js';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 import db from '../db.js';
 import logger from '../services/logger.js';
 
@@ -260,11 +268,18 @@ router.post('/change-plan', authenticate, async (req, res) => {
     const plan = PLANS.find(p => p.id === planId || p.tier === planId.toLowerCase());
     if (!plan) return res.status(400).json({ success: false, error: `Unknown plan: ${planId}` });
 
-    const result = await changePlan({
-      userId: req.userId,
-      newPlanId: plan.id,
-      interval: ['month', 'year'].includes(interval) ? interval : 'month',
-      proration: proration || 'create_prorations',
+    await dispatchNotification(userId, 'subscription_cancelled', {
+      title: 'Subscription Cancelled',
+      message: `Your ${currentTier} subscription has been cancelled. You can upgrade anytime.`,
+      tier: currentTier,
+    });
+
+    res.json({ success: true, data: { message: 'Subscription cancelled successfully' } });
+  } catch (error) {
+    logger.error(`[Billing] Cancel subscription failed: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: { code: 'CANCEL_ERROR', message: 'Failed to cancel subscription' }
     });
 
     res.json({ success: true, newTier: result.newTier, message: `Plan changed to ${result.newTier}` });

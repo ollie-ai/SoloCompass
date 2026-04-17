@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, MapPin, Star, ExternalLink, Loader2, Navigation, Phone, Globe, Clock } from 'lucide-react';
 import api from '../lib/api';
 
@@ -23,6 +23,30 @@ const PlacesSearch = ({ destination, onPlaceSelect, compact = false }) => {
   const [selectedPlace, setSelectedPlace] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const response = await api.get('/places/search', {
+          params: { query: term, category: type || undefined, radius: 15000 }
+        });
+        const data = response.data?.data || [];
+        setSuggestions(data.slice(0, 8));
+        setShowSuggestions(true);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, type]);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -125,9 +149,32 @@ const PlacesSearch = ({ destination, onPlaceSelect, compact = false }) => {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setShowSuggestions(suggestions.length > 0)}
               placeholder={destination ? `Restaurants in ${destination}...` : 'Search for places...'}
               className="w-full pl-9 pr-3 py-3 rounded-xl border border-base-300 focus:border-brand-vibrant focus:ring-2 focus:ring-brand-vibrant/20 outline-none font-bold text-base-content"
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute top-full mt-1 left-0 right-0 z-20 bg-base-100 border border-base-300 rounded-xl shadow-lg max-h-72 overflow-y-auto">
+                {suggestions.map((place) => (
+                  <button
+                    type="button"
+                    key={`suggestion-${place.place_id}`}
+                    onClick={() => {
+                      setShowSuggestions(false);
+                      setQuery(place.name || place.address || '');
+                      handlePlaceClick(place);
+                    }}
+                    className="w-full px-3 py-2.5 text-left hover:bg-base-200 transition-colors border-b border-base-300/40 last:border-b-0"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-bold text-base-content truncate">{place.name || place.address}</p>
+                      {place.distance ? <span className="text-[10px] text-base-content/50">{Math.round(place.distance)}m</span> : null}
+                    </div>
+                    <p className="text-xs text-base-content/60 truncate">{place.address}</p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

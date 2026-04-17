@@ -1,7 +1,58 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, Check, Trash2, X, Settings, CheckCheck } from 'lucide-react';
 import api from '../lib/api';
 import { useWebSocket } from '../hooks/useWebSocket';
+
+/**
+ * Maps a notification to its deep-link route.
+ * Returns null if no deep link is available.
+ */
+function getNotificationRoute(notification) {
+  const type = notification.type;
+  const data = typeof notification.data === 'string'
+    ? (() => { try { return JSON.parse(notification.data); } catch { return {}; } })()
+    : (notification.data || {});
+
+  switch (type) {
+    case 'checkin_reminder':
+    case 'checkin_missed':
+    case 'checkin_sos':
+    case 'checkin_sent':
+    case 'checkin_confirmed':
+    case 'checkin_scheduled':
+      return '/safety';
+    case 'trip_update':
+    case 'trip_created':
+    case 'itinerary_generated':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'buddy_request':
+    case 'buddy_accepted':
+    case 'buddy_match':
+      return '/buddies';
+    case 'message':
+    case 'new_message':
+      return data.conversationId ? `/messages/${data.conversationId}` : '/messages';
+    case 'advisory':
+    case 'travel_advisory':
+      return data.destinationId ? `/destinations/${data.destinationId}` : '/advisories';
+    case 'budget_alert':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'flight_update':
+    case 'flight_change':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'document_expiry':
+      return data.tripId ? `/trips/${data.tripId}` : '/trips';
+    case 'billing':
+    case 'subscription':
+    case 'payment':
+      return '/settings?tab=billing';
+    case 'verification':
+      return '/settings?tab=profile';
+    default:
+      return null;
+  }
+}
 
 export default function NotificationCenter() {
   const [isOpen, setIsOpen] = useState(false);
@@ -10,6 +61,20 @@ export default function NotificationCenter() {
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef(null);
   const { isConnected } = useWebSocket();
+  const navigate = useNavigate();
+
+  const handleNotificationClick = async (notification) => {
+    // Mark as read first
+    if (!notification.is_read) {
+      await handleMarkRead(notification.id);
+    }
+    // Navigate to deep link
+    const route = getNotificationRoute(notification);
+    if (route) {
+      setIsOpen(false);
+      navigate(route);
+    }
+  };
 
   useEffect(() => {
     fetchNotifications();
@@ -200,7 +265,8 @@ export default function NotificationCenter() {
                 {notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className={`p-4 border-l-4 transition-colors hover:bg-base-200/50 ${getBorderColor(notification.type)} ${
+                    onClick={() => handleNotificationClick(notification)}
+                    className={`p-4 border-l-4 transition-colors hover:bg-base-200/50 cursor-pointer ${getBorderColor(notification.type)} ${
                       !notification.is_read ? 'bg-opacity-100' : 'bg-opacity-50'
                     }`}
                   >

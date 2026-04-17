@@ -2,6 +2,20 @@ import logger from './logger.js';
 import axios from 'axios';
 
 const timezoneCache = new Map();
+const airportTimezoneMap = {
+  AMS: { timezone: 'Europe/Amsterdam', city: 'Amsterdam', label: 'CET' },
+  LHR: { timezone: 'Europe/London', city: 'London', label: 'GMT' },
+  LGW: { timezone: 'Europe/London', city: 'London', label: 'GMT' },
+  JFK: { timezone: 'America/New_York', city: 'New York', label: 'ET' },
+  EWR: { timezone: 'America/New_York', city: 'Newark', label: 'ET' },
+  LAX: { timezone: 'America/Los_Angeles', city: 'Los Angeles', label: 'PT' },
+  CDG: { timezone: 'Europe/Paris', city: 'Paris', label: 'CET' },
+  FRA: { timezone: 'Europe/Berlin', city: 'Frankfurt', label: 'CET' },
+  DXB: { timezone: 'Asia/Dubai', city: 'Dubai', label: 'GST' },
+  SIN: { timezone: 'Asia/Singapore', city: 'Singapore', label: 'SGT' },
+  HND: { timezone: 'Asia/Tokyo', city: 'Tokyo', label: 'JST' },
+  NRT: { timezone: 'Asia/Tokyo', city: 'Tokyo', label: 'JST' },
+};
 
 const destinationTimezoneMap = {
   'london': 'Europe/London',
@@ -206,4 +220,23 @@ export function getTimezoneInfo(destination, homeTimezone = 'UTC') {
 
 export function getTimezoneForTrip(trip, userHomeTimezone = 'UTC') {
   return getTimezoneInfo(trip.destination, userHomeTimezone);
+}
+
+export function getAirportTimezoneByIata(iataCode) {
+  if (!iataCode) return null;
+  return airportTimezoneMap[String(iataCode).toUpperCase()] || null;
+}
+
+export function formatAirportLocalTime(isoDateTime, iataCode) {
+  if (!isoDateTime) return '--:--';
+  const airportTz = getAirportTimezoneByIata(iataCode);
+  if (!airportTz) return new Date(isoDateTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const dt = new Date(isoDateTime);
+  const localTime = dt.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: airportTz.timezone,
+    hour12: false,
+  });
+  return `${localTime} ${airportTz.label} (${airportTz.city})`;
 }

@@ -108,15 +108,16 @@ async function bootstrap() {
     const { default: webhookRoutes } = await import('./routes/webhooks.js');
     const { default: notificationRoutes } = await import('./routes/notifications.js');
     const { default: verificationRoutes } = await import('./routes/verification.js');
-     const { default: countriesRoutes } = await import('./routes/countries.js');
-     const { default: citiesRoutes } = await import('./routes/cities.js');
-     const { default: accountRoutes } = await import('./routes/account.js');
-     const { default: errorRoutes } = await import('./routes/errors.js');
+    const { default: countriesRoutes } = await import('./routes/countries.js');
+    const { default: citiesRoutes } = await import('./routes/cities.js');
+    const { default: sessionsRoutes } = await import('./routes/sessions.js');
+    const { default: accountRoutes } = await import('./routes/account.js');
+    const { default: errorRoutes } = await import('./routes/errors.js');
     const { default: checklistRoutes } = await import('./routes/checklist.js');
     const { default: guardianRoutes } = await import('./routes/guardian.js');
     const { default: callsRoutes } = await import('./routes/calls.js');
     const { default: esimRoutes } = await import('./routes/esim.js');
-    const { default: v1Routes } = await import('./routes/v1.js');
+    const { default: photosRoutes } = await import('./routes/photos.js');
 
     const app = express();
     const server = createServer(app);
@@ -237,7 +238,9 @@ async function bootstrap() {
     app.use('/api/translate', translateRoutes);
     app.use('/api/countries', countriesRoutes);
     app.use('/api/cities', citiesRoutes);
-    app.use('/api/v1', v1Routes);
+    app.use('/api/sessions', sessionsRoutes);
+    app.use('/api/account', accountRoutes);
+    app.use('/api/trips', photosRoutes);
 
     // Seed test events for admin (development only)
     if (process.env.NODE_ENV !== 'production') {

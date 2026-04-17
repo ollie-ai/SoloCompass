@@ -16,6 +16,7 @@ import LiveTripDashboard from '../components/dashboard/states/LiveTripDashboard'
 import CompletedDashboard from '../components/dashboard/states/CompletedDashboard';
 import SubscriptionBanner from '../components/dashboard/SubscriptionBanner';
 import APIErrorBoundary from '../components/APIErrorBoundary';
+import PushPermissionPrompt from '../components/PushPermissionPrompt';
 
 // Stable selector for user - prevents unnecessary re-renders
 const selectUser = (state) => state.user;
@@ -278,6 +279,7 @@ const Dashboard = () => {
             )}
             <SubscriptionBanner />
             {renderState()}
+            <PushPermissionPrompt trigger={trips.length > 0 ? 'trip_created' : 'default'} />
           </DashboardShell>
         </motion.div>
       </AnimatePresence>

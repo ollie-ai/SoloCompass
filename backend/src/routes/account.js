@@ -1,65 +1,36 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import logger from '../services/logger.js';
-import { deleteUserAccountCascade, generateUserDataExport } from '../services/dataExport.js';
 
 const router = express.Router();
-const exportLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-const deleteLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 router.use(requireAuth);
 
-router.get('/data-export', exportLimiter, async (req, res) => {
+router.delete('/', async (req, res) => {
   try {
-    const exportPayload = await generateUserDataExport(req.userId);
-    const json = JSON.stringify(exportPayload, null, 2);
-    const filename = `solocompass-data-export-${req.userId}-${new Date().toISOString().slice(0, 10)}.json`;
-
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.status(200).send(json);
-  } catch (error) {
-    logger.error(`[Account] Data export failed: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Failed to generate account data export' }
-    });
+    await db.prepare('UPDATE users SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ? WHERE id = ?').run(req.userId, req.userId);
+    res.json({ success: true, data: { message: 'Account scheduled for deletion. You can restore within 30 days.' } });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to schedule account deletion' });
   }
 });
 
-router.delete('/', deleteLimiter, async (req, res) => {
+router.post('/restore', async (req, res) => {
   try {
-    await deleteUserAccountCascade(req.userId);
-    const cookieOptions = {
-      path: '/',
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: true,
-    };
-    res.clearCookie('token', cookieOptions);
-    res.clearCookie('refreshToken', cookieOptions);
-    res.json({
-      success: true,
-      data: { message: 'Account and associated data deleted' }
-    });
-  } catch (error) {
-    logger.error(`[Account] Deletion failed: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Failed to delete account' }
-    });
+    const user = await db.prepare('SELECT id, deleted_at FROM users WHERE id = ?').get(req.userId);
+    if (!user?.deleted_at) {
+      return res.status(400).json({ success: false, error: 'Account is not pending deletion' });
+    }
+    const deletedAt = new Date(user.deleted_at);
+    const windowEnd = new Date(deletedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+    if (new Date() > windowEnd) {
+      return res.status(400).json({ success: false, error: 'Restore window has expired' });
+    }
+    await db.prepare('UPDATE users SET deleted_at = NULL, deleted_by = NULL WHERE id = ?').run(req.userId);
+    res.json({ success: true, data: { message: 'Account restored' } });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to restore account' });
   }
 });
 
 export default router;
+

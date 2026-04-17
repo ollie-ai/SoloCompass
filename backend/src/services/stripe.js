@@ -1,322 +1,42 @@
 import Stripe from 'stripe';
 import db from '../db.js';
 import logger from './logger.js';
+import { dispatchNotification } from './notificationDispatcher.js';
 
 let stripe;
 
-function getStripe() {
-  if (!stripe) {
-    if (!process.env.STRIPE_SECRET_KEY) {
-      logger.warn('[Stripe] STRIPE_SECRET_KEY not set — Stripe calls will fail');
-      return null;
-    }
-    stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
-  }
-  return stripe;
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+} else {
+  logger.warn('[Stripe] STRIPE_SECRET_KEY not set - Stripe functionality disabled');
 }
 
-// ─── Plan & Price resolution ────────────────────────────────────────────────
+export { stripe };
 
-export const PLAN_TIERS = { EXPLORER: 'explorer', GUARDIAN: 'guardian', NAVIGATOR: 'navigator' };
+// Validate price IDs at startup
+export const PLAN_PRICE_IDS = {
+  'explorer': null,
+  'guardian': process.env.STRIPE_PRICE_ID_GUARDIAN,
+  'navigator': process.env.STRIPE_PRICE_ID_NAVIGATOR,
+};
 
-// Monthly and annual price IDs resolved from env at call-time
-function getPriceId(planId, interval = 'month') {
-  const isAnnual = interval === 'year';
-  const map = {
-    guardian: isAnnual
-      ? process.env.STRIPE_PRICE_ID_GUARDIAN_ANNUAL
-      : process.env.STRIPE_PRICE_ID_GUARDIAN,
-    navigator: isAnnual
-      ? process.env.STRIPE_PRICE_ID_NAVIGATOR_ANNUAL
-      : process.env.STRIPE_PRICE_ID_NAVIGATOR,
-  };
-  return map[planId] || null;
+if (!process.env.STRIPE_PRICE_ID_GUARDIAN) {
+  logger.warn('STRIPE_PRICE_ID_GUARDIAN not set - Guardian plan unavailable');
+}
+if (!process.env.STRIPE_PRICE_ID_NAVIGATOR) {
+  logger.warn('STRIPE_PRICE_ID_NAVIGATOR not set - Navigator plan unavailable');
 }
 
-function tierFromPriceId(priceId) {
-  if (!priceId) return PLAN_TIERS.EXPLORER;
-  const ids = {
-    [process.env.STRIPE_PRICE_ID_GUARDIAN]: PLAN_TIERS.GUARDIAN,
-    [process.env.STRIPE_PRICE_ID_GUARDIAN_ANNUAL]: PLAN_TIERS.GUARDIAN,
-    [process.env.STRIPE_PRICE_ID_NAVIGATOR]: PLAN_TIERS.NAVIGATOR,
-    [process.env.STRIPE_PRICE_ID_NAVIGATOR_ANNUAL]: PLAN_TIERS.NAVIGATOR,
-  };
-  return ids[priceId] || PLAN_TIERS.EXPLORER;
-}
-
-// ─── Checkout ───────────────────────────────────────────────────────────────
-
-export const createCheckoutSession = async ({ userId, userEmail, planId, interval = 'month', trialDays = 0 }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const priceId = getPriceId(planId, interval);
-  if (!priceId) throw new Error(`No Stripe price ID configured for plan: ${planId} (${interval})`);
-
-  // Retrieve or create Stripe customer
-  const user = await db.prepare('SELECT stripe_customer_id FROM users WHERE id = ?').get(userId);
-  let customerId = user?.stripe_customer_id;
-
-  if (!customerId) {
-    const customer = await client.customers.create({ email: userEmail, metadata: { userId: String(userId) } });
-    customerId = customer.id;
-    await db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?').run(customerId, userId);
-  }
-
-  const appUrl = process.env.FRONTEND_URL || 'http://localhost:5176';
-  const params = {
-    customer: customerId,
-    mode: 'subscription',
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${appUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${appUrl}/payment/cancel`,
-    metadata: { userId: String(userId), planId, interval },
-    subscription_data: { metadata: { userId: String(userId), planId } },
-    allow_promotion_codes: true,
-  };
-
-  if (trialDays > 0) {
-    params.subscription_data.trial_period_days = trialDays;
-  }
-
-  const session = await client.checkout.sessions.create(params);
-  return session;
+const PLAN_NAMES = {
+  'explorer': 'explorer',
+  'guardian': 'guardian',
+  'navigator': 'navigator',
 };
 
-// ─── Billing Portal ─────────────────────────────────────────────────────────
-
-export const createPortalSession = async ({ userId }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const user = await db.prepare('SELECT stripe_customer_id FROM users WHERE id = ?').get(userId);
-  if (!user?.stripe_customer_id) throw new Error('No Stripe customer found');
-
-  const appUrl = process.env.FRONTEND_URL || 'http://localhost:5176';
-  const session = await client.billingPortal.sessions.create({
-    customer: user.stripe_customer_id,
-    return_url: `${appUrl}/settings?tab=billing`,
-  });
-  return session;
-};
-
-// ─── Subscription management ────────────────────────────────────────────────
-
-export const cancelSubscriptionAtPeriodEnd = async ({ userId }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const user = await db.prepare('SELECT stripe_subscription_id, stripe_customer_id FROM users WHERE id = ?').get(userId);
-
-  let subscriptionId = user?.stripe_subscription_id;
-
-  // Fallback: look up from Stripe customer's subscriptions
-  if (!subscriptionId && user?.stripe_customer_id) {
-    const subs = await client.subscriptions.list({ customer: user.stripe_customer_id, status: 'active', limit: 1 });
-    if (subs.data.length > 0) subscriptionId = subs.data[0].id;
-  }
-
-  if (!subscriptionId) throw new Error('No active subscription found');
-
-  const updated = await client.subscriptions.update(subscriptionId, { cancel_at_period_end: true });
-
-  await db.prepare('UPDATE users SET subscription_cancel_at_period_end = true WHERE id = ?').run(userId);
-
-  return updated;
-};
-
-export const resumeSubscription = async ({ userId }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const user = await db.prepare('SELECT stripe_subscription_id, stripe_customer_id FROM users WHERE id = ?').get(userId);
-
-  let subscriptionId = user?.stripe_subscription_id;
-
-  if (!subscriptionId && user?.stripe_customer_id) {
-    const subs = await client.subscriptions.list({ customer: user.stripe_customer_id, limit: 1 });
-    if (subs.data.length > 0) subscriptionId = subs.data[0].id;
-  }
-
-  if (!subscriptionId) throw new Error('No subscription found');
-
-  const updated = await client.subscriptions.update(subscriptionId, { cancel_at_period_end: false });
-
-  await db.prepare('UPDATE users SET subscription_cancel_at_period_end = false WHERE id = ?').run(userId);
-
-  return updated;
-};
-
-export const changePlan = async ({ userId, newPlanId, interval = 'month', proration = 'create_prorations' }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const priceId = getPriceId(newPlanId, interval);
-  if (!priceId) throw new Error(`No price ID for plan: ${newPlanId}`);
-
-  const user = await db.prepare('SELECT stripe_subscription_id, stripe_customer_id FROM users WHERE id = ?').get(userId);
-
-  let subscriptionId = user?.stripe_subscription_id;
-
-  if (!subscriptionId && user?.stripe_customer_id) {
-    const subs = await client.subscriptions.list({ customer: user.stripe_customer_id, status: 'active', limit: 1 });
-    if (subs.data.length > 0) subscriptionId = subs.data[0].id;
-  }
-
-  if (!subscriptionId) throw new Error('No active subscription found');
-
-  const subscription = await client.subscriptions.retrieve(subscriptionId);
-  const itemId = subscription.items.data[0]?.id;
-  if (!itemId) throw new Error('No subscription item found');
-
-  const updated = await client.subscriptions.update(subscriptionId, {
-    items: [{ id: itemId, price: priceId }],
-    proration_behavior: proration,
-  });
-
-  const newTier = tierFromPriceId(priceId);
-  await db.prepare('UPDATE users SET subscription_tier = ?, is_premium = true, subscription_interval = ? WHERE id = ?')
-    .run(newTier, interval, userId);
-
-  return { subscription: updated, newTier };
-};
-
-// ─── Invoices ───────────────────────────────────────────────────────────────
-
-export const listInvoices = async ({ userId, limit = 10 }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const user = await db.prepare('SELECT stripe_customer_id FROM users WHERE id = ?').get(userId);
-  if (!user?.stripe_customer_id) return [];
-
-  const invoices = await client.invoices.list({ customer: user.stripe_customer_id, limit });
-  return invoices.data.map(inv => ({
-    id: inv.id,
-    amount: inv.amount_paid / 100,
-    currency: inv.currency.toUpperCase(),
-    status: inv.status,
-    date: new Date(inv.created * 1000).toISOString(),
-    pdfUrl: inv.invoice_pdf,
-    hostedUrl: inv.hosted_invoice_url,
-    periodStart: inv.period_start ? new Date(inv.period_start * 1000).toISOString() : null,
-    periodEnd: inv.period_end ? new Date(inv.period_end * 1000).toISOString() : null,
-    description: inv.lines?.data?.[0]?.description || null,
-  }));
-};
-
-// ─── Promo / Coupon ─────────────────────────────────────────────────────────
-
-export const validateAndApplyPromo = async ({ userId, code }) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  // Validate coupon/promotion code
-  let promoCode;
+async function sendBillingNotification(userId, notificationType, title, message, data = null) {
   try {
-    const results = await client.promotionCodes.list({ code, active: true, limit: 1 });
-    promoCode = results.data[0];
-  } catch (e) {
-    throw new Error('Invalid promo code');
-  }
-
-  if (!promoCode) throw new Error('Promo code not found or expired');
-  const coupon = promoCode.coupon;
-
-  // Apply to subscription if one exists
-  const user = await db.prepare('SELECT stripe_subscription_id, stripe_customer_id FROM users WHERE id = ?').get(userId);
-
-  let subscriptionId = user?.stripe_subscription_id;
-  let applied = false;
-
-  if (subscriptionId) {
-    await client.subscriptions.update(subscriptionId, { discounts: [{ coupon: coupon.id }] });
-    applied = true;
-  } else if (user?.stripe_customer_id) {
-    // Store on customer for next checkout
-    await client.customers.update(user.stripe_customer_id, { coupon: coupon.id });
-    applied = true;
-  }
-
-  return {
-    valid: true,
-    applied,
-    discount: coupon.percent_off
-      ? `${coupon.percent_off}% off`
-      : coupon.amount_off
-      ? `£${(coupon.amount_off / 100).toFixed(2)} off`
-      : 'Discount applied',
-    couponId: coupon.id,
-    duration: coupon.duration,
-  };
-};
-
-// ─── Subscription status ────────────────────────────────────────────────────
-
-export const getSubscriptionStatus = async ({ userId }) => {
-  const user = await db.prepare(
-    'SELECT id, email, stripe_customer_id, stripe_subscription_id, subscription_tier, is_premium, premium_expires_at, subscription_status, subscription_period_end, subscription_cancel_at_period_end, subscription_interval FROM users WHERE id = ?'
-  ).get(userId);
-
-  if (!user) throw new Error('User not found');
-
-  const tier = user.subscription_tier || 'explorer';
-  const isPremium = tier !== 'explorer' && tier !== 'free';
-
-  const result = {
-    tier,
-    isPremium,
-    subscriptionStatus: user.subscription_status || (isPremium ? 'active' : 'inactive'),
-    expiresAt: user.subscription_period_end || user.premium_expires_at,
-    cancelAtPeriodEnd: Boolean(user.subscription_cancel_at_period_end),
-    interval: user.subscription_interval || 'month',
-    stripePortalUrl: null,
-  };
-
-  // Try to get live Stripe data and portal URL
-  const client = getStripe();
-  if (client && user.stripe_customer_id) {
-    try {
-      const appUrl = process.env.FRONTEND_URL || 'http://localhost:5176';
-      const portal = await client.billingPortal.sessions.create({
-        customer: user.stripe_customer_id,
-        return_url: `${appUrl}/settings?tab=billing`,
-      });
-      result.stripePortalUrl = portal.url;
-    } catch (e) {
-      logger.warn('[Stripe] Could not generate portal URL:', e.message);
-    }
-
-    if (user.stripe_subscription_id) {
-      try {
-        const sub = await client.subscriptions.retrieve(user.stripe_subscription_id);
-        result.subscriptionStatus = sub.status;
-        result.cancelAtPeriodEnd = sub.cancel_at_period_end;
-        result.expiresAt = new Date(sub.current_period_end * 1000).toISOString();
-        result.interval = sub.items.data[0]?.price?.recurring?.interval || 'month';
-      } catch (e) {
-        logger.warn('[Stripe] Could not retrieve subscription:', e.message);
-      }
-    }
-  }
-
-  return result;
-};
-
-// ─── Webhook handling ───────────────────────────────────────────────────────
-// IMPORTANT: params are (rawBody, sig) — rawBody is the raw Buffer from Express,
-// sig is the Stripe-Signature header value.
-
-export const handleStripeWebhook = async (rawBody, sig) => {
-  const client = getStripe();
-  if (!client) throw new Error('Stripe not configured');
-
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) throw new Error('STRIPE_WEBHOOK_SECRET not configured');
-
-  let event;
-  try {
-    event = client.webhooks.constructEvent(rawBody, sig, webhookSecret);
+    await dispatchNotification(userId, notificationType, { title, message, ...(data || {}) });
   } catch (err) {
     logger.error('[Stripe] Webhook signature verification failed:', err.message);
     throw new Error(`Webhook signature verification failed: ${err.message}`);

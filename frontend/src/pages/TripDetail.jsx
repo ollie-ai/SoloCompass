@@ -82,10 +82,7 @@ import TransitDirections from '../components/TransitDirections';
 import AffiliateLinks from '../components/AffiliateLinks';
 import SafetyCheckIn from '../components/SafetyCheckIn';
 import SoloSafetyHub from '../components/SoloSafetyHub';
-import TransportTimeline from '../components/trip/TransportTimeline';
-import ShareTripModal from '../components/trip/ShareTripModal';
-import TripStatusBadge from '../components/trip/TripStatusBadge';
-import PlaceMap from '../components/trip/PlaceMap';
+import TripMap from '../components/TripMap';
 import { FEATURES } from '../config/features';
 // import TripItinerary from '../components/trip/TripItinerary';
 // import TripSidebar from '../components/trip/TripSidebar';
@@ -1178,6 +1175,13 @@ function TripDetail() {
 
         {/* Itinerary Timeline */}
         <div className="lg:col-span-2">
+          {/* Trip Map */}
+          {!loading && trip?.itinerary?.length > 0 && (
+            <div className="mb-10">
+              <TripMap trip={trip} />
+            </div>
+          )}
+
           {loading ? (
             <div className="space-y-12">
 {[1,2,3].map(i => (

@@ -216,6 +216,8 @@ async function initializeDatabase() {
         reset_token_expires TIMESTAMP,
         email_verified BOOLEAN DEFAULT false,
         verification_token TEXT,
+        two_factor_secret TEXT,
+        two_factor_enabled BOOLEAN DEFAULT false,
         failed_attempts INTEGER DEFAULT 0,
         locked_until TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1121,6 +1123,8 @@ async function initializeDatabase() {
         amount REAL NOT NULL,
         original_currency TEXT DEFAULT 'USD',
         original_amount REAL,
+        converted_amount REAL,
+        exchange_rate REAL DEFAULT 1,
         type TEXT DEFAULT 'expense' CHECK(type IN ('expense', 'income')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -2294,86 +2298,53 @@ async function runMigrations() {
     await markMigration('v027_ai_observability');
   }
 
-  // --- Migration v028: GDPR consent tracking + onboarding + reports + support tickets ---
-  if (!await hasMigration('v028_compliance_support_core')) {
+  // --- Migration v028: budget_items conversion columns ---
+  if (!await hasMigration('v028_budget_item_conversion_fields')) {
     try {
-      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false`);
-      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_login_ip TEXT`);
-      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_login_at TIMESTAMPTZ`);
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS user_consents (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          consent_type TEXT NOT NULL CHECK(consent_type IN ('data_processing', 'cookie_analytics', 'cookie_marketing', 'marketing')),
-          granted BOOLEAN NOT NULL DEFAULT false,
-          source TEXT DEFAULT 'web',
-          ip_address TEXT,
-          user_agent TEXT,
-          granted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          revoked_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_consents_user_type ON user_consents(user_id, consent_type, granted_at DESC)`);
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS onboarding_progress (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          step_key TEXT NOT NULL,
-          completed BOOLEAN NOT NULL DEFAULT false,
-          metadata JSONB,
-          completed_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(user_id, step_key)
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_onboarding_progress_user ON onboarding_progress(user_id)`);
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS reports (
-          id SERIAL PRIMARY KEY,
-          reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          reported_entity_type TEXT NOT NULL,
-          entity_id TEXT NOT NULL,
-          reason TEXT NOT NULL,
-          details TEXT,
-          status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'under_review', 'actioned', 'dismissed')),
-          reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          reviewed_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at DESC)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_reports_entity ON reports(reported_entity_type, entity_id)`);
-
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS support_tickets (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-          email TEXT,
-          subject TEXT NOT NULL,
-          message TEXT NOT NULL,
-          category TEXT DEFAULT 'general',
-          priority TEXT DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'critical')),
-          status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'resolved', 'closed')),
-          sla_due_at TIMESTAMPTZ,
-          first_response_at TIMESTAMPTZ,
-          resolved_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_status_priority ON support_tickets(status, priority, created_at DESC)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, created_at DESC)`);
-      logger.info('[Migration v028] compliance/support core tables created');
+      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS converted_amount REAL`);
+      await pool.query(`ALTER TABLE budget_items ADD COLUMN IF NOT EXISTS exchange_rate REAL DEFAULT 1`);
+      await pool.query(`UPDATE budget_items SET converted_amount = COALESCE(converted_amount, amount), exchange_rate = COALESCE(exchange_rate, 1)`);
+      logger.info('[Migration v028] budget item conversion columns added');
     } catch (error) {
       logger.warn('[Migration v028] skipped:', error.message);
     }
-    await markMigration('v028_compliance_support_core');
+    await markMigration('v028_budget_item_conversion_fields');
+  }
+
+  // --- Migration v029: users 2FA columns ---
+  if (!await hasMigration('v029_users_two_factor')) {
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false`);
+      logger.info('[Migration v029] users 2FA columns added');
+    } catch (error) {
+      logger.warn('[Migration v029] skipped:', error.message);
+    }
+    await markMigration('v029_users_two_factor');
+  }
+
+  // --- Migration v030: user_sessions table ---
+  if (!await hasMigration('v030_user_sessions_table')) {
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL,
+          device_name TEXT,
+          ip_address TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          last_active_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_last_active ON user_sessions(last_active_at DESC)`);
+      logger.info('[Migration v030] user_sessions table created');
+    } catch (error) {
+      logger.warn('[Migration v030] skipped:', error.message);
+    }
+    await markMigration('v030_user_sessions_table');
   }
 
   logger.info('[Migration] All migrations complete');

@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireAdmin } from '../middleware/auth.js';
 import {
   getUserNotifications,
   markNotificationRead,
@@ -9,6 +9,7 @@ import {
   updateNotificationPreferences,
   getNotificationPreferences
 } from '../services/notificationService.js';
+import db from '../db.js';
 import {
   subscribeUser,
   unsubscribeUser,
@@ -16,6 +17,7 @@ import {
 } from '../services/pushService.js';
 import { body, query } from 'express-validator';
 import { validate } from '../middleware/validate.js';
+import { dispatchNotification } from '../services/notificationDispatcher.js';
 
 const router = express.Router();
 
@@ -150,6 +152,41 @@ router.post('/push/test', authenticate, async (req, res) => {
   } catch (err) {
     console.error('[Notifications] Push test error:', err.message);
     res.status(500).json({ success: false, error: 'Failed to send test notification' });
+  }
+});
+
+router.post('/send', requireAdmin, [
+  body('userId').isInt().withMessage('userId is required'),
+  body('type').isString().notEmpty().withMessage('type is required'),
+], validate, async (req, res) => {
+  try {
+    const { userId, type, data = {} } = req.body;
+    const summary = await dispatchNotification(Number(userId), type, data);
+    res.json({ success: true, data: summary });
+  } catch (err) {
+    console.error('[Notifications] internal send error:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to dispatch notification' });
+  }
+});
+
+router.get('/unsubscribe', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Missing token' });
+    }
+    // TODO: Replace this placeholder parser with signed JWT verification.
+    const userIdFromToken = String(token).startsWith('user-') ? Number(String(token).replace('user-', '')) : null;
+    if (userIdFromToken) {
+      await db.prepare(`
+        UPDATE notification_preferences
+        SET email_notifications = false, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(userIdFromToken);
+    }
+    res.json({ success: true, message: 'You have been unsubscribed from marketing/non-critical emails.' });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to process unsubscribe request' });
   }
 });
 

@@ -9,6 +9,7 @@ import db from '../db.js';
 import { generateToken, generateRefreshToken, verifyRefreshToken, getJWTSecret, hashToken, authenticate } from '../middleware/auth.js';
 import { sendWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail, sendMagicLinkEmail } from '../services/email.js';
 import logger from '../services/logger.js';
+import { generateTwoFactorSecret, verifyTwoFactorCode } from '../services/twoFactor.js';
 
 const router = express.Router();
 
@@ -198,6 +199,10 @@ router.post('/register', [
       'INSERT INTO sessions (id, user_id, refresh_token, device_info, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       sessionId, user.id, refreshHash, deviceInfo, ipAddress, userAgent, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     );
+    await db.run(
+      'INSERT INTO user_sessions (id, user_id, token_hash, device_name, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
+      sessionId, user.id, refreshHash, deviceInfo, ipAddress, userAgent
+    );
 
     const tokenWithSession = generateToken({ id: user.id, email: user.email, role: user.role }, sessionId);
 
@@ -250,12 +255,19 @@ router.post('/login', [
     const { email, password } = req.body;
     const ipAddress = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
-    const user = await db.get('SELECT id, email, password, name, role, email_verified, is_premium, subscription_tier, premium_expires_at, failed_attempts, locked_until, admin_level FROM users WHERE email = ?', email); // FIXED: was SELECT * which exposed sensitive fields
+    const user = await db.get('SELECT id, email, password, name, role, is_verified, is_premium, subscription_tier, premium_expires_at, failed_attempts, locked_until, admin_level, deleted_at, two_factor_enabled, two_factor_secret FROM users WHERE email = ?', email); // FIXED: was SELECT * which exposed sensitive fields
     if (!user) {
       recordIpFailure(ipAddress);
       return res.status(401).json({
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Invalid credentials' }
+      });
+    }
+
+    if (user.deleted_at) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'ACCOUNT_PENDING_DELETION', message: 'Account is pending deletion. Restore your account to continue.' }
       });
     }
 
@@ -307,6 +319,16 @@ router.post('/login', [
       });
     }
 
+    if (user.two_factor_enabled) {
+      const twoFactorCode = req.body?.twoFactorCode || req.body?.code;
+      if (!twoFactorCode || !verifyTwoFactorCode(user.two_factor_secret, String(twoFactorCode))) {
+        return res.status(401).json({
+          success: false,
+          error: { code: 'TWO_FACTOR_REQUIRED', message: 'Two-factor code required or invalid' }
+        });
+      }
+    }
+
     const token = generateToken({ id: user.id, email: user.email, role: user.role });
     const refreshToken = generateRefreshToken({ id: user.id, email: user.email, role: user.role });
     const sessionId = uuidv4();
@@ -321,6 +343,10 @@ router.post('/login', [
       await db.run(
         'INSERT INTO sessions (id, user_id, refresh_token, device_info, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         sessionId, user.id, refreshHash, deviceInfo, ipAddress, userAgent, expiresAt
+      );
+      await db.run(
+        'INSERT INTO user_sessions (id, user_id, token_hash, device_name, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
+        sessionId, user.id, refreshHash, deviceInfo, ipAddress, userAgent
       );
     } catch (sessionError) {
       logger.error(`[Auth] Session creation failed: ${sessionError.message}`);
@@ -429,6 +455,14 @@ router.post('/refresh', async (req, res) => {
         'INSERT INTO sessions (id, user_id, refresh_token, device_info, ip_address, user_agent, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         newSessionId, user.id, newRefreshHash, deviceInfo, ipAddress, userAgent, newExpiresAt
       );
+      await tx.run(
+        'DELETE FROM user_sessions WHERE id = ?',
+        session.id
+      );
+      await tx.run(
+        'INSERT INTO user_sessions (id, user_id, token_hash, device_name, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
+        newSessionId, user.id, newRefreshHash, deviceInfo, ipAddress, userAgent
+      );
 
       const newToken = generateToken({ id: user.id, email: user.email, role: user.role }, newSessionId);
 
@@ -478,6 +512,7 @@ router.post('/logout', async (req, res) => {
     if (refreshToken) {
       const refreshHash = hashToken(refreshToken);
       await db.run('DELETE FROM sessions WHERE refresh_token = ?', refreshHash);
+      await db.run('DELETE FROM user_sessions WHERE token_hash = ?', refreshHash);
     }
     res.clearCookie('token');
     res.clearCookie('refreshToken');
@@ -506,6 +541,7 @@ router.post('/logout-other-devices', authenticate, async (req, res) => {
       'DELETE FROM sessions WHERE user_id = ? AND id != ?',
       req.userId, currentSessionId
     );
+    await db.run('DELETE FROM user_sessions WHERE user_id = ? AND id != ?', req.userId, currentSessionId);
     
     res.json({ 
       success: true, 
@@ -614,6 +650,7 @@ router.delete('/sessions/:id', async (req, res) => {
     }
 
     await db.run('DELETE FROM sessions WHERE id = ?', id);
+    await db.run('DELETE FROM user_sessions WHERE id = ?', id);
     res.json({ success: true, data: { message: 'Session revoked' } });
   } catch (error) {
     logger.error(`[Auth] Delete session failed: ${error.message}`);
@@ -621,6 +658,59 @@ router.delete('/sessions/:id', async (req, res) => {
       success: false,
       error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' }
     });
+  }
+});
+
+router.post('/2fa/setup', authenticate, async (req, res) => {
+  try {
+    const user = await db.get('SELECT id, email FROM users WHERE id = ?', req.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
+    }
+    const { secret, otpauthUrl, qrCodeDataUri } = generateTwoFactorSecret(user.email);
+    await db.run('UPDATE users SET two_factor_secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', secret, user.id);
+    res.json({ success: true, data: { secret, otpauthUrl, qrCodeDataUri } });
+  } catch (error) {
+    logger.error(`[Auth] 2FA setup failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to setup 2FA' } });
+  }
+});
+
+router.post('/2fa/verify', authenticate, async (req, res) => {
+  try {
+    const { code } = req.body;
+    const user = await db.get('SELECT id, two_factor_secret FROM users WHERE id = ?', req.userId);
+    if (!user?.two_factor_secret) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_STATE', message: '2FA setup not initialized' } });
+    }
+    if (!verifyTwoFactorCode(user.two_factor_secret, String(code || ''))) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid authentication code' } });
+    }
+    await db.run('UPDATE users SET two_factor_enabled = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?', user.id);
+    res.json({ success: true, data: { enabled: true } });
+  } catch (error) {
+    logger.error(`[Auth] 2FA verify failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to verify 2FA' } });
+  }
+});
+
+router.post('/2fa/disable', authenticate, async (req, res) => {
+  try {
+    const { code, password } = req.body;
+    const user = await db.get('SELECT id, password, two_factor_secret FROM users WHERE id = ?', req.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
+    }
+    const passwordOk = await bcrypt.compare(String(password || ''), user.password || '');
+    const codeOk = verifyTwoFactorCode(user.two_factor_secret, String(code || ''));
+    if (!passwordOk || !codeOk) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_CREDENTIALS', message: 'Invalid password or authentication code' } });
+    }
+    await db.run('UPDATE users SET two_factor_enabled = false, two_factor_secret = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', user.id);
+    res.json({ success: true, data: { enabled: false } });
+  } catch (error) {
+    logger.error(`[Auth] 2FA disable failed: ${error.message}`);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to disable 2FA' } });
   }
 });
 

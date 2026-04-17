@@ -202,6 +202,15 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
     }).format(amount);
   };
 
+  const formatDualAmount = (item) => {
+    const converted = formatCurrency(item.amount, budget?.currency || 'GBP');
+    if (!item.originalAmount || !item.originalCurrency || item.originalCurrency === budget?.currency) {
+      return converted;
+    }
+    const original = formatCurrency(item.originalAmount, item.originalCurrency);
+    return `${original} (${converted})`;
+  };
+
   const getProgressColor = () => {
     if (!budget) return 'bg-brand-vibrant';
     const percent = (budget.totalSpent / budget.totalBudget) * 100;
@@ -399,8 +408,11 @@ const BudgetTracker = ({ tripId, tripName, onClose }) => {
                 </div>
                 <div className="text-right">
                   <p className={`font-black ${item.type === 'income' ? 'text-emerald-500' : 'text-base-content'}`}>
-                    {item.type === 'income' ? '+' : '-'}{formatCurrency(item.amount, budget.currency)}
+                    {item.type === 'income' ? '+' : '-'}{formatDualAmount(item)}
                   </p>
+                  {item.exchangeRate && item.originalCurrency && item.originalCurrency !== budget.currency ? (
+                    <p className="text-[10px] text-base-content/40">rate {Number(item.exchangeRate).toFixed(4)}</p>
+                  ) : null}
                   <button
                     onClick={() => deleteItem(item.id)}
                     className="text-xs text-base-content/40 hover:text-error transition-colors"

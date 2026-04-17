@@ -333,6 +333,52 @@ router.get('/analytics', ...adminGuard, getAnalyticsOverview);
 router.get('/analytics/overview', ...adminGuard, getAnalyticsOverview);
 
 /**
+ * GET /api/admin/analytics/revenue
+ * Dedicated revenue breakdown endpoint: MRR by tier, paid user counts, churn rate.
+ */
+router.get('/analytics/revenue', ...adminGuard, async (req, res) => {
+  try {
+    const PLAN_PRICES = { explorer: 0, guardian: 4.99, navigator: 9.99 };
+
+    const [revenueByTier, paidUsersRow, totalUsersRow, recentSignupsRow] = await Promise.all([
+      db.all(`
+        SELECT COALESCE(LOWER(subscription_tier), 'explorer') AS tier,
+               COUNT(*)::int AS users
+        FROM users
+        GROUP BY COALESCE(LOWER(subscription_tier), 'explorer')
+      `).catch(() => []),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE is_premium = true`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users`).catch(() => ({ count: 0 })),
+      db.get(`SELECT COUNT(*) AS count FROM users WHERE created_at >= ?`, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).catch(() => ({ count: 0 })),
+    ]);
+
+    const tiers = (Array.isArray(revenueByTier) ? revenueByTier : []).map((row) => {
+      const tier = String(row.tier || 'explorer').toLowerCase();
+      const users = Number(row.users || 0);
+      const unitPrice = PLAN_PRICES[tier] ?? 0;
+      return { tier, users, unitPrice, mrr: Number((users * unitPrice).toFixed(2)) };
+    }).sort((a, b) => b.mrr - a.mrr);
+
+    const estimatedMrr = tiers.reduce((sum, r) => sum + r.mrr, 0);
+
+    res.json({
+      success: true,
+      data: {
+        currency: 'GBP',
+        estimatedMrr: Number(estimatedMrr.toFixed(2)),
+        paidUsers: Number(paidUsersRow?.count ?? 0),
+        totalUsers: Number(totalUsersRow?.count ?? 0),
+        newUsersLast30d: Number(recentSignupsRow?.count ?? 0),
+        byTier: tiers,
+      },
+    });
+  } catch (error) {
+    logger.error(`[Admin] Revenue breakdown failed: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Failed to get revenue breakdown' });
+  }
+});
+
+/**
  * GET /api/admin/user-activity/:userId
  * Fetch activity timeline for a specific user
  */

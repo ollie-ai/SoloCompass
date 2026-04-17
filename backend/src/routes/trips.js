@@ -354,6 +354,180 @@ router.get('/:id/packing-list', requireAuth, tripMutateLimiter, async (req, res)
   }
 });
 
+const PACKING_CATEGORIES = ['documents', 'electronics', 'clothing', 'toiletries', 'medicine', 'essentials', 'activities', 'other'];
+
+// Create a packing list for a trip (or return existing one)
+router.post('/:id/packing-list', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, templateId } = req.body;
+
+    const trip = await db.prepare('SELECT id, destination FROM trips WHERE id = ? AND user_id = ?').get(id, req.userId);
+    if (!trip) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Trip not found'));
+    }
+
+    const existing = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (existing) {
+      return res.status(409).json(formatError('CONFLICT', 'Packing list already exists for this trip'));
+    }
+
+    const listName = (name && String(name).trim()) || `Packing for ${trip.destination || 'trip'}`;
+    const result = await db.prepare('INSERT INTO packing_lists (user_id, trip_id, name) VALUES (?, ?, ?)').run(req.userId, id, listName);
+    const listId = result.lastInsertRowid;
+
+    if (templateId) {
+      const template = await db.prepare('SELECT items FROM packing_templates WHERE id = ?').get(templateId);
+      if (template) {
+        let items = [];
+        try { items = JSON.parse(template.items || '[]'); } catch { /* ignore parse error */ }
+        for (const item of items) {
+          await db.prepare('INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential, is_custom) VALUES (?, ?, ?, ?, ?, false)')
+            .run(listId, item.name, item.category || 'other', item.quantity || 1, item.isEssential ? true : false);
+        }
+      }
+    } else {
+      const defaults = [
+        { name: 'Passport', category: 'documents', isEssential: true },
+        { name: 'Travel insurance docs', category: 'documents', isEssential: true },
+        { name: 'Phone charger', category: 'electronics', isEssential: true },
+        { name: 'Medications', category: 'medicine', isEssential: true },
+        { name: 'Wallet & cards', category: 'essentials', isEssential: true },
+      ];
+      for (const item of defaults) {
+        await db.prepare('INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential) VALUES (?, ?, ?, 1, ?)')
+          .run(listId, item.name, item.category, item.isEssential ? true : false);
+      }
+    }
+
+    const list = await db.prepare('SELECT id, trip_id, name, is_shared, created_at FROM packing_lists WHERE id = ?').get(listId);
+    const items = await db.prepare('SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE packing_list_id = ? ORDER BY category, is_essential DESC, name').all(listId);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: list.id,
+        tripId: list.trip_id,
+        name: list.name,
+        isShared: Boolean(list.is_shared),
+        createdAt: list.created_at,
+        items: (items || []).map((i) => ({
+          id: i.id, name: i.name, category: i.category, quantity: i.quantity,
+          isPacked: Boolean(i.is_packed), isEssential: Boolean(i.is_essential),
+          isCustom: Boolean(i.is_custom), notes: i.notes,
+        })),
+      },
+    });
+  } catch (error) {
+    logger.error('Create trip packing list error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to create packing list'));
+  }
+});
+
+// Add an item to the packing list of a trip
+router.post('/:id/packing-list/items', requireAuth, tripMutateLimiter, sanitizeAll(['name', 'notes']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, category = 'other', quantity = 1, isEssential = false, notes } = req.body;
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json(formatError('VALIDATION_ERROR', 'Item name is required'));
+    }
+    const safeCategory = PACKING_CATEGORIES.includes(category) ? category : 'other';
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found — create it first'));
+    }
+
+    const result = await db.prepare(
+      'INSERT INTO packing_items (packing_list_id, name, category, quantity, is_essential, is_custom, notes) VALUES (?, ?, ?, ?, ?, true, ?)'
+    ).run(list.id, String(name).trim(), safeCategory, Math.max(1, Number(quantity) || 1), isEssential ? true : false, notes || null);
+
+    const item = await db.prepare(
+      'SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE id = ?'
+    ).get(result.lastInsertRowid);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: item.id, name: item.name, category: item.category, quantity: item.quantity,
+        isPacked: Boolean(item.is_packed), isEssential: Boolean(item.is_essential),
+        isCustom: Boolean(item.is_custom), notes: item.notes,
+      },
+    });
+  } catch (error) {
+    logger.error('Add packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to add packing list item'));
+  }
+});
+
+// Update a packing list item (check/uncheck, quantity, notes)
+router.put('/:id/packing-list/items/:itemId', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+    const { isPacked, quantity, notes, name, category } = req.body;
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found'));
+    }
+    const item = await db.prepare('SELECT id FROM packing_items WHERE id = ? AND packing_list_id = ?').get(itemId, list.id);
+    if (!item) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Item not found'));
+    }
+
+    const setClauses = ['updated_at = CURRENT_TIMESTAMP'];
+    const params = [];
+    if (isPacked !== undefined) { setClauses.push('is_packed = ?'); params.push(isPacked ? true : false); }
+    if (quantity !== undefined) { setClauses.push('quantity = ?'); params.push(Math.max(1, Number(quantity) || 1)); }
+    if (notes !== undefined) { setClauses.push('notes = ?'); params.push(notes); }
+    if (name !== undefined && String(name).trim()) { setClauses.push('name = ?'); params.push(String(name).trim()); }
+    if (category !== undefined && PACKING_CATEGORIES.includes(category)) { setClauses.push('category = ?'); params.push(category); }
+    params.push(itemId);
+
+    await db.prepare(`UPDATE packing_items SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
+
+    const updated = await db.prepare(
+      'SELECT id, name, category, quantity, is_packed, is_essential, is_custom, notes FROM packing_items WHERE id = ?'
+    ).get(itemId);
+
+    res.json({
+      success: true,
+      data: {
+        id: updated.id, name: updated.name, category: updated.category, quantity: updated.quantity,
+        isPacked: Boolean(updated.is_packed), isEssential: Boolean(updated.is_essential),
+        isCustom: Boolean(updated.is_custom), notes: updated.notes,
+      },
+    });
+  } catch (error) {
+    logger.error('Update packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to update packing list item'));
+  }
+});
+
+// Delete a packing list item
+router.delete('/:id/packing-list/items/:itemId', requireAuth, tripMutateLimiter, async (req, res) => {
+  try {
+    const { id, itemId } = req.params;
+
+    const list = await db.prepare('SELECT id FROM packing_lists WHERE trip_id = ? AND user_id = ?').get(id, req.userId);
+    if (!list) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Packing list not found'));
+    }
+
+    const deleted = await db.prepare('DELETE FROM packing_items WHERE id = ? AND packing_list_id = ?').run(itemId, list.id);
+    if (!deleted.changes) {
+      return res.status(404).json(formatError('NOT_FOUND', 'Item not found'));
+    }
+
+    res.json({ success: true, message: 'Item removed' });
+  } catch (error) {
+    logger.error('Delete packing list item error:', error);
+    res.status(500).json(formatError('INTERNAL_ERROR', 'Failed to delete packing list item'));
+  }
+});
+
 // Get itinerary versions for a trip
 router.get('/:id/versions', requireAuth, async (req, res) => {
   try {

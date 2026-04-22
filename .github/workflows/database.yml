@@ -10,7 +10,7 @@ on:
         options:
           - migrate
           - seed
-          - push
+          - reset
       tier:
         description: 'Seed tier (for seed operation)'
         required: false
@@ -21,7 +21,15 @@ on:
           - '3'
         default: '1'
 
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9'
+  SUPABASE_PROJECT_REF: 'cgsnlypjyssabdofrvuj'
+
 jobs:
+  # =============================================================================
+  # Database Migration
+  # =============================================================================
   migrate:
     name: DB Push Schema
     runs-on: ubuntu-latest
@@ -32,42 +40,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v2
-        with:
-          version: latest
+      - name: Install Supabase CLI
+        run: npm install -g supabase
 
-      - name: Configure Supabase project
+      - name: Setup Supabase project config
         run: |
           mkdir -p supabase
-          echo "projectId=cgsnlypjyssabdofrvuj" > supabase/config.toml
+          cat > supabase/config.toml << 'EOF'
+            projectId = "cgsnlypjyssabdofrvuj"
+          EOF
+          cat supabase/config.toml
 
-      - name: Run DB Push
-        run: npx supabase db push
+      - name: Link Supabase project
+        run: |
+          echo "${{ secrets.SUPABASE_ACCESS_TOKEN }}" | supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Push schema to Supabase
+        run: supabase db push --db-url "${{ secrets.DATABASE_URL }}"
+        env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-  push:
-    name: DB Push (with seed)
-    runs-on: ubuntu-latest
-    if: github.event.inputs.operation == 'push'
-    environment:
-      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v2
-        with:
-          version: latest
-
-      - name: Push schema
-        run: npx supabase db reset --db-url="${{ secrets.DATABASE_URL }}"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-
+  # =============================================================================
+  # Database Seed
+  # =============================================================================
   seed:
     name: DB Seed
     runs-on: ubuntu-latest
@@ -80,18 +77,61 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run Seed
-        run: pnpm db:seed -- --tier=${{ github.event.inputs.tier }}
+        run: |
+          if [ "${{ github.event.inputs.tier }}" == "1" ]; then
+            pnpm db:seed -- --tier 1
+          elif [ "${{ github.event.inputs.tier }}" == "2" ]; then
+            pnpm db:seed -- --tier 1 --tier 2
+          else
+            pnpm db:seed
+          fi
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+
+  # =============================================================================
+  # Database Reset (DANGER - Drops all tables)
+  # =============================================================================
+  reset:
+    name: DB Reset (DANGER)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'reset'
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        run: npm install -g supabase
+
+      - name: Setup Supabase project config
+        run: |
+          mkdir -p supabase
+          cat > supabase/config.toml << 'EOF'
+            projectId = "cgsnlypjyssabdofrvuj"
+          EOF
+
+      - name: Link Supabase project
+        run: |
+          echo "${{ secrets.SUPABASE_ACCESS_TOKEN }}" | supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Reset Supabase Database
+        run: supabase db reset --db-url "${{ secrets.DATABASE_URL }}"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

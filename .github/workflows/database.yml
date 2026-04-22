@@ -37,6 +37,11 @@ jobs:
         with:
           version: latest
 
+      - name: Configure Supabase project
+        run: |
+          mkdir -p supabase
+          echo "projectId=cgsnlypjyssabdofrvuj" > supabase/config.toml
+
       - name: Run DB Push
         run: npx supabase db push
         env:

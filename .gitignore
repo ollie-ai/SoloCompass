@@ -43,10 +43,9 @@ coverage/
 .cache/
 .parcel-cache/
 
+# Supabase
+supabase/
+.env.local
+
 # Secrets - but keep .env.example tracked
 !.env.example
-
-# Supabase / temp files
-supabase-link.ps1
-supabase-push.ps1
-.env.local

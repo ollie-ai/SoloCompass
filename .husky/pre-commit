@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Run gitleaks to detect secrets (skip supabase scripts which are gitignored)
+gitleaks detect --no-git --verbose --redact --exit-code 0

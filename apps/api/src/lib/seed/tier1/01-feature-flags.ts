@@ -3,9 +3,8 @@
  * Core feature toggles for the application
  */
 
-import { db } from '../db.js';
-import { featureFlags } from '../schema/feature-flags.js';
-import { sql } from 'drizzle-orm';
+import { db } from '../../db';
+import { featureFlags } from '../../schema/feature-flags';
 
 export const tier1FeatureFlags = [
   {

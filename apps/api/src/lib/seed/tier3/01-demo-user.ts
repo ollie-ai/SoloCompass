@@ -3,11 +3,11 @@
  * Demo user for development and testing
  */
 
-import { db } from '../db.js';
-import { users } from '../schema/users.js';
-import { sessions } from '../schema/sessions.js';
-import { subscriptionPlans } from '../schema/subscription-plans.js';
-import { sql, eq } from 'drizzle-orm';
+import { db } from '../../db';
+import { users } from '../../schema/users';
+import { sessions } from '../../schema/sessions';
+import { subscriptionPlans } from '../../schema/subscription-plans';
+import { eq } from 'drizzle-orm';
 
 export const tier3DemoUser = {
   email: 'demo@solocompass.app',
@@ -20,6 +20,7 @@ export const tier3DemoUser = {
 };
 
 export const tier3DemoSession = {
+  type: 'access' as const,
   userAgent: 'SoloCompass Demo',
   ipAddress: '127.0.0.1',
   expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
@@ -54,7 +55,10 @@ export async function seedDemoUser() {
     await db.insert(sessions)
       .values({
         userId: existingUser.id,
-        ...tier3DemoSession,
+        type: tier3DemoSession.type,
+        expiresAt: tier3DemoSession.expiresAt,
+        ipAddress: tier3DemoSession.ipAddress,
+        userAgent: tier3DemoSession.userAgent,
       });
 
     console.log('Demo user updated');
@@ -70,7 +74,10 @@ export async function seedDemoUser() {
   await db.insert(sessions)
     .values({
       userId: newUser.id,
-      ...tier3DemoSession,
+      type: tier3DemoSession.type,
+      expiresAt: tier3DemoSession.expiresAt,
+      ipAddress: tier3DemoSession.ipAddress,
+      userAgent: tier3DemoSession.userAgent,
     });
 
   console.log('Demo user seeded');

@@ -3,8 +3,8 @@
  * Categorization data for destinations, tags, and archetypes
  */
 
-import { db } from '../db.js';
-import { taxonomyTerms } from '../schema/taxonomy.js';
+import { db } from '../../db';
+import { taxonomyTerms } from '../../schema/taxonomy';
 
 // Travel DNA Archetypes
 const travelArchetypes = [

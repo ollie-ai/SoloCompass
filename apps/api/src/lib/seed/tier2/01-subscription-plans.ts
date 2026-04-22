@@ -3,8 +3,8 @@
  * Subscription tiers and pricing
  */
 
-import { db } from '../db.js';
-import { subscriptionPlans } from '../schema/subscription-plans.js';
+import { db } from '../../db';
+import { subscriptionPlans } from '../../schema/subscription-plans';
 
 export const tier2SubscriptionPlans = [
   {

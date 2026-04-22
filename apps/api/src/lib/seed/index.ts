@@ -3,13 +3,13 @@
  * Main entry point for seeding the database
  */
 
-import { seedFeatureFlags } from './tier1/01-feature-flags.js';
-import { seedErrorCodes } from './tier1/02-error-codes.js';
-import { seedEmailTemplates } from './tier1/03-email-templates.js';
-import { seedLegalPages } from './tier1/04-legal-pages.js';
-import { seedSubscriptionPlans } from './tier2/01-subscription-plans.js';
-import { seedTaxonomyTerms } from './tier2/02-taxonomy.js';
-import { seedDemoUser } from './tier3/01-demo-user.js';
+import { seedFeatureFlags } from './tier1/01-feature-flags';
+import { seedErrorCodes } from './tier1/02-error-codes';
+import { seedEmailTemplates } from './tier1/03-email-templates';
+import { seedLegalPages } from './tier1/04-legal-pages';
+import { seedSubscriptionPlans } from './tier2/01-subscription-plans';
+import { seedTaxonomyTerms } from './tier2/02-taxonomy';
+import { seedDemoUser } from './tier3/01-demo-user';
 
 export type SeedTier = 'tier1' | 'tier2' | 'tier3' | 'all';
 

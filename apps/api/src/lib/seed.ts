@@ -5,7 +5,7 @@
 
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import * as schema from './schema/index.js';
+import * as schema from './schema/index';
 
 const connectionString = process.env['DATABASE_URL'] || '';
 
@@ -24,7 +24,7 @@ interface SeedOptions {
 
 /**
  * Main seed orchestrator
- * Runs all tier 1 seeds (essential data)
+ * Runs all tier seeds (essential data)
  */
 async function seed(options: SeedOptions = {}) {
   const { forceProd = false, tier = 1 } = options;
@@ -38,24 +38,23 @@ async function seed(options: SeedOptions = {}) {
   console.log(`🌱 Starting seed (tier ${tier}, forceProd: ${forceProd})`);
 
   try {
-    // Tier 1: Essential data
-    await seedAdminUser();
-    await seedTaxonomies();
-    await seedSubscriptionPlans();
-    await seedFeatureFlags();
-    await seedErrorCodes();
-    await seedEmailTemplates();
-    await seedLegalPages();
-
-    // Tier 2: Demo data (staging/preview only)
-    if (tier >= 2 && process.env['NODE_ENV'] !== 'production') {
-      await seedDemoDestinations();
-      await seedDemoUsers();
+    // Tier 1: Essential data (feature flags, error codes, email templates, legal pages)
+    if (tier >= 1) {
+      await seedFeatureFlags();
+      await seedErrorCodes();
+      await seedEmailTemplates();
+      await seedLegalPages();
     }
 
-    // Tier 3: Load test data (explicit flag only)
-    if (tier >= 3) {
-      await seedLoadTestData();
+    // Tier 2: Configuration (subscription plans, taxonomy)
+    if (tier >= 2) {
+      await seedSubscriptionPlans();
+      await seedTaxonomyTerms();
+    }
+
+    // Tier 3: Demo data (staging/preview only)
+    if (tier >= 3 && process.env['NODE_ENV'] !== 'production') {
+      await seedDemoUser();
     }
 
     console.log('✅ Seed completed successfully');
@@ -67,55 +66,48 @@ async function seed(options: SeedOptions = {}) {
   }
 }
 
-// Seed functions (placeholder implementations)
-async function seedAdminUser() {
-  console.log('  → Seeding admin user...');
-  // TODO: Implement admin user seed
-}
-
-async function seedTaxonomies() {
-  console.log('  → Seeding taxonomies...');
-  // TODO: Implement taxonomy seeds
-}
-
-async function seedSubscriptionPlans() {
-  console.log('  → Seeding subscription plans...');
-  // TODO: Implement subscription plan seeds
-}
-
+// Import seed functions from the new seed module
+// Re-export them here for backward compatibility
 async function seedFeatureFlags() {
   console.log('  → Seeding feature flags...');
-  // TODO: Implement feature flag seeds
+  const { seedFeatureFlags: fn } = await import('./seed/index');
+  await fn();
 }
 
 async function seedErrorCodes() {
   console.log('  → Seeding error codes...');
-  // TODO: Implement error code seeds
+  const { seedErrorCodes: fn } = await import('./seed/index');
+  await fn();
 }
 
 async function seedEmailTemplates() {
   console.log('  → Seeding email templates...');
-  // TODO: Implement email template seeds
+  const { seedEmailTemplates: fn } = await import('./seed/index');
+  await fn();
 }
 
 async function seedLegalPages() {
   console.log('  → Seeding legal pages...');
-  // TODO: Implement legal page seeds
+  const { seedLegalPages: fn } = await import('./seed/index');
+  await fn();
 }
 
-async function seedDemoDestinations() {
-  console.log('  → Seeding demo destinations (tier 2)...');
-  // TODO: Implement destination seeds
+async function seedSubscriptionPlans() {
+  console.log('  → Seeding subscription plans...');
+  const { seedSubscriptionPlans: fn } = await import('./seed/index');
+  await fn();
 }
 
-async function seedDemoUsers() {
-  console.log('  → Seeding demo users (tier 2)...');
-  // TODO: Implement demo user seeds
+async function seedTaxonomyTerms() {
+  console.log('  → Seeding taxonomy terms...');
+  const { seedTaxonomyTerms: fn } = await import('./seed/index');
+  await fn();
 }
 
-async function seedLoadTestData() {
-  console.log('  → Seeding load test data (tier 3)...');
-  // TODO: Implement load test seed
+async function seedDemoUser() {
+  console.log('  → Seeding demo user...');
+  const { seedDemoUser: fn } = await import('./seed/index');
+  await fn();
 }
 
 // Parse command line arguments

@@ -3,8 +3,8 @@
  * Terms of service, privacy policy, cookie policy
  */
 
-import { db } from '../db.js';
-import { legalPages } from '../schema/legal-pages.js';
+import { db } from '../../db';
+import { legalPages } from '../../schema/legal-pages';
 
 export const tier1LegalPages = [
   {

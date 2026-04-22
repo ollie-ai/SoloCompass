@@ -20,6 +20,7 @@ export const subscriptionPlans = pgTable('subscription_plans', {
   features: varchar('features', { length: 2000 }), // JSON string of features
   active: boolean('active').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;

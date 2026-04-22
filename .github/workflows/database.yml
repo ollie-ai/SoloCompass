@@ -76,7 +76,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run Seed
-        run: pnpm db:seed -- --tier=${{ github.event.inputs.tier || '1' }}
+        run: pnpm db:seed -- --tier=${{ github.event.inputs.tier }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}

@@ -29,6 +29,7 @@ export const taxonomyTerms = pgTable('taxonomy_terms', {
   sortOrder: integer('sort_order').default(0),
   metadata: jsonb('metadata'), // Extended properties
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 // Unique constraint on group + slug

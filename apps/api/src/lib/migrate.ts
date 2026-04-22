@@ -6,7 +6,7 @@
 import postgres from 'postgres';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import * as schema from './schema/index.js';
+import * as schema from './schema/index';
 
 const connectionString = process.env['DATABASE_URL'] || '';
 

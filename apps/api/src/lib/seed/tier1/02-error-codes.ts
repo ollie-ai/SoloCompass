@@ -3,8 +3,8 @@
  * Standardized error catalog for the application
  */
 
-import { db } from '../db.js';
-import { errorCodes } from '../schema/error-codes.js';
+import { db } from '../../db';
+import { errorCodes } from '../../schema/error-codes';
 
 export const tier1ErrorCodes = [
   // Authentication errors (AUTH_*)

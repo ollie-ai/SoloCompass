@@ -3,11 +3,11 @@
  * All Drizzle ORM table definitions
  */
 
-export * from './users.js';
-export * from './sessions.js';
-export * from './feature-flags.js';
-export * from './error-codes.js';
-export * from './email-templates.js';
-export * from './subscription-plans.js';
-export * from './taxonomy.js';
-export * from './legal-pages.js';
+export * from './users';
+export * from './sessions';
+export * from './feature-flags';
+export * from './error-codes';
+export * from './email-templates';
+export * from './subscription-plans';
+export * from './taxonomy';
+export * from './legal-pages';

@@ -3,8 +3,8 @@
  * Transactional email templates
  */
 
-import { db } from '../db.js';
-import { emailTemplates } from '../schema/email-templates.js';
+import { db } from '../../db';
+import { emailTemplates } from '../../schema/email-templates';
 
 export const tier1EmailTemplates = [
   {

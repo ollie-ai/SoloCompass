@@ -45,13 +45,6 @@ jobs:
         with:
           version: latest
 
-      - name: Setup Supabase project config
-        run: |
-          mkdir -p supabase
-          cat > supabase/config.toml << 'EOF'
-            projectId = "cgsnlypjyssabdofrvuj"
-          EOF
-
       - name: Link Supabase project
         run: |
           echo "${{ secrets.SUPABASE_ACCESS_TOKEN }}" | supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
@@ -120,13 +113,6 @@ jobs:
         uses: supabase/setup-cli@v2
         with:
           version: latest
-
-      - name: Setup Supabase project config
-        run: |
-          mkdir -p supabase
-          cat > supabase/config.toml << 'EOF'
-            projectId = "cgsnlypjyssabdofrvuj"
-          EOF
 
       - name: Link Supabase project
         run: |

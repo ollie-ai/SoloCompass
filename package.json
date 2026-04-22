@@ -1,0 +1,27 @@
+{
+  "name": "solocompass",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SoloCompass - Solo-traveller safety and planning app",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "db:migrate": "pnpm --filter @solocompass/api run db:migrate",
+    "db:seed": "pnpm --filter @solocompass/api run db:seed",
+    "db:studio": "pnpm --filter @solocompass/api run db:studio",
+    "format": "pnpm -r run format",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "packageManager": "pnpm@9.12.2"
+}

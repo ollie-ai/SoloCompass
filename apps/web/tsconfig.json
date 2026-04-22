@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@solocompass/ui": ["../../packages/ui/src"],
+      "@solocompass/ui/*": ["../../packages/ui/src/*"],
+      "@solocompass/tokens": ["../../packages/tokens/src"],
+      "@solocompass/tokens/*": ["../../packages/tokens/src/*"],
+      "@solocompass/types": ["../../packages/types/src"],
+      "@solocompass/types/*": ["../../packages/types/src/*"]
+    }
+  },
+  "include": ["src", "tests"]
+}

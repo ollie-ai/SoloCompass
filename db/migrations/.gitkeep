@@ -1,0 +1,2 @@
+# Placeholder for migrations directory
+# Run `pnpm db:migrate` to generate initial migrations

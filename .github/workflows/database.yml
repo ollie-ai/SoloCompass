@@ -1,0 +1,82 @@
+name: Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Database operation'
+        required: true
+        type: choice
+        options:
+          - migrate
+          - seed
+          - rollback
+      tier:
+        description: 'Seed tier (for seed operation)'
+        required: false
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+        default: '1'
+
+jobs:
+  migrate:
+    name: DB Migrate
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'migrate'
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Migration
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  seed:
+    name: DB Seed
+    runs-on: ubuntu-latest
+    if: github.event.inputs.operation == 'seed'
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Seed
+        run: pnpm db:seed -- --tier=${{ github.event.inputs.tier || '1' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
